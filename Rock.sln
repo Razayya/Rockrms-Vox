@@ -124,6 +124,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rock.Tests.Performance", "R
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Rock.AI.OpenAI", "Rock.AI.OpenAI\Rock.AI.OpenAI.csproj", "{BAB8BF5E-6457-4668-ADF1-B917100BA7CD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "com.bemaservices.BemaPipeline", "com.bemaservices.BemaPipeline\com.bemaservices.BemaPipeline.csproj", "{C893E73C-232E-42D6-9D95-4BE35309FD12}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "com.bemaservices.ClientPackage.BEMA", "com.bemaservices.ClientPackage.BEMA\com.bemaservices.ClientPackage.BEMA.csproj", "{7102F1C8-9B6A-40B8-B692-B9A455313004}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "com.bemaservices.ClientPackage.VOCH", "com.bemaservices.ClientPackage.VOCH\com.bemaservices.ClientPackage.VOCH.csproj", "{F8A8D100-48E5-4020-A8AC-1406E59B01AE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "com.bemaservices.WebsiteExtensions", "com.bemaservices.WebsiteExtensions\com.bemaservices.WebsiteExtensions.csproj", "{CA1AD24D-1EC4-498C-A2B9-DDC889A51400}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -294,6 +302,22 @@ Global
 		{BAB8BF5E-6457-4668-ADF1-B917100BA7CD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BAB8BF5E-6457-4668-ADF1-B917100BA7CD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BAB8BF5E-6457-4668-ADF1-B917100BA7CD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C893E73C-232E-42D6-9D95-4BE35309FD12}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C893E73C-232E-42D6-9D95-4BE35309FD12}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C893E73C-232E-42D6-9D95-4BE35309FD12}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C893E73C-232E-42D6-9D95-4BE35309FD12}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7102F1C8-9B6A-40B8-B692-B9A455313004}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7102F1C8-9B6A-40B8-B692-B9A455313004}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7102F1C8-9B6A-40B8-B692-B9A455313004}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7102F1C8-9B6A-40B8-B692-B9A455313004}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F8A8D100-48E5-4020-A8AC-1406E59B01AE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F8A8D100-48E5-4020-A8AC-1406E59B01AE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F8A8D100-48E5-4020-A8AC-1406E59B01AE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F8A8D100-48E5-4020-A8AC-1406E59B01AE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CA1AD24D-1EC4-498C-A2B9-DDC889A51400}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CA1AD24D-1EC4-498C-A2B9-DDC889A51400}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CA1AD24D-1EC4-498C-A2B9-DDC889A51400}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CA1AD24D-1EC4-498C-A2B9-DDC889A51400}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
