@@ -66,6 +66,7 @@ namespace RockWeb.Plugins.com_razayya.Blocks.ProjectManagement
                     .ToList();
 
                 rpProjectBoard.DataSource = boards;
+                rpProjectBoard.DataBind();
             }
         }
 
@@ -81,10 +82,7 @@ namespace RockWeb.Plugins.com_razayya.Blocks.ProjectManagement
 
             this.BlockUpdated += Block_BlockUpdated;
 
-            if ( !Page.IsPostBack )
-            {
-                BindRepeater();
-            }            
+            BindRepeater();
         }
 
         #endregion Control Initialization
@@ -122,8 +120,27 @@ namespace RockWeb.Plugins.com_razayya.Blocks.ProjectManagement
         /// <param name="e">The <see cref="RepeaterItemEventArgs"/> instance containing the event data.</param>
         protected void rpProjectBoard_ItemDataBound( object sender, RepeaterItemEventArgs e )
         {
-            var project = e.Item.DataItem as Project;
-            var liProjectBoard = e.Item.FindControl( "liProjectBoard" ) as System.Web.UI.HtmlControls.HtmlGenericControl;
+            var project = ContextEntity<Project>();
+
+            if( project != null )
+            {
+                var projectBoard = e.Item.DataItem as ProjectBoard;
+                var liProjectBoard = e.Item.FindControl( "liProjectBoard" ) as System.Web.UI.HtmlControls.HtmlGenericControl;
+                var lbProjectBoardName = e.Item.FindControl( "lbProjectBoardName" ) as LinkButton;
+
+                lbProjectBoardName.Text = projectBoard.Name;
+
+                liProjectBoard.Attributes.Add( "data-key", projectBoard.Guid.ToString() );
+
+                var cardService = new ProjectBoardCardService( new RockContext() );
+
+                var hasCard = cardService.Queryable().Where( c => c.ProjectId == project.Id && c.ProjectBoardColumn.ProjectBoardId == projectBoard.Id ).Any();
+
+                if ( !hasCard )
+                {
+                    liProjectBoard.AddCssClass( "pm-inactive" );
+                }
+            }
         }
 
         /// <summary>
@@ -145,10 +162,20 @@ namespace RockWeb.Plugins.com_razayya.Blocks.ProjectManagement
                     {
                         var defaultColumn = new ProjectBoardColumnService( new RockContext() ).Queryable().Where( c => c.ProjectBoardId == projectBoardId.Value ).SortBy( "Order" ).FirstOrDefault();
                         var card = ProjectBoardCardService.InsertProjectCardAndSort( project.Id, projectBoardId.Value, defaultColumn.Id );
+
+                        if( card == null )
+                        {
+                            using ( var rockContext = new RockContext() )
+                            {
+                                var cardService = new ProjectBoardCardService( rockContext );
+                                var cards = cardService.Queryable().Where( c => c.ProjectId == project.Id && c.ProjectBoardColumn.ProjectBoardId == projectBoardId.Value );
+
+                                cardService.DeleteRange( cards );
+                                rockContext.SaveChanges();
+                            }
+                        }
                     }
                 }
-               
-                return;
             }
 
             BindRepeater();

@@ -13,7 +13,7 @@
              <ul class="list-group pm-list-group">
             <asp:Repeater ID="rpProjectBoard" runat="server" OnItemDataBound="rpProjectBoard_ItemDataBound" OnItemCommand="rpProjectBoard_ItemCommand">
                 <ItemTemplate>
-                    <li id="liProject" runat="server" class="list-group-item pm-group-item" data-toggle="tooltip" data-delay="600" data-placement="auto left">
+                    <li id="liProjectBoard" runat="server" class="list-group-item pm-group-item" data-toggle="tooltip" data-delay="600" data-placement="auto left">
                         <div class="pm-group-item-heading clearfix">
                             <asp:LinkButton ID="lbProjectBoardName" runat="server" CssClass="pm-group-item-name" CommandName="ToggleProjectBoard" CommandArgument='<%# Eval( "Id" ) %>'></asp:LinkButton>
                         </div>
