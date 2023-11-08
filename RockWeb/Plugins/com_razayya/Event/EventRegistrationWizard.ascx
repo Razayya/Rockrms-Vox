@@ -376,7 +376,7 @@
                             <asp:Panel ID="pnlNewEventSelection" runat="server">
                                 <div class="row">
                                     <div class="col-md-12">
-                                        <Rock:Toggle ID="tglEventSelection" runat="server" ActiveButtonCssClass="btn-primary" OnText="New Event" OffText="Existing Event"
+                                        <Rock:Toggle ID="tglEventSelection" runat="server" ActiveButtonCssClass="btn-primary" OnText="New Event Type" OffText="Existing Event Type"
                                             OnCheckedChanged="tglEventSelection_CheckedChanged" />
                                         <hr />
                                     </div>
@@ -385,7 +385,10 @@
                             <asp:Panel ID="pnlExistingEvent" runat="server">
                                 <div class="row">
                                     <div class="col-md-6">
-                                        <Rock:EventItemPicker ID="eipSelectedEvent" runat="server" Label="Event" Required="true" />
+                                        <Rock:EventItemPicker ID="eipSelectedEvent" runat="server" Label="Event" Required="true" EnhanceForLongLists="true" OnSelectedIndexChanged="eipSelectedEvent_SelectedIndexChanged" AutoPostBack="true"/>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <asp:Literal ID="lEventDetails" runat="server" />
                                     </div>
                                 </div>
                             </asp:Panel>
@@ -463,20 +466,20 @@
                             <div class="row">
                                 <div class="col-md-12">
                                     <Rock:Toggle ID="toggleExistingOccurrence" runat="server"
-                                        Label="Select Existing Event Occurrence" OnText="Yes" OffText="No" Checked="false"
+                                        Label="Select Existing Event Occurrence" OnText="Yes" OffText="No" Checked="true"
                                         OnCheckedChanged="toggleExistingOccurrence_CheckedChanged" />
                                     <hr />
                                 </div>
                             </div>
-                            <asp:Panel ID="pnlExistingOccurrence" runat="server" Visible="false">
+                            <asp:Panel ID="pnlExistingOccurrence" runat="server" Visible="true">
                                 <div class="row">
                                     <div class="col-md-6">
-                                        <Rock:RockDropDownList ID="ddlEventOccurrence" runat="server" Label="Select an Event Occurrence" />
+                                        <Rock:RockDropDownList ID="ddlEventOccurrence" runat="server" Label="Select an Event Occurrence" EnhanceForLongLists="true" />
                                     </div>
                                 </div>
                             </asp:Panel>
                             <% } //Add an ASP pannel to the New Occurrence Controls to allow hiding it. %>
-                            <asp:Panel ID="pnlNewOccurrence" runat="server" Visible="true">
+                            <asp:Panel ID="pnlNewOccurrence" runat="server" Visible="false">
                                 <div class="row">
                                     <div class="col-md-6">
                                         <Rock:RockTextBox ID="tbLocationDescription" runat="server" Label="Location Description" />

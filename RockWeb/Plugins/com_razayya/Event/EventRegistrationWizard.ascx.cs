@@ -2578,7 +2578,31 @@ namespace RockWeb.Plugins.com_razayya.Blocks.Event
                     workflowService.Process( workflow, out workflowErrors );
                 }
             }
+        }
 
+        protected void eipSelectedEvent_SelectedIndexChanged( object sender, EventArgs e )
+        {
+            lEventDetails.Text = "";
+
+            var eventItemid = eipSelectedEvent.SelectedValueAsInt();
+            if ( eventItemid.HasValue )
+            {
+                using ( var rockContext = new RockContext() )
+                {
+                    var eventItemService = new EventItemService( rockContext );
+                    var eventItem = eventItemService.Get( eventItemid.Value );
+
+                    if( eventItem != null )
+                    {
+                        if( eventItem.Photo != null )
+                        {
+                            lEventDetails.Text += $@"<img src=""/GetImage.ashx?Guid={eventItem.Photo.Guid}"" alt class=""img-responsive"">";
+                        }
+
+                        lEventDetails.Text += eventItem.Description;
+                    }
+                }
+            }
         }
     }
 }
