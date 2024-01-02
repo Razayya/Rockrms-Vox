@@ -77,11 +77,12 @@ namespace com.razayya.PCOTeamSync
                 var pcoTeams = GetTeamsAsync( rockContext );
 
                 // Add Missing Teams as Groups in Rock.
-                var missingRockGroups = pcoTeams.Where( pco => !rockTeams.Any( r => r.ForeignId == pco.Id ) );
+                var missingRockGroups = pcoTeams.Where( pco => !rockTeams.Any( r => r.ForeignId == pco.Id ) && pco.ServiceType.ArchivedAt == null );
 
                 foreach ( var team in missingRockGroups )
                 {
                     var serviceTypeGroup = groupService.Queryable().AsNoTracking().FirstOrDefault( g => g.ForeignId == team.ServiceType.Id && g.GroupTypeId == serviceTypeGroupTypeId );
+
                     var group = new Group()
                     {
                         Name = team.Name,
@@ -111,19 +112,19 @@ namespace com.razayya.PCOTeamSync
 
                 // Sync Positions
                 var rockPositions = groupService.GetByGroupTypeId( positionGroupTypeId ).ToList();
-                var pcoPositions = pcoTeams.SelectMany( t => t.TeamPositions ).ToList();
+                var pcoPositions = pcoTeams.Where( t => t.ServiceType.ArchivedAt == null && t.ArchivedAt == null ).SelectMany( t => t.TeamPositions ).ToList();
 
                 // Add Positions Teams as Groups in Rock.
                 var missingRockPositions = pcoPositions.Where( pco => !rockPositions.Any( r => r.ForeignId == pco.Id ) );
 
                 foreach ( var position in missingRockPositions )
                 {
-                    var teamGroup = groupService.Queryable().AsNoTracking().FirstOrDefault( g => g.ForeignId == position.Team.Id && g.GroupTypeId == teamGroupTypeId );
+                    //var teamGroup = groupService.Queryable().AsNoTracking().FirstOrDefault( g => g.ForeignId == position.Team.Id && g.GroupTypeId == teamGroupTypeId );
                     var group = new Group()
                     {
                         Name = position.Name,
                         ForeignId = position.Id,
-                        ParentGroup = teamGroup,
+                        //ParentGroup = teamGroup,
                         GroupTypeId = teamGroupTypeId
                     };
                     groupService.Add( group );
@@ -146,7 +147,20 @@ namespace com.razayya.PCOTeamSync
                     group.ArchivedByPersonAliasId = null;
                 }
 
-                return rockContext.SaveChanges();
+                var groupsUpdates = rockContext.SaveChanges();
+
+                var newRockPCOPosistions = groupService.GetByGroupTypeId( positionGroupTypeId );
+                foreach ( var group in newRockPCOPosistions )
+                {
+                    var pcoTeam = pcoPositions.FirstOrDefault( p => p.Id == group.ForeignId ).Team;
+                    var rockPcoTeam = groupService.Queryable().FirstOrDefault( g => g.GroupTypeId == teamGroupTypeId && g.ForeignId == pcoTeam.Id );
+                    group.ParentGroupId = rockPcoTeam?.Id;
+                    group.ParentGroup = rockPcoTeam;
+                }
+
+                rockContext.SaveChanges();
+
+                return groupsUpdates;
             }
         }
 
@@ -168,7 +182,7 @@ namespace com.razayya.PCOTeamSync
 
                 var pcoServiceApp = ServicesApp.GetInstance( applicationId, secret );
 
-                var accountServiceTypes = pcoServiceApp.ServiceType.GetAllAsync().Result;
+                var accountServiceTypes = pcoServiceApp.ServiceType.GetAllAsync().GetAwaiter().GetResult();
 
                 serviceTypes.AddRange( accountServiceTypes );
             }
@@ -199,7 +213,7 @@ namespace com.razayya.PCOTeamSync
                     { "include", "team_positions,service_type" }
                 };
 
-                var accountServiceTypes = pcoServiceApp.Team.GetAllAsync( parameters ).Result;
+                var accountServiceTypes = pcoServiceApp.Team.GetAllAsync( parameters ).GetAwaiter().GetResult();
 
                 teams.AddRange( accountServiceTypes );
             }

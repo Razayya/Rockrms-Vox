@@ -36,8 +36,23 @@ namespace PlanningCenterSDK.Apps.Services.Endpoints
             if ( parameters == null )
                 parameters = new Dictionary<string, string>();
 
-            parameters.Add( "offset", offset.ToString() );
-            parameters.Add( "per_page", perPage.ToString() );
+            if( parameters.ContainsKey("offset") )
+            {
+                parameters["offset"] = offset.ToString();
+            }
+            else
+            {
+                parameters.Add( "offset", offset.ToString() );
+            }
+
+            if ( parameters.ContainsKey( "per_page" ) )
+            {
+                parameters["per_page"] = perPage.ToString();
+            }
+            else
+            {
+                parameters.Add( "per_page", perPage.ToString() );
+            }
 
             var json = await _requester.CreateGetRequestAsync(
                 _url,
@@ -59,7 +74,7 @@ namespace PlanningCenterSDK.Apps.Services.Endpoints
                 {
                     return allItems;
                 }
-                allItems.AddRange( allItems );
+                allItems.AddRange( items );
 
                 offset += offset + perPage;
             }

@@ -1,5 +1,5 @@
 ﻿// <copyright>
-// Copyright by the Spark Development Network
+// Copyright by Razayya Financial 
 //
 // Licensed under the Rock Community License (the "License");
 // you may not use this file except in compliance with the License.
@@ -138,7 +138,7 @@ namespace RockWeb.Plugins.com_razayya.Blocks.PCOSync
 
                     var parameters = new Dictionary<string, string>() { { "include", "service_type" } };
 
-                    var teams = pcoServiceApp.Team.GetAsync( 0, 25, parameters ).Result;
+                    var teams = pcoServiceApp.Team.GetAsync( 0, 25, parameters ).GetAwaiter().GetResult();
                     
                     gList.SetLinqDataSource( teams.AsQueryable() );
                     gList.DataBind();
