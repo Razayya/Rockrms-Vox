@@ -52,7 +52,7 @@ namespace PlanningCenterSDK.Http
             try
             {
                 var delay = GetDelay();
-                if ( _throwOnDelay && delay > TimeSpan.Zero )
+                if (_throwOnDelay && delay > TimeSpan.Zero)
                     throw new Exception( "Rate limit reached." );
                 await Task.Delay( delay ).ConfigureAwait( false );
                 UpdateDelay();
@@ -76,11 +76,11 @@ namespace PlanningCenterSDK.Http
 
             // RetryAfter delay.
             var retryDelay = _retryAfter - now;
-            if ( retryDelay > delay )
-                delay = ( TimeSpan ) retryDelay;
+            if (retryDelay > delay)
+                delay = (TimeSpan) retryDelay;
 
             // Rate limits.
-            foreach ( var rateLimitCount in _rateLimitCounts )
+            foreach (var rateLimitCount in _rateLimitCounts)
             {
                 // For each rate limit count.
                 var timeSpan = rateLimitCount.Key;
@@ -88,12 +88,12 @@ namespace PlanningCenterSDK.Http
                 var limit = _rateLimits[timeSpan];
 
                 // If request count is a limit, update the delay to match.
-                if ( count >= limit )
+                if (count >= limit)
                 {
                     // Start should exist if count exists.
                     var start = _rateLimitStarts[timeSpan];
                     var newDelay = start + timeSpan - now;
-                    if ( newDelay > delay )
+                    if (newDelay > delay)
                         delay = newDelay;
                 }
             }
@@ -108,7 +108,7 @@ namespace PlanningCenterSDK.Http
         {
             var now = DateTime.Now;
 
-            foreach ( var rateLimit in _rateLimits )
+            foreach (var rateLimit in _rateLimits)
             {
                 var timeSpan = rateLimit.Key;
 
@@ -116,7 +116,7 @@ namespace PlanningCenterSDK.Http
                 _rateLimitStarts.TryGetValue( timeSpan, out var start );
 
                 // If the rate limit hasn't been initialized (no start value) or the time span has ended.
-                if ( start == DateTime.MinValue || start <= now - timeSpan )
+                if (start == DateTime.MinValue || start <= now - timeSpan)
                 {
                     _rateLimitStarts[timeSpan] = now;
                     count = 0;

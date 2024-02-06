@@ -9,8 +9,16 @@ using Newtonsoft.Json;
 
 namespace PlanningCenterSDK.Apps.Services.Endpoints
 {
-    public class ServiceTypeEndpoint : BaseEndpoint<ServiceType>
+    public class ServiceTypeEndpoint : ServicesEndpoint<ServiceType>
     {
-        public ServiceTypeEndpoint( RateLimitedRequester requester ) : base( requester, "service_types/" ) { }
+        const string PATH = "service_types";
+
+        public ServiceTypeEndpoint( RateLimitedRequester requester ) : base( requester, PATH ) { }
+
+        public PersonTeamPositionAssignmentEndpoint PersonTeamPositionAssignment( int serviceTypeId, int teamPositionId )
+        {
+            string relativePath = $"{PATH}/{serviceTypeId}/team_positions/{teamPositionId}/person_team_position_assignments";
+            return new PersonTeamPositionAssignmentEndpoint( _requester, relativePath );
+        }
     }
 }

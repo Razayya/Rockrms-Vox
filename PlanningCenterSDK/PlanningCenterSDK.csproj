@@ -48,12 +48,41 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Apps\Files\Endpoints\FileUploadEndpoint.cs" />
+    <Compile Include="Apps\Files\FilesApp.cs" />
+    <Compile Include="Apps\People\Endpoints\AppEndpoint.cs" />
+    <Compile Include="Apps\Files\Model\FileData.cs" />
+    <Compile Include="Apps\Services\Endpoints\EmailTemplate.cs" />
+    <Compile Include="Apps\People\Endpoints\PersonAppEndpoint.cs" />
+    <Compile Include="Apps\People\Endpoints\PhoneNumberEndpoint.cs" />
+    <Compile Include="Apps\People\Endpoints\EmailEndpoint.cs" />
+    <Compile Include="Apps\People\Endpoints\MaritalStatusEndpoint.cs" />
+    <Compile Include="Apps\People\Endpoints\NameSuffixEndpoint.cs" />
+    <Compile Include="Apps\People\Endpoints\NamePrefixEndpoint.cs" />
+    <Compile Include="Apps\People\Model\Address.cs" />
+    <Compile Include="Apps\People\Model\App.cs" />
+    <Compile Include="Apps\People\Model\Email.cs" />
+    <Compile Include="Apps\People\Model\NameSuffix.cs" />
+    <Compile Include="Apps\People\Model\NamePrefix.cs" />
+    <Compile Include="Apps\People\Model\MaritalStatus.cs" />
+    <Compile Include="Apps\People\Model\Person.cs" />
+    <Compile Include="Apps\People\Model\PersonApp.cs" />
+    <Compile Include="Apps\People\Model\PhoneNumber.cs" />
+    <Compile Include="Apps\People\PeopleEndpoint.cs" />
+    <Compile Include="Apps\People\Endpoints\PersonEndpoint.cs" />
+    <Compile Include="Apps\People\PeopleApp.cs" />
     <Compile Include="Apps\Services\Endpoints\PersonEndpoint.cs" />
+    <Compile Include="Apps\Services\Endpoints\PersonTeamPositionAssignmentEndpoint.cs" />
     <Compile Include="Apps\Services\Endpoints\ServiceTypeEndpoint.cs" />
-    <Compile Include="Apps\Services\Endpoints\BaseEndpoint.cs" />
+    <Compile Include="Apps\Services\Endpoints\ServicesEndpoint.cs" />
     <Compile Include="Apps\Services\Endpoints\TeamEndpoint.cs" />
+    <Compile Include="Apps\Services\Model\EmailTemplateFormat.cs" />
+    <Compile Include="Apps\Services\Model\EmailTemplate.cs" />
+    <Compile Include="Apps\Services\Model\EmailTemplateRenderedResponse.cs" />
     <Compile Include="Apps\Services\Model\Person.cs" />
+    <Compile Include="Apps\Services\Model\PersonTeamPositionAssignment.cs" />
     <Compile Include="Apps\Services\Model\PlanPerson.cs" />
+    <Compile Include="Apps\Services\Model\RenderEmailTemplateRequest.cs" />
     <Compile Include="Apps\Services\Model\ServiceType.cs" />
     <Compile Include="Apps\Services\Model\Team.cs" />
     <Compile Include="Apps\Services\Model\TeamPosition.cs" />
@@ -63,9 +92,10 @@
     <Compile Include="Http\Requester.cs" />
     <Compile Include="Http\RequesterBase.cs" />
     <Compile Include="Http\Requesters.cs" />
-    <Compile Include="Misc\ArchivableModel.cs" />
-    <Compile Include="Misc\BaseModel.cs" />
-    <Compile Include="Misc\Constants.cs" />
+    <Compile Include="Shared\ArchivableModel.cs" />
+    <Compile Include="Shared\BaseEndpoint.cs" />
+    <Compile Include="Shared\BaseModel.cs" />
+    <Compile Include="Shared\Constants.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

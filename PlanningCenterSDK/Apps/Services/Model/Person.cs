@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -46,6 +47,7 @@ namespace PlanningCenterSDK.Apps.Services.Model
         public bool? CanViewAllPeople { get; set; }
         public Person CreatedBy { get; set; }
         public Person UpdatedBy { get; set; }
+        public Stream AvatarUploadStream { get; set; }
 
         public string RelativePath()
         {

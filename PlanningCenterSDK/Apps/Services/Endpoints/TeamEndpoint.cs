@@ -11,9 +11,8 @@ using JsonApiSerializer.JsonApi;
 
 namespace PlanningCenterSDK.Apps.Services.Endpoints
 {
-    public class TeamEndpoint : BaseEndpoint<Team>
+    public class TeamEndpoint : ServicesEndpoint<Team>
     {
-        public TeamEndpoint( RateLimitedRequester requester ) : base( requester, "teams/" ) { }
-
+        public TeamEndpoint( RateLimitedRequester requester ) : base( requester, "teams" ) { }
     }
 }

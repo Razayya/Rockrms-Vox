@@ -11,5 +11,7 @@ namespace PlanningCenterSDK.Http
         public static Requester StaticApiRequester;
         public static Requester StatusApiRequester;
         public static RateLimitedRequester ServicesAppRequester;
+        public static RateLimitedRequester PeopleAppRequester;
+        public static RateLimitedRequester FilesAppRequester;
     }
 }

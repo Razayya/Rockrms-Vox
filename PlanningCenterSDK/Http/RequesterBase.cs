@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -67,12 +68,12 @@ namespace PlanningCenterSDK.Http
         }
 
         protected HttpRequestMessage PrepareRequest( string relativeUrl, Dictionary<string,string> queryParameters,
-            bool useHttps, HttpMethod httpMethod )
+            bool useHttps, HttpMethod httpMethod, string baseUrl = null )
         {
             var scheme = useHttps ? "https" : "http";
             var url = queryParameters == null ?
-                $"{scheme}://{Constants.BASE_URL}{relativeUrl}" :
-                $"{scheme}://{Constants.BASE_URL}{relativeUrl}?{BuildArgumentsString( queryParameters )}";
+                $"{scheme}://{baseUrl ?? Constants.BASE_URL}/{relativeUrl}" :
+                $"{scheme}://{baseUrl ?? Constants.BASE_URL}/{relativeUrl}?{BuildArgumentsString( queryParameters )}";
 
             var requestMessage = new HttpRequestMessage( httpMethod, url );
             if ( !string.IsNullOrEmpty( ApplicationId ) && !string.IsNullOrEmpty(_secret) )

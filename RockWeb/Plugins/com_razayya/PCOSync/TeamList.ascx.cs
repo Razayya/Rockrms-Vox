@@ -138,17 +138,19 @@ namespace RockWeb.Plugins.com_razayya.Blocks.PCOSync
 
                     var parameters = new Dictionary<string, string>() { { "include", "service_type" } };
 
+                    var pcoTeamSync = new PCOTeamSync( applicationId, secret );
+
+                    pcoTeamSync.SyncPeopleData();
+                    pcoTeamSync.ImportServiceTypes();
+                    pcoTeamSync.SyncTeamsAndPositions();
+
                     var teams = pcoServiceApp.Team.GetAsync( 0, 25, parameters ).GetAwaiter().GetResult();
                     
                     gList.SetLinqDataSource( teams.AsQueryable() );
                     gList.DataBind();
                 }
             }
-
-            var ServiceTypesUpdated = PCOTeamSync.SyncServiceTypesAsync();
-            var TeamsAndPositionsUpdated = PCOTeamSync.SyncTeamsAndPositionsAsync();
         }
-
         #endregion
     }
 }

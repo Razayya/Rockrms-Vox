@@ -37,5 +37,8 @@ namespace PlanningCenterSDK.Apps.Services.Model
         public IEnumerable<Person> People { get; set; }
         [JsonProperty( propertyName: "team_positions")]
         public IEnumerable<TeamPosition> TeamPositions { get; set; }
+
+        [JsonProperty( propertyName: "person_team_position_assignments" )]
+        public IEnumerable<PersonTeamPositionAssignment> PersonTeamPositionsAssignments { get; set; }
     }
 }
