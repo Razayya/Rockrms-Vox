@@ -103,12 +103,12 @@ namespace PlanningCenterSDK.Http
                         }
                     }
 
-                    string rateLimitType = null;
-                    if ( response.Headers.TryGetValues( "X-Rate-Limit-Type", out var rateLimitTypeHeaderValues ) )
-                    {
-                        rateLimitType = rateLimitTypeHeaderValues.FirstOrDefault();
-                    }
-                    throw new Exception( $"{response.StatusCode}: Rate Limit Exceeded" );
+                    //string rateLimitType = null;
+                    //if ( response.Headers.TryGetValues( "X-Rate-Limit-Type", out var rateLimitTypeHeaderValues ) )
+                    //{
+                    //    rateLimitType = rateLimitTypeHeaderValues.FirstOrDefault();
+                    //}
+                    //throw new Exception( $"{response.StatusCode}: Rate Limit Exceeded" );
                 }
                 else
                     throw new Exception( $"{response.StatusCode}: Unexpected Error" );

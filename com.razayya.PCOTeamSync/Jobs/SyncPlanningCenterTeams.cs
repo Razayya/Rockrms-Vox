@@ -34,15 +34,36 @@ namespace com.razayya.PCOTeamSync.Jobs
             var applicationId = GetAttributeValue(AttributeKey.Application_Id);
             var secret = GetAttributeValue(AttributeKey.Secret);
 
-            
+            var updateCutOff = lastProcessed?.StartDateTime ?? DateTime.MinValue;
 
             var pcoTeamSync = new PCOTeamSync( applicationId, secret );
 
-            pcoTeamSync.ImportServiceTypes();
-            pcoTeamSync.SyncPeopleData();
-            pcoTeamSync.SyncTeamsAndPositions();
+            List<string> errors = new List<string>();
 
-            Result = "Synchronization was completed successfully.";
+            Result = $"Synchronization started.  Syncing data since: {updateCutOff}";
+
+            pcoTeamSync.ImportServiceTypes( out errors );
+
+            if ( errors.Count > 0 )
+            {
+                Result += "<br/>" + string.Join( "<br/>", errors );
+            }
+
+            pcoTeamSync.SyncPeopleData( out errors, updateCutOff );
+
+            if (errors.Count > 0)
+            {
+                Result += "<br/>" + string.Join( "<br/>", errors );
+            }
+
+            pcoTeamSync.SyncTeamsAndPositions(out errors);
+
+            if (errors.Count > 0)
+            {
+                Result += "<br/>" + string.Join( "<br/>", errors );
+            }
+
+            Result += "<br/>Synchronization was completed.";
         }
     }
 }

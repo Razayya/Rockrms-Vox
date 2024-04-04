@@ -16,6 +16,7 @@ using Rock.Reporting;
 using Rock.Logging;
 using com.razayya.PCOTeamSync.Utility;
 using PlanningCenterSDK.Apps.Files;
+using MimeTypes;
 
 namespace com.razayya.PCOTeamSync
 {
@@ -83,52 +84,68 @@ namespace com.razayya.PCOTeamSync
                 .Id;
         }
 
-        public void ImportServiceTypes()
+        public void ImportServiceTypes(out List<string> errors )
         {
-            using ( var rockContext = new RockContext() )
+
+            errors = new List<string>();
+
+            try
             {
-                var groupService = new GroupService( rockContext );
-                var serviceTypeGroupTypeId = GroupTypeCache.Get( SystemGuid.GroupType.PCO_SERVICE_TYPE.AsGuid() ).Id;
 
-                var rootGroup = groupService.GetByGuid( SystemGuid.Group.PCO_ROOT_GROUP.AsGuid() );
-
-                var rockPCOServiceTypes = groupService.GetByGroupTypeId( serviceTypeGroupTypeId );
-
-                var pcoServiceTypes = GetServiceTypes( );
-
-                var missingRockGroups = pcoServiceTypes.Where( pco => !rockPCOServiceTypes.Any( r => r.ForeignId == pco.Id ) );
-
-                var groupsToInsert = new List<Group>();
-
-                foreach ( var serviceType in missingRockGroups )
+                using (var rockContext = new RockContext())
                 {
-                    var group = new Group()
+                    var groupService = new GroupService( rockContext );
+                    var serviceTypeGroupTypeId = GroupTypeCache.Get( SystemGuid.GroupType.PCO_SERVICE_TYPE.AsGuid() ).Id;
+
+                    var rootGroup = groupService.GetByGuid( SystemGuid.Group.PCO_ROOT_GROUP.AsGuid() );
+
+                    var rockPCOServiceTypes = groupService.GetByGroupTypeId( serviceTypeGroupTypeId );
+
+                    var pcoServiceTypes = GetServiceTypes();
+
+                    var missingRockGroups = pcoServiceTypes.Where( pco => !rockPCOServiceTypes.Any( r => r.ForeignId == pco.Id ) );
+
+                    var groupsToInsert = new List<Group>();
+
+                    foreach (var serviceType in missingRockGroups)
                     {
-                        Name = serviceType.Name,
-                        ForeignId = serviceType.Id,
-                        GroupTypeId = serviceTypeGroupTypeId,
-                        ParentGroupId = rootGroup.Id,
-                        IsSystem = true
-                    };
-                    groupsToInsert.Add( group );
+                        var group = new Group()
+                        {
+                            Name = serviceType.Name,
+                            ForeignId = serviceType.Id,
+                            GroupTypeId = serviceTypeGroupTypeId,
+                            ParentGroupId = rootGroup.Id,
+                            IsSystem = true
+                        };
+                        groupsToInsert.Add( group );
+                    }
+
+                    var pcoServiceTypeIds = pcoServiceTypes.Select( s => s.Id );
+
+                    var missingPCOServiceTypes = rockPCOServiceTypes.Where( r => r.ForeignId.HasValue && !pcoServiceTypeIds.Contains( r.ForeignId.Value ) );
+
+
+                    rockContext.BulkUpdate( missingPCOServiceTypes, g => new Group { IsArchived = true, ArchivedDateTime = RockDateTime.Now } );
+
+                    var archiveRockServiceTypes = rockPCOServiceTypes.Where( r => r.ForeignId.HasValue && pcoServiceTypeIds.Contains( r.ForeignId.Value ) && r.IsArchived );
+
+                    rockContext.BulkUpdate( archiveRockServiceTypes, g => new Group { IsArchived = false, ArchivedDateTime = null, ArchivedByPersonAliasId = null } );
+
+                    rockContext.BulkInsert( groupsToInsert );
+
                 }
-
-                var pcoServiceTypeIds = pcoServiceTypes.Select( s => s.Id );
-
-                var missingPCOServiceTypes = rockPCOServiceTypes.Where( r => r.ForeignId.HasValue && !pcoServiceTypeIds.Contains( r.ForeignId.Value ) );
-
-                rockContext.BulkUpdate( missingPCOServiceTypes, g => new Group { IsArchived = true, ArchivedDateTime = RockDateTime.Now } );
-
-                var archiveRockServiceTypes = rockPCOServiceTypes.Where( r => r.ForeignId.HasValue && pcoServiceTypeIds.Contains(r.ForeignId.Value ) && r.IsArchived );
-
-                rockContext.BulkUpdate( archiveRockServiceTypes, g => new Group { IsArchived = false, ArchivedDateTime = null, ArchivedByPersonAliasId = null } );
-
-                rockContext.BulkInsert( groupsToInsert );
-
             }
+
+            catch (Exception ex)
+            {
+                errors.Add( $"Error Importing Service Types: {ex.Message}" );
+            }
+
         }
-        public void SyncTeamsAndPositions()
+        public void SyncTeamsAndPositions( out List<string> errors )
         {
+            errors = new List<string>();
+
             using ( var rockContext = new RockContext() )
             {
                 var groupService = new GroupService( rockContext );
@@ -263,8 +280,16 @@ namespace com.razayya.PCOTeamSync
                 {
                     if (match.Rock.IsArchived)
                     {
-                        // Remove assignement from PCO
-                        _servicesApp.ServiceType.PersonTeamPositionAssignment( match.Pco.TeamPosition.Team.ServiceType.Id, match.Pco.TeamPosition.Id ).DeleteAsync( match.Pco.Id ).GetAwaiter().GetResult();
+                        try
+                        {
+                            // Remove assignement from PCO
+                            _servicesApp.ServiceType.PersonTeamPositionAssignment( match.Pco.TeamPosition.Team.ServiceType.Id, match.Pco.TeamPosition.Id ).DeleteAsync( match.Pco.Id ).GetAwaiter().GetResult();
+                        }
+                        catch( Exception ex)
+                        {
+                            errors.Add( $"Error Removing {match.Rock.Person.FullName} from PCO Assignement {match.Pco.TeamPosition.Team.Name} - {match.Pco.TeamPosition.Name}: {ex.Message}" );
+                        }
+                       
                     }
                 }
 
@@ -277,24 +302,31 @@ namespace com.razayya.PCOTeamSync
                     // If the Pereson Doesn't exist in PCO, Create them.
                     if( !personMapper.ContainsNativeKey(rockAssignement.PersonId) )
                     {
-                        var pcoPerson = new PlanningCenterSDK.Apps.People.Model.Person();
-                        pcoPerson.Emails = new List<Email>();
-                        pcoPerson.PhoneNumbers = new List<PlanningCenterSDK.Apps.People.Model.PhoneNumber>();
-                        SetPersonPropertiesFromRockPerson( pcoPerson, rockAssignement.Person );
-
-                        var newPerson = CreatePcoPerson( pcoPerson );
-
-                        personSearchKeyService.Add( new PersonSearchKey()
+                        try
                         {
-                            PersonAliasId = rockAssignement.Person.PrimaryAliasId,
-                            SearchTypeValueId = searchKeyTypeValueId,
-                            SearchValue = newPerson.Id.ToString(),
-                            ModifiedDateTime = RockDateTime.Now,
-                            CreatedDateTime = RockDateTime.Now,
-                        } );
+                            var pcoPerson = new PlanningCenterSDK.Apps.People.Model.Person();
+                            pcoPerson.Emails = new List<Email>();
+                            pcoPerson.PhoneNumbers = new List<PlanningCenterSDK.Apps.People.Model.PhoneNumber>();
+                            SetPersonPropertiesFromRockPerson( pcoPerson, rockAssignement.Person );
 
-                        pcoPersonId = newPerson.Id;
-                        personMapper.Add( rockAssignement.PersonId, newPerson.Id );
+                            var newPerson = CreatePcoPerson( pcoPerson );
+
+                            personSearchKeyService.Add( new PersonSearchKey()
+                            {
+                                PersonAliasId = rockAssignement.Person.PrimaryAliasId,
+                                SearchTypeValueId = searchKeyTypeValueId,
+                                SearchValue = newPerson.Id.ToString(),
+                                ModifiedDateTime = RockDateTime.Now,
+                                CreatedDateTime = RockDateTime.Now,
+                            } );
+
+                            pcoPersonId = newPerson.Id;
+                            personMapper.Add( rockAssignement.PersonId, newPerson.Id );
+                        }
+                        catch(Exception ex)
+                        {
+                            errors.Add( $"Error Adding {rockAssignement.Person.FullName} to Planning Center: {ex.Message}" );
+                        }
                     }
                     else
                     {
@@ -335,41 +367,76 @@ namespace com.razayya.PCOTeamSync
                 var groupMembersToAdd = new List<GroupMember>();
                 foreach ( var pcoAssignement in  pcoAssignementsToAddToRock )
                 {
-                    var personId = personMapper.GetNativeKey( pcoAssignement.Person.Id );
-                    var groupId = positionMapper.GetNativeKey( pcoAssignement.TeamPosition.Id );
-
-                    //Double Check for a GroupMember with the same GroupId and PersonId first.
-                    var groupMember = groupMemberService.Queryable( true, true ).FirstOrDefault( gm => gm.PersonId == personId && gm.GroupId == groupId );
-
-                    if( groupMember != null )
+                    try
                     {
-                        groupMember.IsArchived = false;
-                        groupMember.ArchivedDateTime = null;
-                        groupMember.ArchivedByPersonAliasId = null;
-                        groupMember.ForeignId = pcoAssignement.Id.ToIntSafe();
-                    }
-                    else
-                    {
-                        groupMembersToAdd.Add( new GroupMember()
+                        int personId = 0;
+                        int groupId = 0;
+
+                        if( personMapper.ContainsNativeKey( pcoAssignement.Person.Id ))
                         {
-                            GroupId = positionMapper.GetNativeKey( pcoAssignement.TeamPosition.Id ),
-                            GroupMemberStatus = GroupMemberStatus.Active,
-                            IsArchived = false,
-                            PersonId = personId,
-                            GroupRoleId = positionGroupType.DefaultGroupRoleId.GetValueOrDefault( 0 ),
-                            GroupTypeId = positionGroupType.Id,
-                            ForeignId = pcoAssignement.Id.ToIntSafe()
-                        } );
-                    } 
+                            personId = personMapper.GetNativeKey( pcoAssignement.Person.Id );
+                        }
+                        if( positionMapper.ContainsNativeKey( pcoAssignement.TeamPosition.Id ) )
+                        {
+                            groupId = positionMapper.GetNativeKey( pcoAssignement.TeamPosition.Id );
+                        }
+
+                        if( personId != 0 && groupId != 0 )
+                        {
+                            //Double Check for a GroupMember with the same GroupId and PersonId first.
+                            var groupMember = groupMemberService.Queryable( true, true ).FirstOrDefault( gm => gm.PersonId == personId && gm.GroupId == groupId );
+
+                            if (groupMember != null)
+                            {
+                                groupMember.IsArchived = false;
+                                groupMember.ArchivedDateTime = null;
+                                groupMember.ArchivedByPersonAliasId = null;
+                                groupMember.ForeignId = pcoAssignement.Id.ToIntSafe();
+                            }
+                            else
+                            {
+                                groupMembersToAdd.Add( new GroupMember()
+                                {
+                                    GroupId = positionMapper.GetNativeKey( pcoAssignement.TeamPosition.Id ),
+                                    GroupMemberStatus = GroupMemberStatus.Active,
+                                    IsArchived = false,
+                                    PersonId = personId,
+                                    GroupRoleId = positionGroupType.DefaultGroupRoleId.GetValueOrDefault( 0 ),
+                                    GroupTypeId = positionGroupType.Id,
+                                    ForeignId = pcoAssignement.Id.ToIntSafe()
+                                } );
+                            }
+                        }
+
+                        errors.Add( $"Error adding {pcoAssignement.Person.FullName}({personId}) to {pcoAssignement.TeamPosition.Name}({groupId}). The Foreign Ids could not be found" );
+                    }
+                    catch ( Exception ex )
+                    {
+                        errors.Add( $"Error adding {pcoAssignement.Person.Id} to {pcoAssignement.TeamPosition.Name}" );
+                    }
+                }
+                try
+                {
+                    rockContext.BulkInsert( groupMembersToAdd );
+                } catch(Exception ex )
+                {
+                    errors.Add( "Error Adding new Group Members" );
                 }
 
-                rockContext.BulkInsert( groupMembersToAdd );
 
                 // Arhive group Members in Rock where Pco Assignements have been removed.
-                if( rockAssignmentsToRemove.Any())
+                //if( rockAssignmentsToRemove.Any())
+                //{
+                try
                 {
-                    rockContext.BulkUpdate( rockAssignmentsToRemove, g => new GroupMember { IsArchived = true, ArchivedDateTime = RockDateTime.Now } );
+                    rockContext.BulkUpdate( rockAssignmentsToRemove, g => new GroupMember { Id = g.Id, IsArchived = true, ArchivedDateTime = RockDateTime.Now } );
                 }
+                catch ( Exception ex)
+                {
+                    errors.Add( $"Error Archiving Rock Group Members: {ex}" );
+                }
+               
+                //}
 
                 //Update Team Group Members
                 var activePositionAssignments = groupMemberService
@@ -416,8 +483,10 @@ namespace com.razayya.PCOTeamSync
                 rockContext.SaveChanges();
             }
         }
-        public void SyncPeopleData( DateTime? modifiedSince = null )
+        public void SyncPeopleData( out List<string> errors, DateTime? modifiedSince = null )
         {
+            errors = new List<string>();
+
             using (var rockContext = new RockContext() )
             {
                 modifiedSince = modifiedSince ?? DateTime.MinValue;
@@ -431,19 +500,35 @@ namespace com.razayya.PCOTeamSync
 
                 var missingPcoPeople = pcoPeople.Where( p => !personLookUp.ContainsKey( p.Id.ToString() ) );
 
-                InsertMissingPeopleToRock( missingPcoPeople, rockContext );
+                try
+                {
+                    InsertMissingPeopleToRock( missingPcoPeople, rockContext );
+                }
+                catch(Exception ex)
+                {
+                    errors.Add( $"Error Adding Missing People: {ex.Message}" );
+                }
 
                 var peopleMap = pcoPeople
+                    .Where( p => personLookUp.ContainsKey( p.Id.ToString() ) )
                     .Select( p => new { pcoPerson = p, PersonSearchKey = personLookUp.TryGetValue( p.Id.ToString(), out var lookupValue ) ? lookupValue : null } );
 
                 var rockPeopleToUpdate = peopleMap
-                    .Where( m => m.pcoPerson.UpdatedAt.Value.Add( utcOffset ) > m.PersonSearchKey.ModifiedDateTime && m.pcoPerson.UpdatedAt.Value.Add( utcOffset ) > m.PersonSearchKey.PersonAlias.Person.ModifiedDateTime )
+                    .Where( m => ( m.pcoPerson?.UpdatedAt?.Add( utcOffset ) ?? DateTime.MinValue ) > m.PersonSearchKey.ModifiedDateTime && ( m.pcoPerson?.UpdatedAt?.Add( utcOffset ) ?? DateTime.MinValue ) > m.PersonSearchKey.PersonAlias.Person.ModifiedDateTime )
                     .ToList();
 
                 foreach( var personMap in rockPeopleToUpdate)
                 {
-                    SetPersonPropertiesFromPcoPerson( personMap.pcoPerson, personMap.PersonSearchKey.PersonAlias.Person );
-                    personMap.PersonSearchKey.ModifiedDateTime = RockDateTime.Now;
+                    try
+                    {
+                        SetPersonPropertiesFromPcoPerson( personMap.pcoPerson, personMap.PersonSearchKey.PersonAlias.Person );
+                        personMap.PersonSearchKey.ModifiedDateTime = RockDateTime.Now;
+                    }
+                    catch( Exception ex )
+                    {
+                        errors.Add( $"Error Updating {personMap.PersonSearchKey.PersonAlias.Person.FullName} {personMap.PersonSearchKey.PersonAlias.PersonId}) in Rock: {ex.Message}" );
+                    }
+                   
                 }
 
                 var pcoPeopleToUpdate = peopleMap
@@ -452,9 +537,17 @@ namespace com.razayya.PCOTeamSync
 
                 foreach( var personMap in pcoPeopleToUpdate)
                 {
-                    SetPersonPropertiesFromRockPerson( personMap.pcoPerson, personMap.PersonSearchKey.PersonAlias.Person );
-                    UpdatePcoPerson( personMap.pcoPerson );
-                    personMap.PersonSearchKey.ModifiedDateTime = RockDateTime.Now;
+                    try
+                    {
+                        SetPersonPropertiesFromRockPerson( personMap.pcoPerson, personMap.PersonSearchKey.PersonAlias.Person );
+                        UpdatePcoPerson( personMap.pcoPerson );
+                        personMap.PersonSearchKey.ModifiedDateTime = RockDateTime.Now;
+                    }
+                    catch( Exception ex )
+                    {
+                        errors.Add( $"Error Updating {personMap.pcoPerson.FirstName} {personMap.pcoPerson.LastName} ({personMap.pcoPerson.Id}) in Planning Center: {ex.Message}" );
+                    }
+                    
                 }
 
                 rockContext.SaveChanges();
@@ -567,10 +660,10 @@ namespace com.razayya.PCOTeamSync
                 .Select( k => pcoAssignements[k] )
                 .ToList();
 
-            var pcoAssignementIds = pcoAssignements.Select( pa => pa.Key ).ToList();
+            var pcoAssignementIds = pcoAssignements.Select( pa => pa.Key ).ToHashSet();
 
             var rockAssignmentsToRemove = rockAssignements
-                .Where( rockAssign => rockAssign.ForeignId != null && !pcoAssignementIds.Contains( rockAssign.ForeignId.Value ) );
+                .Where( rockAssign => rockAssign.ForeignId.HasValue && !pcoAssignementIds.Contains( rockAssign.ForeignId.Value ) );
 
             // Process Updates
             foreach (var match in matchingAssignments)
@@ -759,7 +852,10 @@ namespace com.razayya.PCOTeamSync
             if (pcoPerson.AvatarUploadStream != null)
             {
                 var avatar = _filesApp.File.UploadAsync( pcoPerson.AvatarUploadStream, pcoPerson.Avatar ).GetAwaiter().GetResult().FirstOrDefault();
-                pcoPerson.Avatar = avatar.Id;
+                if (avatar?.Id != null)
+                {
+                    pcoPerson.Avatar = avatar.Id;
+                }
             }
 
             PlanningCenterSDK.Apps.People.Model.Person newPerson = null;
@@ -941,12 +1037,29 @@ namespace com.razayya.PCOTeamSync
             var peopleToInsert = new List<Rock.Model.Person>();
             var searchKeysToAdd = new List<PersonSearchKey>();
 
+            var familyGroupTypeId = GroupTypeCache.Get( Rock.SystemGuid.GroupType.GROUPTYPE_FAMILY ).Id;
+
+            var familiesToInsert = new List<Group>();
+
             foreach (var pcoPerson in pcoPeopleToInsert)
             {
+
+                var family = new Group
+                {
+                    GroupTypeId = familyGroupTypeId,
+                    Name = $"{pcoPerson.LastName} Family",
+                    ForeignId = pcoPerson.Id,
+                    CreatedDateTime = RockDateTime.Now,
+                    ModifiedDateTime = RockDateTime.Now,
+                };
+
+                familiesToInsert.Add( family );
+
                 var rockPerson = new Rock.Model.Person()
                 {
                     ForeignKey = foreignKey,
-                    ForeignId = pcoPerson.Id
+                    ForeignId = pcoPerson.Id,
+                    PrimaryFamily = family
                 };
 
                 SetPersonPropertiesFromPcoPerson( pcoPerson, rockPerson );
@@ -971,14 +1084,17 @@ namespace com.razayya.PCOTeamSync
             rockContext.BulkInsert( personAliasesToInsert );
 
             var personAliasIdLookupFromPersonId = new PersonAliasService( rockContext ).Queryable().Where( a => a.Person.ForeignId.HasValue && a.Person.ForeignKey == foreignKey && a.PersonId == a.AliasPersonId )
-            .Select( a => new { PersonAliasId = a.Id, a.ForeignId } ).ToDictionary( k => k.ForeignId, v => v.PersonAliasId );
+                .GroupBy( p => p.ForeignId ).ToDictionary( k => k.Key.Value, v => v.FirstOrDefault().Id );
+
+            var personIdLookUp = new PersonService( rockContext ).Queryable().Where( p => p.ForeignId.HasValue && p.ForeignKey == foreignKey )
+                .GroupBy(p => p.ForeignId).ToDictionary( k => k.Key.Value, v => v.FirstOrDefault().Id );
 
             // PersonSearchKeys
             List<PersonSearchKey> personSearchKeysToInsert = new List<PersonSearchKey>();
 
             foreach (var person in peopleToInsert)
             {
-                var personAliasId = personAliasIdLookupFromPersonId.GetValueOrNull( person.ForeignId );
+                var personAliasId = personAliasIdLookupFromPersonId.GetValueOrNull( person.ForeignId.Value );
                 if (personAliasId.HasValue)
                 {
                     var newPersonSearchKey = new PersonSearchKey()
@@ -1001,10 +1117,14 @@ namespace com.razayya.PCOTeamSync
 
             foreach (var person in peopleToInsert)
             {
-                foreach (var phoneNumberImport in person.PhoneNumbers)
+                var personId = personIdLookUp.GetValueOrNull( person.ForeignId.Value );
+                if( personId.HasValue)
                 {
-                    phoneNumberImport.PersonId = person.Id;
-                    phoneNumbersToInsert.Add( phoneNumberImport );
+                    foreach (var phoneNumberImport in person.PhoneNumbers)
+                    {
+                        phoneNumberImport.PersonId = personId.Value;
+                        phoneNumbersToInsert.Add( phoneNumberImport );
+                    }
                 }
             }
 
@@ -1087,7 +1207,8 @@ namespace com.razayya.PCOTeamSync
             if( rockPerson.PhotoUrl != null )
             {
                 pcoPerson.AvatarUploadStream = rockPerson.Photo.ContentStream;
-                pcoPerson.Avatar = rockPerson.Photo.FileName;
+                var extension = MimeTypeMap.GetExtension( rockPerson.Photo.MimeType );
+                pcoPerson.Avatar = $"{rockPerson.Photo.FileName}{extension}";
                 
             }
 

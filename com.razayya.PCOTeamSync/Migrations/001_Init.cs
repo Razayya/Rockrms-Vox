@@ -78,6 +78,9 @@ namespace com.razayya.PCOTeamSync.Migrations
                 SystemGuid.GroupType.PCO_POSITION
                 , true );
 
+            RockMigrationHelper.UpdateGroupTypeRole( SystemGuid.GroupType.PCO_TEAM, "Member", "", 0, null, null, Guid.NewGuid().ToString(), false, false, true );
+            RockMigrationHelper.UpdateGroupTypeRole( SystemGuid.GroupType.PCO_POSITION, "Member", "", 0, null, null, Guid.NewGuid().ToString(), false, false, true );
+
             RockMigrationHelper.UpdateDefinedValue(
                 Rock.SystemGuid.DefinedType.PERSON_SEARCH_KEYS,
                 "Planning Center Online Id",

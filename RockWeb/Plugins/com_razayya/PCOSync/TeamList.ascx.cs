@@ -140,9 +140,9 @@ namespace RockWeb.Plugins.com_razayya.Blocks.PCOSync
 
                     var pcoTeamSync = new PCOTeamSync( applicationId, secret );
 
-                    pcoTeamSync.SyncPeopleData();
-                    pcoTeamSync.ImportServiceTypes();
-                    pcoTeamSync.SyncTeamsAndPositions();
+                    //pcoTeamSync.SyncPeopleData();
+                    //pcoTeamSync.ImportServiceTypes();
+                    //pcoTeamSync.SyncTeamsAndPositions();
 
                     var teams = pcoServiceApp.Team.GetAsync( 0, 25, parameters ).GetAwaiter().GetResult();
                     
