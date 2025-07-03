@@ -126,6 +126,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "com.bemaservices.WebsiteExt
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "com.razayya.GroupTools", "com.razayya.GroupTools\com.razayya.GroupTools.csproj", "{278495E6-BB0F-45E9-A21D-50E7BAB1D102}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "com.razayya.RSVPReminders", "com.razayya.RSVPReminders\com.razayya.RSVPReminders.csproj", "{524320B1-B8C9-4814-B98B-E445689E5E58}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -300,6 +302,10 @@ Global
 		{278495E6-BB0F-45E9-A21D-50E7BAB1D102}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{278495E6-BB0F-45E9-A21D-50E7BAB1D102}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{278495E6-BB0F-45E9-A21D-50E7BAB1D102}.Release|Any CPU.Build.0 = Release|Any CPU
+		{524320B1-B8C9-4814-B98B-E445689E5E58}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{524320B1-B8C9-4814-B98B-E445689E5E58}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{524320B1-B8C9-4814-B98B-E445689E5E58}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{524320B1-B8C9-4814-B98B-E445689E5E58}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
