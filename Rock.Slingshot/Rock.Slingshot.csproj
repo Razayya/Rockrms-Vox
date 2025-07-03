@@ -85,6 +85,7 @@
     <Compile Include="CSVMapper\PersonAddressCsvMapper.cs" />
     <Compile Include="CSVMapper\PersonCsvMapper.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Rest\BulkImportController.cs" />
     <Compile Include="SlingshotImport\CsvSlingshotImporter.cs" />
     <Compile Include="SlingshotImport\SlingshotDataValidator.cs" />
     <Compile Include="SlingshotImport\SlingshotExtensionMethods.cs" />
@@ -124,9 +125,7 @@
     <None Include="app.config" />
     <None Include="packages.config" />
   </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Rest\" />
-  </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
