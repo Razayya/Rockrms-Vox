@@ -169,6 +169,8 @@
     <Compile Include="Engine\LavaUtilityHelper.cs" />
     <Compile Include="Filters\Generic\TemplateFilters.Utility.cs" />
     <Compile Include="Filters\Generic\TemplateFilters.Dictionaries.cs" />
+    <Compile Include="Engine\LavaElementRenderException.cs" />
+    <Compile Include="Engine\LavaExceptionExtensions.cs" />
     <Compile Include="Utilities\LavaDataObjectHelper.cs" />
     <Compile Include="Engine\LavaEngineBase.cs" />
     <Compile Include="Filters\Generic\TemplateFilters.Collections.partial.cs" />
