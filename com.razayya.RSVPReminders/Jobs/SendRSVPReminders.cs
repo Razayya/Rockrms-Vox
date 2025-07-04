@@ -1,45 +1,42 @@
-﻿// <copyright>
-// Copyright by BEMA Software Services
-//
-// Licensed under the Rock Community License (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.rockrms.com/license
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-// </copyright>
-//
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data.Entity;
 using System.Linq;
 using System.Text;
+using System.Web;
 
-using Quartz;
+using Microsoft.Extensions.Logging;
 
-using Rock;
 using Rock.Attribute;
+using Rock.Communication;
 using Rock.Data;
-using Rock.Jobs;
+using Rock.Logging;
 using Rock.Model;
 using Rock.Web.Cache;
-using Rock.Web.UI.Controls;
 
-namespace com.razayya.RSVPReminders.Jobs
+
+namespace Rock.Jobs
 {
-
-    [DisplayName("Send RSVP Reminders")]
-    [Description("Handles RSVP communications as well as populating Group RSVP details.")]
-
-    [DisallowConcurrentExecution]
+    /// <summary>
+    /// Sends RSVP emails to groups configured for RSVP reminders and registers all
+    /// group members for response tracking so pending responses can be reviewed.
+    /// </summary>
+    [DisplayName("Send RSVP Email Notifications")]
+    [Description("Sends RSVP communications to group members and creates attendance records so that responses can be tracked.")]
+    [GroupTypeField("RSVP Master Group Type", "The inherited group type over all RSVP activated Group Types", true, "", "", 0, AttributeKey.MasterGroupType)]
+    [TextField("Send Reminders",
+        Description = "Comma delimited list of days after a group meets to send an additional reminder. For example, a value of '2,4' would result in an additional reminder getting sent two and four days after group meets if attendance was not entered.",
+        Key = AttributeKey.SendReminders,
+        IsRequired = false,
+        Order = 1)]
     public class SendRSVPReminders : RockJob
     {
+        private static class AttributeKey
+        {
+            public const string MasterGroupType = "MasterGroupType";
+            public const string SendReminders = "SendReminders";
+        }
 
         public SendRSVPReminders()
         {
@@ -47,21 +44,148 @@ namespace com.razayya.RSVPReminders.Jobs
 
         public override void Execute()
         {
-            try
+            var sendRsvpEmailsAttributeGuid = Guid.Empty;
+            var rockContext = new RockContext();
+            var groupService = new GroupService( rockContext );
+            var groupTypeService = new GroupTypeService(rockContext);
+            //var groupType = GroupTypeCache.Get(GetAttributeValue(AttributeKey.MasterGroupType).AsGuid());
+            var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(AttributeKey.MasterGroupType).AsGuid() }).FirstOrDefault();
+
+            var results = new StringBuilder();
+
+            if (groupType == null)
             {
-                var rockContext = new RockContext();
+                var warning = "No Master Group Type Configured. Job cannot execute.";
+                results.Append(FormatWarningMessage(warning));
+                Logger.LogWarning(warning);
+                this.Result = results.ToString();
+                throw new RockJobWarningException(warning);
             }
 
-            catch (Exception ex)
-            {
-                ExceptionLogService.LogException(ex, null);
+            var groupTypeIds = groupType.GetAllDependentGroupTypeIds(rockContext);
+                groupTypeIds.Add(groupType.Id);
+
+                var groups = groupService
+                    .Queryable("Members.Person")
+                    .Where(g => groupTypeIds.Contains(g.GroupTypeId))
+                    .ToList();
+
+                groups = groups
+                    .Where(g =>
+                    {
+                        g.LoadAttributes(rockContext);
+                        var value = g.GetAttributeValue(sendRsvpEmailsAttributeGuid.ToString());
+                        return value.AsBoolean();
+                    })
+                    .ToList();
+
+                int emailsSent = 0;
+                var occurrenceService = new AttendanceOccurrenceService(rockContext);
+                var attendanceService = new AttendanceService(rockContext);
+                var systemCommunicationService = new SystemCommunicationService(rockContext);
+
+                foreach (var group in groups)
+                {
+                    if (!group.RSVPReminderSystemCommunicationId.HasValue || !group.RSVPReminderOffsetDays.HasValue)
+                    {
+                        continue;
+                    }
+
+                    var communication = systemCommunicationService.Get(group.RSVPReminderSystemCommunicationId.Value);
+                    if (communication == null)
+                    {
+                        continue;
+                    }
+
+                    var reminderDate = RockDateTime.Today.AddDays(group.RSVPReminderOffsetDays.Value);
+                    var occurrence = occurrenceService
+                        .Queryable("Attendees")
+                        .FirstOrDefault(o => o.GroupId == group.Id && o.OccurrenceDate == reminderDate);
+
+                    if (occurrence == null)
+                    {
+                        occurrence = new AttendanceOccurrence
+                        {
+                            GroupId = group.Id,
+                            OccurrenceDate = reminderDate,
+                            ScheduleId = group.ScheduleId
+                        };
+                        occurrenceService.Add(occurrence);
+                        rockContext.SaveChanges();
+                    }
+
+                    var personIds = group.Members
+                        .Select(m => m.PersonId)
+                        .Distinct()
+                        .ToList();
+
+                    attendanceService.RegisterRSVPRecipients(occurrence.Id, personIds);
+
+                    foreach (var personId in personIds)
+                    {
+                        var person = group.Members.FirstOrDefault(m => m.PersonId == personId)?.Person;
+                        if (person == null || !person.IsEmailActive)
+                        {
+                            continue;
+                        }
+
+                        var mergeFields = Rock.Lava.LavaHelper.GetCommonMergeFields(null, person);
+                        mergeFields.Add("Person", person);
+                        mergeFields.Add("Group", group);
+                        mergeFields.Add("Occurrence", occurrence);
+
+                        var recipient = new RockEmailMessageRecipient(person, mergeFields);
+                        var message = new RockEmailMessage(communication);
+                        message.SetRecipients(new List<RockEmailMessageRecipient> { recipient });
+                        message.Send(out List<string> errors);
+                        if (!errors.Any())
+                        {
+                            emailsSent++;
+                        }
+                    }
+                }
+
+                rockContext.SaveChanges();
+                Result = $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}.";
             }
-            
+        
+        private StringBuilder FormatWarningMessage(string warning)
+        {
+            var errorMessages = new List<string> { warning };
+            return FormatMessages(errorMessages, "Warning");
+        }
 
-            var resultMsg = new StringBuilder();
+        /// <summary>
+        /// Handles the error messages. Throws an exception if there are any items in the errorMessages parameter
+        /// </summary>
+        /// <param name="errorMessages">The error messages.</param>
+        private void HandleErrorMessages(List<string> errorMessages)
+        {
+            if (errorMessages.Any())
+            {
+                StringBuilder sb = new StringBuilder(this.Result.ToString());
+                sb.Append(FormatMessages(errorMessages, "Error"));
 
+                var resultMessage = sb.ToString();
+                this.Result = resultMessage;
+                var exception = new Exception(resultMessage);
 
-            this.Result = "";
+                HttpContext context2 = HttpContext.Current;
+                ExceptionLogService.LogException(exception, context2);
+                throw exception;
+            }
+        }
+
+        private StringBuilder FormatMessages(List<string> messages, string label)
+        {
+            StringBuilder sb = new StringBuilder();
+            if (messages.Any())
+            {
+                var pluralizedLabel = label.PluralizeIf(messages.Count > 1);
+                sb.AppendLine($"{messages.Count} {pluralizedLabel}:");
+                messages.ForEach(w => { sb.AppendLine(w); });
+            }
+            return sb;
         }
     }
 }
