@@ -48,7 +48,6 @@ namespace Rock.Jobs
             var rockContext = new RockContext();
             var groupService = new GroupService( rockContext );
             var groupTypeService = new GroupTypeService(rockContext);
-            //var groupType = GroupTypeCache.Get(GetAttributeValue(AttributeKey.MasterGroupType).AsGuid());
             var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(AttributeKey.MasterGroupType).AsGuid() }).FirstOrDefault();
 
             var results = new StringBuilder();
@@ -86,7 +85,7 @@ namespace Rock.Jobs
 
                 foreach (var group in groups)
                 {
-                    if (!group.RSVPReminderSystemCommunicationId.HasValue || !group.RSVPReminderOffsetDays.HasValue)
+                    if (!group.RSVPReminderSystemCommunicationId.HasValue)
                     {
                         continue;
                     }
@@ -97,9 +96,10 @@ namespace Rock.Jobs
                         continue;
                     }
 
-                    var reminderDate = RockDateTime.Today.AddDays(group.RSVPReminderOffsetDays.Value);
+                    var offset = group.RSVPReminderOffsetDays ?? 0;
+                    var reminderDate = RockDateTime.Today.AddDays(offset);
                     var occurrence = occurrenceService
-                        .Queryable("Attendees")
+                        .Queryable()
                         .FirstOrDefault(o => o.GroupId == group.Id && o.OccurrenceDate == reminderDate);
 
                     if (occurrence == null)
