@@ -40,7 +40,7 @@ namespace com.razayya.RSVPReminders.Jobs
 
         public override void Execute()
         {
-            var sendRsvpEmailsAttributeGuid = SystemGuid.GroupAttribute.SEND_RSVP_EMAILS;
+            
             var rockContext = new RockContext();
             var groupService = new GroupService( rockContext );
             var groupTypeService = new GroupTypeService(rockContext);
@@ -51,6 +51,17 @@ namespace com.razayya.RSVPReminders.Jobs
             if (groupType == null)
             {
                 var warning = "No Auto RSVP Group Type Configured. Job cannot execute.";
+                results.Append(FormatWarningMessage(warning));
+                Logger.LogWarning(warning);
+                this.Result = results.ToString();
+                throw new RockJobWarningException(warning);
+            }
+
+            var sendRsvpEmailsAttributeGuid = groupType.Attributes.FirstOrDefault(x => x.Key == "SendsRsvpEmails").Value?.Guid;
+
+            if (sendRsvpEmailsAttributeGuid == null)
+            {
+                var warning = "No SendRsvpEmails Attribute Configured on RSVP Group Type. Job cannot execute.";
                 results.Append(FormatWarningMessage(warning));
                 Logger.LogWarning(warning);
                 this.Result = results.ToString();
