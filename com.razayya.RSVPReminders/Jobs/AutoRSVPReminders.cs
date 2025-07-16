@@ -88,7 +88,7 @@ namespace com.razayya.RSVPReminders.Jobs
 ";
 
             var groups = groupService
-                .Queryable("Members.Person,Schedule")
+                .Queryable("Members.Person,Schedule,GroupType")
                 .Where(g => groupTypeIds.Contains(g.GroupTypeId))
                 .ToList();
 
@@ -142,32 +142,49 @@ namespace com.razayya.RSVPReminders.Jobs
 
             foreach (var group in groups)
             {
-                if (!group.RSVPReminderSystemCommunicationId.HasValue || sendReminderOffsets.Count == 0)
+                if (sendReminderOffsets.Count == 0)
                 {
+                    Result += $@"{group.Id} - Validation Error - No Job Offsets Configured
+";
                     continue;
                 }
 
-                var communication = systemCommunicationService.Get(group.RSVPReminderSystemCommunicationId.Value);
+                var systemCommunicationId = group.RSVPReminderSystemCommunicationId ?? group.GroupType.RSVPReminderSystemCommunicationId;
+                if (!systemCommunicationId.HasValue)
+                {
+                    Result += $@"{group.Id} - Validation Error - No RSVP Communication Found
+";
+                    continue;
+                }
+
+                var communication = systemCommunicationService.Get(systemCommunicationId.Value);
                 if (communication == null)
                 {
+                    Result += $@"{group.Id} - Validation Error - Configured Communication Not Found.
+";
                     continue;
                 }
 
                 var occurrence = occurrenceService
                     .Queryable()
-                    .FirstOrDefault(o => o.GroupId == group.Id && DbFunctions.TruncateTime(o.OccurrenceDate) == group.Schedule.NextStartDateTime.Value);
+                    .FirstOrDefault(o => o.GroupId == group.Id && DbFunctions.TruncateTime(o.OccurrenceDate) == group.Schedule.NextStartDateTime.Value.Date );
 
                 if (occurrence == null)
                 {
+                    Result += $@"{group.Id} - No Occurrence for NextStartDate. Creating for { group.Schedule.NextStartDateTime.Value.Date.ToString() } 
+";
                     occurrence = new AttendanceOccurrence
                     {
                         GroupId = group.Id,
-                        OccurrenceDate = group.Schedule.NextStartDateTime.Value,
+                        OccurrenceDate = group.Schedule.NextStartDateTime.Value.Date,
                         ScheduleId = group.ScheduleId
                     };
                     occurrenceService.Add(occurrence);
                     rockContext.SaveChanges();
                 }
+
+                Result += $@"{group.Id} - Occurrence (Id:{occurrence.Id})
+";
 
                 var attendanceRecords = attendanceService
                     .Queryable()
@@ -175,7 +192,6 @@ namespace com.razayya.RSVPReminders.Jobs
                     .ToList();
 
                 var personIds = group.Members
-                    .Where(m => m.InactiveDateTime == null)
                     .Select(m => m.PersonId)
                     .Distinct()
                     .ToList();
@@ -184,6 +200,9 @@ namespace com.razayya.RSVPReminders.Jobs
                     .Where(pid =>
                         !attendanceRecords.Any(a => a.PersonAlias != null && a.PersonAlias.PersonId == pid && a.RSVPDateTime.HasValue))
                     .ToList();
+
+                Result += $@"{group.Id} - RegisterRSVPRecipients: { recipientsToNotify.Count } Recipients.
+";
 
                 attendanceService.RegisterRSVPRecipients(occurrence.Id, recipientsToNotify);
 
@@ -204,6 +223,7 @@ namespace com.razayya.RSVPReminders.Jobs
                     var message = new RockEmailMessage(communication);
                     message.SetRecipients(new List<RockEmailMessageRecipient> { recipient });
                     message.Send(out List<string> errors);
+                    
 
                     if (!errors.Any())
                     {
@@ -212,13 +232,20 @@ namespace com.razayya.RSVPReminders.Jobs
                     else
                     {
                         emailsFailed++;
+                        Result += $@"{group.Id}|{personId} - Communication Failed:
+";
+                        foreach (var error in errors)
+                        {
+                            Result += $@"{error}
+";
+                        }
                     }
                 }
                 
             }
 
             rockContext.SaveChanges();
-            //Result += $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.";
+            Result += $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.";
         }
         
         private StringBuilder FormatWarningMessage(string warning)
