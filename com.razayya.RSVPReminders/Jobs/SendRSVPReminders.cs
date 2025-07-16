@@ -24,7 +24,7 @@ namespace Rock.Jobs
     /// </summary>
     [DisplayName("Send RSVP Email Notifications")]
     [Description("Sends RSVP communications to group members and creates attendance records so that responses can be tracked.")]
-    [GroupTypeField("RSVP Master Group Type", "The inherited group type over all RSVP activated Group Types", true, "", "", 0, AttributeKey.MasterGroupType)]
+    [GroupTypeField("Auto RSVP Group Type", "The inherited group type over all RSVP activated Group Types", true, "", "", 0, AttributeKey.AutoRSVPGroupType)]
     [TextField("Send Reminders",
         Description = "Comma delimited list of days after a group meets to send an additional reminder. For example, a value of '2,4' would result in an additional reminder getting sent two and four days after group meets if attendance was not entered.",
         Key = AttributeKey.SendReminders,
@@ -34,7 +34,7 @@ namespace Rock.Jobs
     {
         private static class AttributeKey
         {
-            public const string MasterGroupType = "MasterGroupType";
+            public const string AutoRSVPGroupType = "AutoRSVPGroupType";
             public const string SendReminders = "SendReminders";
         }
 
@@ -48,13 +48,13 @@ namespace Rock.Jobs
             var rockContext = new RockContext();
             var groupService = new GroupService( rockContext );
             var groupTypeService = new GroupTypeService(rockContext);
-            var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(AttributeKey.MasterGroupType).AsGuid() }).FirstOrDefault();
+            var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(AttributeKey.AutoRSVPGroupType).AsGuid() }).FirstOrDefault();
 
             var results = new StringBuilder();
 
             if (groupType == null)
             {
-                var warning = "No Master Group Type Configured. Job cannot execute.";
+                var warning = "No Auto RSVP Group Type Configured. Job cannot execute.";
                 results.Append(FormatWarningMessage(warning));
                 Logger.LogWarning(warning);
                 this.Result = results.ToString();
@@ -62,66 +62,70 @@ namespace Rock.Jobs
             }
 
             var groupTypeIds = groupType.GetAllDependentGroupTypeIds(rockContext);
-                groupTypeIds.Add(groupType.Id);
+            groupTypeIds.Add(groupType.Id);
 
-                var groups = groupService
-                    .Queryable("Members.Person")
-                    .Where(g => groupTypeIds.Contains(g.GroupTypeId))
-                    .ToList();
+            var groups = groupService
+                .Queryable("Members.Person")
+                .Where(g => groupTypeIds.Contains(g.GroupTypeId))
+                .ToList();
 
-                groups = groups
-                    .Where(g =>
-                    {
-                        g.LoadAttributes(rockContext);
-                        var value = g.GetAttributeValue(sendRsvpEmailsAttributeGuid.ToString());
-                        return value.AsBoolean();
-                    })
-                    .ToList();
-
-                int emailsSent = 0;
-                var occurrenceService = new AttendanceOccurrenceService(rockContext);
-                var attendanceService = new AttendanceService(rockContext);
-                var systemCommunicationService = new SystemCommunicationService(rockContext);
-
-                foreach (var group in groups)
+            groups = groups
+                .Where(g =>
                 {
-                    if (!group.RSVPReminderSystemCommunicationId.HasValue)
+                    g.LoadAttributes(rockContext);
+                    var value = g.GetAttributeValue(sendRsvpEmailsAttributeGuid.ToString());
+                    return value.AsBoolean();
+                })
+                .ToList();
+
+            int emailsSent = 0;
+            int emailsFailed = 0;
+            var occurrenceService = new AttendanceOccurrenceService(rockContext);
+            var attendanceService = new AttendanceService(rockContext);
+            var systemCommunicationService = new SystemCommunicationService(rockContext);
+
+            foreach (var group in groups)
+            {
+                if (!group.RSVPReminderSystemCommunicationId.HasValue)
+                {
+                    continue;
+                }
+
+                var communication = systemCommunicationService.Get(group.RSVPReminderSystemCommunicationId.Value);
+                if (communication == null)
+                {
+                    continue;
+                }
+
+                var offset = group.RSVPReminderOffsetDays ?? 0;
+                var reminderDate = RockDateTime.Today.AddDays(offset);
+                var occurrence = occurrenceService
+                    .Queryable()
+                    .FirstOrDefault(o => o.GroupId == group.Id && o.OccurrenceDate == reminderDate);
+
+                if (occurrence == null)
+                {
+                    occurrence = new AttendanceOccurrence
                     {
-                        continue;
-                    }
+                        GroupId = group.Id,
+                        OccurrenceDate = reminderDate,
+                        ScheduleId = group.ScheduleId
+                    };
+                    occurrenceService.Add(occurrence);
+                    rockContext.SaveChanges();
+                }
 
-                    var communication = systemCommunicationService.Get(group.RSVPReminderSystemCommunicationId.Value);
-                    if (communication == null)
-                    {
-                        continue;
-                    }
+                var personIds = group.Members
+                    .Where(x => x.InactiveDateTime == null)
+                    .Select(m => m.PersonId)
+                    .Distinct()
+                    .ToList();
 
-                    var offset = group.RSVPReminderOffsetDays ?? 0;
-                    var reminderDate = RockDateTime.Today.AddDays(offset);
-                    var occurrence = occurrenceService
-                        .Queryable()
-                        .FirstOrDefault(o => o.GroupId == group.Id && o.OccurrenceDate == reminderDate);
+                attendanceService.RegisterRSVPRecipients(occurrence.Id, personIds);
 
-                    if (occurrence == null)
-                    {
-                        occurrence = new AttendanceOccurrence
-                        {
-                            GroupId = group.Id,
-                            OccurrenceDate = reminderDate,
-                            ScheduleId = group.ScheduleId
-                        };
-                        occurrenceService.Add(occurrence);
-                        rockContext.SaveChanges();
-                    }
-
-                    var personIds = group.Members
-                        .Select(m => m.PersonId)
-                        .Distinct()
-                        .ToList();
-
-                    attendanceService.RegisterRSVPRecipients(occurrence.Id, personIds);
-
-                    foreach (var personId in personIds)
+                foreach (var personId in personIds)
+                {
+                    try
                     {
                         var person = group.Members.FirstOrDefault(m => m.PersonId == personId)?.Person;
                         if (person == null || !person.IsEmailActive)
@@ -142,38 +146,22 @@ namespace Rock.Jobs
                         {
                             emailsSent++;
                         }
+                        else
+                        {
+                            emailsFailed++;
+                        }
                     }
                 }
-
-                rockContext.SaveChanges();
-                Result = $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}.";
             }
+
+            rockContext.SaveChanges();
+            Result = $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.";
+        }
         
         private StringBuilder FormatWarningMessage(string warning)
         {
             var errorMessages = new List<string> { warning };
             return FormatMessages(errorMessages, "Warning");
-        }
-
-        /// <summary>
-        /// Handles the error messages. Throws an exception if there are any items in the errorMessages parameter
-        /// </summary>
-        /// <param name="errorMessages">The error messages.</param>
-        private void HandleErrorMessages(List<string> errorMessages)
-        {
-            if (errorMessages.Any())
-            {
-                StringBuilder sb = new StringBuilder(this.Result.ToString());
-                sb.Append(FormatMessages(errorMessages, "Error"));
-
-                var resultMessage = sb.ToString();
-                this.Result = resultMessage;
-                var exception = new Exception(resultMessage);
-
-                HttpContext context2 = HttpContext.Current;
-                ExceptionLogService.LogException(exception, context2);
-                throw exception;
-            }
         }
 
         private StringBuilder FormatMessages(List<string> messages, string label)
