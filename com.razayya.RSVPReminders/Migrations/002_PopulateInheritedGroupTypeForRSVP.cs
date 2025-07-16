@@ -13,6 +13,7 @@ using Rock;
 
 namespace com.razayya.RSVPReminders.Migrations
 {
+    [MigrationNumber( 2, "1.15.0" )]
     public class PopulateInheritedGroupTypeForRSVP : Migration
     {
         public override void Up()
