@@ -43,7 +43,7 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Jobs\SendRSVPReminders.cs" />
+    <Compile Include="Jobs\AutoRSVPReminders.cs" />
     <Compile Include="Migrations\002_PopulateInheritedGroupTypeForRSVP.cs" />
     <Compile Include="Migrations\001_AddRSVPGroupType.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

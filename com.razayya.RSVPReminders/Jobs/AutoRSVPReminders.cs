@@ -32,7 +32,7 @@ namespace com.razayya.RSVPReminders.Jobs
         Key = AttributeKey.SendReminders,
         IsRequired = false,
         Order = 1)]
-    public class SendRSVPReminders : RockJob
+    public class AutoRSVPReminders : RockJob
     {
         private static class AttributeKey
         {
@@ -40,7 +40,7 @@ namespace com.razayya.RSVPReminders.Jobs
             public const string SendReminders = "SendReminders";
         }
 
-        public SendRSVPReminders()
+        public AutoRSVPReminders()
         {
         }
 
