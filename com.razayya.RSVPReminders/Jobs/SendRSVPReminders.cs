@@ -16,7 +16,7 @@ using Rock.Model;
 using Rock.Web.Cache;
 
 
-namespace Rock.Jobs
+namespace com.razayya.RSVPReminders.Jobs
 {
     /// <summary>
     /// Sends RSVP emails to groups configured for RSVP reminders and registers all
