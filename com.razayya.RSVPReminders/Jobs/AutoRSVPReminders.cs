@@ -97,7 +97,11 @@ namespace com.razayya.RSVPReminders.Jobs
                 .Where(g =>
                 {
                     g.LoadAttributes(rockContext);
-                    var value = g.GetAttributeValue(Constants.AttributeKey.SendsRsvpEmails);
+                    var value = g.GetAttributeValue(SystemGuid.GroupAttribute.SEND_RSVP_EMAILS.AsGuid());
+                    if (value != null)
+                    {
+                        Result += $@"{g.ToJson()}";
+                    }
                     return value.AsBoolean();
                 })
                 .ToList();
