@@ -26,7 +26,7 @@ namespace com.razayya.RSVPReminders.Jobs
     /// </summary>
     [DisplayName("Send RSVP Email Notifications")]
     [Description("Sends RSVP communications to group members and creates attendance records so that responses can be tracked.")]
-    [GroupTypeField("Auto RSVP Group Type", "The inherited group type over all RSVP activated Group Types", true, "", "", 0, AttributeKey.AutoRSVPGroupType)]
+    [GroupTypeField("Auto RSVP Group Type", "The inherited group type over all RSVP activated Group Types", true, SystemGuid.GroupType.AUTO_RSVP_GROUP, "", 0, AttributeKey.AutoRSVPGroupType)]
     [TextField("Send Reminders",
         Description = "Comma delimited list of days after a group meets to send an additional reminder. For example, a value of '2,4' would result in an additional reminder getting sent two and four days after group meets if attendance was not entered.",
         Key = AttributeKey.SendReminders,
