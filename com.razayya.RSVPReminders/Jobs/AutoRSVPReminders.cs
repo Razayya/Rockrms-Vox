@@ -26,20 +26,14 @@ namespace com.razayya.RSVPReminders.Jobs
     /// </summary>
     [DisplayName("Send RSVP Email Notifications")]
     [Description("Sends RSVP communications to group members and creates attendance records so that responses can be tracked.")]
-    [GroupTypeField("Auto RSVP Group Type", "The inherited group type over all RSVP activated Group Types", true, SystemGuid.GroupType.AUTO_RSVP_GROUP, "", 0, AttributeKey.AutoRSVPGroupType)]
+    [GroupTypeField("Auto RSVP Group Type", "The inherited group type over all RSVP activated Group Types", true, SystemGuid.Guids.AUTO_RSVP_GROUP, "", 0, Constants.AttributeKey.AutoRSVPGroupType)]
     [TextField("Send Reminders",
         Description = "Comma delimited list of days after a group meets to send an additional reminder. For example, a value of '2,4' would result in an additional reminder getting sent two and four days after group meets if attendance was not entered.",
-        Key = AttributeKey.SendReminders,
+        Key = Constants.AttributeKey.SendReminders,
         IsRequired = false,
         Order = 1)]
     public class AutoRSVPReminders : RockJob
-    {
-        private static class AttributeKey
-        {
-            public const string AutoRSVPGroupType = "AutoRSVPGroupType";
-            public const string SendReminders = "SendReminders";
-        }
-
+    {      
         public AutoRSVPReminders()
         {
         }
@@ -50,7 +44,7 @@ namespace com.razayya.RSVPReminders.Jobs
             var rockContext = new RockContext();
             var groupService = new GroupService( rockContext );
             var groupTypeService = new GroupTypeService(rockContext);
-            var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(AttributeKey.AutoRSVPGroupType).AsGuid() }).FirstOrDefault();
+            var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(Constants.AttributeKey.AutoRSVPGroupType).AsGuid() }).FirstOrDefault();
 
             var results = new StringBuilder();
 
