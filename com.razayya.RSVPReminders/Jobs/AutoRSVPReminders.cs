@@ -47,7 +47,7 @@ namespace com.razayya.RSVPReminders.Jobs
             var entityService = new EntityTypeService(rockContext);
             var groupService = new GroupService(rockContext);
             var groupTypeService = new GroupTypeService(rockContext);
-            var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(Constants.AttributeKey.AutoRSVPGroupType).AsGuid() }).Include(x => x.Attributes).FirstOrDefault();
+            var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(Constants.AttributeKey.AutoRSVPGroupType).AsGuid() }).FirstOrDefault();
 
             var results = new StringBuilder();
 
