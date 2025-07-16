@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using Rock.Attribute;
 using Rock.Communication;
 using Rock.Data;
+using Rock.Jobs;
 using Rock.Logging;
 using Rock.Model;
 using Rock.Web.Cache;
