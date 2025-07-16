@@ -16,6 +16,7 @@ using Rock.Jobs;
 using Rock.Logging;
 using Rock.Model;
 using Rock.Web.Cache;
+using Rock.Lava.RockLiquid.Blocks;
 
 
 namespace com.razayya.RSVPReminders.Jobs
@@ -51,6 +52,13 @@ namespace com.razayya.RSVPReminders.Jobs
 
             var results = new StringBuilder();
 
+            var sendReminderOffsets = GetAttributeValue(Constants.AttributeKey.SendReminders)
+                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim().AsIntegerOrNull())
+                .Where(d => d.HasValue)
+                .Select(d => d.Value)
+                .ToList();
+
             if (groupType == null)
             {
                 var warning = "No Auto RSVP Group Type Configured. Job cannot execute.";
@@ -59,9 +67,6 @@ namespace com.razayya.RSVPReminders.Jobs
                 this.Result = results.ToString();
                 throw new RockJobWarningException(warning);
             }
-
-            Result += $@"GroupType found: { groupType.Name }
-";
 
             var groupEntityTypeId = entityService.GetByName("Rock.Model.Group", false).Id;
             var sendRsvpEmailsAttributeGuid = attrService.Get(groupEntityTypeId, "GroupTypeId", groupType.Id.ToString()).FirstOrDefault(x => x.Key == Constants.AttributeKey.SendsRsvpEmails)?.Guid;
@@ -75,52 +80,63 @@ namespace com.razayya.RSVPReminders.Jobs
                 throw new RockJobWarningException(warning);
             }
 
-            Result += $@"RsvpAttribute found: {sendRsvpEmailsAttributeGuid}
-";
-
             var groupTypeIds = groupType.GetAllDependentGroupTypeIds(rockContext);
             groupTypeIds.Add(groupType.Id);
 
-            Result += $@"Inherited GroupType Count: {groupTypeIds.Count}
-";
+            this.UpdateLastStatusMessage($@"Inherited GroupType Count: {groupTypeIds.Count}");
 
             var groups = groupService
-                .Queryable("Members.Person")
+                .Queryable("Members.Person,Schedule")
                 .Where(g => groupTypeIds.Contains(g.GroupTypeId))
                 .ToList();
 
-            Result += $@"Initial Group Count: {groups.Count}
-";
-
+            this.UpdateLastStatusMessage($@"Group Filter 1. {groups.Count} prior to filter.");
 
             groups = groups
                 .Where(g =>
                 {
-                    g.LoadAttributes(rockContext);
-                    var value = g.GetAttributeValue(SystemGuid.GroupAttribute.SEND_RSVP_EMAILS.AsGuid());
-                    if (value != null)
+                    if (g.Schedule != null)
                     {
-                        Result += $@"{g.ToJson()}";
+                        g.LoadAttributes(rockContext);
+                        var value = g.GetAttributeValue(SystemGuid.GroupAttribute.SEND_RSVP_EMAILS.AsGuid());
+                        return value.AsBoolean();
                     }
-                    return value.AsBoolean();
+                    else
+                    {
+                        return false;
+                    }
                 })
                 .ToList();
 
-            Result += $@"Filtered Group Count: {groups.Count}
-";
+            this.UpdateLastStatusMessage($@"Group Filter 2. {groups.Count} prior to filter.");
+
+            groups = groups
+                .Where(g =>
+                {
+                    var matchesOffset = false;
+
+                    foreach (int offset in sendReminderOffsets)
+                    {
+                        var reminderDate = RockDateTime.Today.AddDays(offset * -1);
+                        if (DbFunctions.TruncateTime(g.Schedule.NextStartDateTime) == reminderDate)
+                        {
+                            matchesOffset = true;
+                            break;
+                        }
+                    }
+                    return matchesOffset;
+                })
+                .ToList();
+
+
+
+            this.UpdateLastStatusMessage($@"Processing {groups.Count} Groups.");
 
             int emailsSent = 0;
             int emailsFailed = 0;
             var occurrenceService = new AttendanceOccurrenceService(rockContext);
             var attendanceService = new AttendanceService(rockContext);
             var systemCommunicationService = new SystemCommunicationService(rockContext);
-
-            var sendReminderOffsets = GetAttributeValue(Constants.AttributeKey.SendReminders)
-                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(s => s.Trim().AsIntegerOrNull())
-                .Where(d => d.HasValue)
-                .Select(d => d.Value)
-                .ToList();
 
             foreach (var group in groups)
             {
@@ -135,64 +151,68 @@ namespace com.razayya.RSVPReminders.Jobs
                     continue;
                 }
 
-                foreach (var offset in sendReminderOffsets)
-                {
-                    var reminderDate = RockDateTime.Today.AddDays(offset * -1); // Offset is days BEFORE the event
-                    var occurrence = occurrenceService
-                        .Queryable()
-                        .FirstOrDefault(o => o.GroupId == group.Id && DbFunctions.TruncateTime(o.OccurrenceDate) == reminderDate);
+                var occurrence = occurrenceService
+                    .Queryable()
+                    .FirstOrDefault(o => o.GroupId == group.Id && DbFunctions.TruncateTime(o.OccurrenceDate) == group.Schedule.NextStartDateTime.Value);
 
-                    if (occurrence == null)
+                if (occurrence == null)
+                {
+                    occurrence = new AttendanceOccurrence
                     {
-                        continue; // No occurrence on this reminder date
+                        GroupId = group.Id,
+                        OccurrenceDate = group.Schedule.NextStartDateTime.Value,
+                        ScheduleId = group.ScheduleId
+                    };
+                    occurrenceService.Add(occurrence);
+                    rockContext.SaveChanges();
+                }
+
+                var attendanceRecords = attendanceService
+                    .Queryable()
+                    .Where(a => a.OccurrenceId == occurrence.Id)
+                    .ToList();
+
+                var personIds = group.Members
+                    .Where(m => m.InactiveDateTime == null)
+                    .Select(m => m.PersonId)
+                    .Distinct()
+                    .ToList();
+
+                var recipientsToNotify = personIds
+                    .Where(pid =>
+                        !attendanceRecords.Any(a => a.PersonAlias != null && a.PersonAlias.PersonId == pid && a.RSVPDateTime.HasValue))
+                    .ToList();
+
+                attendanceService.RegisterRSVPRecipients(occurrence.Id, recipientsToNotify);
+
+                foreach (var personId in recipientsToNotify)
+                {
+                    var person = group.Members.FirstOrDefault(m => m.PersonId == personId)?.Person;
+                    if (person == null || !person.IsEmailActive)
+                    {
+                        continue;
                     }
 
-                    var attendanceRecords = attendanceService
-                        .Queryable()
-                        .Where(a => a.OccurrenceId == occurrence.Id)
-                        .ToList();
+                    var mergeFields = Rock.Lava.LavaHelper.GetCommonMergeFields(null, person);
+                    mergeFields.Add("Person", person);
+                    mergeFields.Add("Group", group);
+                    mergeFields.Add("Occurrence", occurrence);
 
-                    var personIds = group.Members
-                        .Where(m => m.InactiveDateTime == null)
-                        .Select(m => m.PersonId)
-                        .Distinct()
-                        .ToList();
+                    var recipient = new RockEmailMessageRecipient(person, mergeFields);
+                    var message = new RockEmailMessage(communication);
+                    message.SetRecipients(new List<RockEmailMessageRecipient> { recipient });
+                    message.Send(out List<string> errors);
 
-                    var recipientsToNotify = personIds
-                        .Where(pid =>
-                            !attendanceRecords.Any(a => a.PersonAlias != null && a.PersonAlias.PersonId == pid && a.RSVPDateTime.HasValue))
-                        .ToList();
-
-                    attendanceService.RegisterRSVPRecipients(occurrence.Id, recipientsToNotify);
-
-                    foreach (var personId in recipientsToNotify)
+                    if (!errors.Any())
                     {
-                        var person = group.Members.FirstOrDefault(m => m.PersonId == personId)?.Person;
-                        if (person == null || !person.IsEmailActive)
-                        {
-                            continue;
-                        }
-
-                        var mergeFields = Rock.Lava.LavaHelper.GetCommonMergeFields(null, person);
-                        mergeFields.Add("Person", person);
-                        mergeFields.Add("Group", group);
-                        mergeFields.Add("Occurrence", occurrence);
-
-                        var recipient = new RockEmailMessageRecipient(person, mergeFields);
-                        var message = new RockEmailMessage(communication);
-                        message.SetRecipients(new List<RockEmailMessageRecipient> { recipient });
-                        message.Send(out List<string> errors);
-
-                        if (!errors.Any())
-                        {
-                            emailsSent++;
-                        }
-                        else
-                        {
-                            emailsFailed++;
-                        }
+                        emailsSent++;
+                    }
+                    else
+                    {
+                        emailsFailed++;
                     }
                 }
+                
             }
 
             rockContext.SaveChanges();
