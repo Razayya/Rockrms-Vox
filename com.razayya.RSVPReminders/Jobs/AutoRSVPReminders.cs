@@ -43,6 +43,8 @@ namespace com.razayya.RSVPReminders.Jobs
         {
 
             var rockContext = new RockContext();
+            var attrService = new AttributeService(rockContext);
+            var entityService = new EntityTypeService(rockContext);
             var groupService = new GroupService(rockContext);
             var groupTypeService = new GroupTypeService(rockContext);
             var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(Constants.AttributeKey.AutoRSVPGroupType).AsGuid() }).Include(x => x.Attributes).FirstOrDefault();
@@ -58,7 +60,8 @@ namespace com.razayya.RSVPReminders.Jobs
                 throw new RockJobWarningException(warning);
             }
 
-            var sendRsvpEmailsAttributeGuid = groupType.Attributes.FirstOrDefault(x => x.Key == "SendsRsvpEmails").Value?.Guid;
+            var groupEntityTypeId = entityService.GetByName("Rock.Model.Group", false).Id;
+            var sendRsvpEmailsAttributeGuid = attrService.Get(groupEntityTypeId, "GroupTypeId", groupType.Id.ToString()).FirstOrDefault(x => x.Key == "SendsRsvpEmails")?.Guid;
 
             if (sendRsvpEmailsAttributeGuid == null)
             {
