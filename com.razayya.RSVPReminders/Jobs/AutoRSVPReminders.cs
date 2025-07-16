@@ -64,7 +64,7 @@ namespace com.razayya.RSVPReminders.Jobs
 ";
 
             var groupEntityTypeId = entityService.GetByName("Rock.Model.Group", false).Id;
-            var sendRsvpEmailsAttributeGuid = attrService.Get(groupEntityTypeId, "GroupTypeId", groupType.Id.ToString()).FirstOrDefault(x => x.Key == Constants.AttributeKey.SendRsvpEmails)?.Guid;
+            var sendRsvpEmailsAttributeGuid = attrService.Get(groupEntityTypeId, "GroupTypeId", groupType.Id.ToString()).FirstOrDefault(x => x.Key == "SendRsvpEmails")?.Guid;
 
             if (sendRsvpEmailsAttributeGuid == null)
             {
@@ -97,7 +97,7 @@ namespace com.razayya.RSVPReminders.Jobs
                 .Where(g =>
                 {
                     g.LoadAttributes(rockContext);
-                    var value = g.GetAttributeValue(Constants.AttributeKey.SendRsvpEmails);
+                    var value = g.GetAttributeValue("SendRsvpEmails");
                     return value.AsBoolean();
                 })
                 .ToList();
