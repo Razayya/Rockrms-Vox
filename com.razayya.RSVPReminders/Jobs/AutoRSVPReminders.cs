@@ -40,9 +40,9 @@ namespace com.razayya.RSVPReminders.Jobs
 
         public override void Execute()
         {
-            
+
             var rockContext = new RockContext();
-            var groupService = new GroupService( rockContext );
+            var groupService = new GroupService(rockContext);
             var groupTypeService = new GroupTypeService(rockContext);
             var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(Constants.AttributeKey.AutoRSVPGroupType).AsGuid() }).FirstOrDefault();
 
@@ -91,9 +91,16 @@ namespace com.razayya.RSVPReminders.Jobs
             var attendanceService = new AttendanceService(rockContext);
             var systemCommunicationService = new SystemCommunicationService(rockContext);
 
+            var sendReminderOffsets = GetAttributeValue(Constants.AttributeKey.SendReminders)
+                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim().AsIntegerOrNull())
+                .Where(d => d.HasValue)
+                .Select(d => d.Value)
+                .ToList();
+
             foreach (var group in groups)
             {
-                if (!group.RSVPReminderSystemCommunicationId.HasValue)
+                if (!group.RSVPReminderSystemCommunicationId.HasValue || sendReminderOffsets.Count == 0)
                 {
                     continue;
                 }
@@ -104,56 +111,62 @@ namespace com.razayya.RSVPReminders.Jobs
                     continue;
                 }
 
-                var offset = group.RSVPReminderOffsetDays ?? 0;
-                var reminderDate = RockDateTime.Today.AddDays(offset);
-                var occurrence = occurrenceService
-                    .Queryable()
-                    .FirstOrDefault(o => o.GroupId == group.Id && o.OccurrenceDate == reminderDate);
-
-                if (occurrence == null)
+                foreach (var offset in sendReminderOffsets)
                 {
-                    occurrence = new AttendanceOccurrence
+                    var reminderDate = RockDateTime.Today.AddDays(offset * -1); // Offset is days BEFORE the event
+                    var occurrence = occurrenceService
+                        .Queryable()
+                        .FirstOrDefault(o => o.GroupId == group.Id && DbFunctions.TruncateTime(o.OccurrenceDate) == reminderDate);
+
+                    if (occurrence == null)
                     {
-                        GroupId = group.Id,
-                        OccurrenceDate = reminderDate,
-                        ScheduleId = group.ScheduleId
-                    };
-                    occurrenceService.Add(occurrence);
-                    rockContext.SaveChanges();
-                }
-
-                var personIds = group.Members
-                    .Where(x => x.InactiveDateTime == null)
-                    .Select(m => m.PersonId)
-                    .Distinct()
-                    .ToList();
-
-                attendanceService.RegisterRSVPRecipients(occurrence.Id, personIds);
-
-                foreach (var personId in personIds)
-                {
-                    var person = group.Members.FirstOrDefault(m => m.PersonId == personId)?.Person;
-                    if (person == null || !person.IsEmailActive)
-                    {
-                        continue;
+                        continue; // No occurrence on this reminder date
                     }
 
-                    var mergeFields = Rock.Lava.LavaHelper.GetCommonMergeFields(null, person);
-                    mergeFields.Add("Person", person);
-                    mergeFields.Add("Group", group);
-                    mergeFields.Add("Occurrence", occurrence);
+                    var attendanceRecords = attendanceService
+                        .Queryable()
+                        .Where(a => a.OccurrenceId == occurrence.Id)
+                        .ToList();
 
-                    var recipient = new RockEmailMessageRecipient(person, mergeFields);
-                    var message = new RockEmailMessage(communication);
-                    message.SetRecipients(new List<RockEmailMessageRecipient> { recipient });
-                    message.Send(out List<string> errors);
-                    if (!errors.Any())
+                    var personIds = group.Members
+                        .Where(m => m.InactiveDateTime == null)
+                        .Select(m => m.PersonId)
+                        .Distinct()
+                        .ToList();
+
+                    var recipientsToNotify = personIds
+                        .Where(pid =>
+                            !attendanceRecords.Any(a => a.PersonAlias != null && a.PersonAlias.PersonId == pid && a.RSVPDateTime.HasValue))
+                        .ToList();
+
+                    attendanceService.RegisterRSVPRecipients(occurrence.Id, recipientsToNotify);
+
+                    foreach (var personId in recipientsToNotify)
                     {
-                        emailsSent++;
-                    }
-                    else
-                    {
-                        emailsFailed++;
+                        var person = group.Members.FirstOrDefault(m => m.PersonId == personId)?.Person;
+                        if (person == null || !person.IsEmailActive)
+                        {
+                            continue;
+                        }
+
+                        var mergeFields = Rock.Lava.LavaHelper.GetCommonMergeFields(null, person);
+                        mergeFields.Add("Person", person);
+                        mergeFields.Add("Group", group);
+                        mergeFields.Add("Occurrence", occurrence);
+
+                        var recipient = new RockEmailMessageRecipient(person, mergeFields);
+                        var message = new RockEmailMessage(communication);
+                        message.SetRecipients(new List<RockEmailMessageRecipient> { recipient });
+                        message.Send(out List<string> errors);
+
+                        if (!errors.Any())
+                        {
+                            emailsSent++;
+                        }
+                        else
+                        {
+                            emailsFailed++;
+                        }
                     }
                 }
             }
