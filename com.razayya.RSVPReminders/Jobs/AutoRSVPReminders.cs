@@ -84,14 +84,16 @@ namespace com.razayya.RSVPReminders.Jobs
             var groupTypeIds = groupType.GetAllDependentGroupTypeIds(rockContext);
             groupTypeIds.Add(groupType.Id);
 
-            this.UpdateLastStatusMessage($@"Inherited GroupType Count: {groupTypeIds.Count}");
+            Result += $@"Inherited GroupType Count: {groupTypeIds.Count}
+";
 
             var groups = groupService
                 .Queryable("Members.Person,Schedule")
                 .Where(g => groupTypeIds.Contains(g.GroupTypeId))
                 .ToList();
 
-            this.UpdateLastStatusMessage($@"Filtering groups. {groups.Count} prior to filter.");
+            Result += $@"Filtering groups. {groups.Count} prior to filter.
+";
 
             groups = groups
                 .Where(g =>
@@ -100,13 +102,22 @@ namespace com.razayya.RSVPReminders.Jobs
                     {
                         g.LoadAttributes(rockContext);
                         var value = g.GetAttributeValue(SystemGuid.GroupAttribute.SEND_RSVP_EMAILS.AsGuid());
+
                         if (value.AsBoolean())
                         {
                             var nextDate = g.Schedule?.NextStartDateTime;
 
-                            if (!nextDate.HasValue) return false;
+                            if (nextDate.HasValue)
+                            {
+                                var date = nextDate.Value.Date;
+                                return sendReminderOffsets.Any(offset => date.AddDays(offset * -1) == RockDateTime.Today);
+                            }
+                            else
+                            {
+                                return false;
+                            }
 
-                            return sendReminderOffsets.Any(offset => nextDate == RockDateTime.Today.AddDays(offset * -1));
+                            
                         }
                         else
                         {
@@ -120,7 +131,8 @@ namespace com.razayya.RSVPReminders.Jobs
                 })
                 .ToList();
 
-            this.UpdateLastStatusMessage($@"Processing {groups.Count} Groups.");
+            Result += $@"Processing {groups.Count} Groups.
+";
 
             int emailsSent = 0;
             int emailsFailed = 0;
@@ -206,7 +218,7 @@ namespace com.razayya.RSVPReminders.Jobs
             }
 
             rockContext.SaveChanges();
-            Result += $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.";
+            //Result += $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.";
         }
         
         private StringBuilder FormatWarningMessage(string warning)
