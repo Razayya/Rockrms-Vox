@@ -60,6 +60,9 @@ namespace com.razayya.RSVPReminders.Jobs
                 throw new RockJobWarningException(warning);
             }
 
+            Result += $@"GroupType found: { groupType.Name }
+";
+
             var groupEntityTypeId = entityService.GetByName("Rock.Model.Group", false).Id;
             var sendRsvpEmailsAttributeGuid = attrService.Get(groupEntityTypeId, "GroupTypeId", groupType.Id.ToString()).FirstOrDefault(x => x.Key == "SendsRsvpEmails")?.Guid;
 
@@ -72,13 +75,23 @@ namespace com.razayya.RSVPReminders.Jobs
                 throw new RockJobWarningException(warning);
             }
 
+            Result += $@"RsvpAttribute found: {sendRsvpEmailsAttributeGuid}
+";
+
             var groupTypeIds = groupType.GetAllDependentGroupTypeIds(rockContext);
             groupTypeIds.Add(groupType.Id);
+
+            Result += $@"Inherited GroupType Count: {groupTypeIds.Count}
+";
 
             var groups = groupService
                 .Queryable("Members.Person")
                 .Where(g => groupTypeIds.Contains(g.GroupTypeId))
                 .ToList();
+
+            Result += $@"Initial Group Count: {groups.Count}
+";
+
 
             groups = groups
                 .Where(g =>
@@ -88,6 +101,9 @@ namespace com.razayya.RSVPReminders.Jobs
                     return value.AsBoolean();
                 })
                 .ToList();
+
+            Result += $@"Filtered Group Count: {groups.Count}
+";
 
             int emailsSent = 0;
             int emailsFailed = 0;
@@ -176,7 +192,7 @@ namespace com.razayya.RSVPReminders.Jobs
             }
 
             rockContext.SaveChanges();
-            Result = $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.";
+            Result += $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.";
         }
         
         private StringBuilder FormatWarningMessage(string warning)
