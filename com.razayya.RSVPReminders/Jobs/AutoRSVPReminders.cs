@@ -28,7 +28,7 @@ namespace com.razayya.RSVPReminders.Jobs
     [Description("Sends RSVP communications to group members and creates attendance records so that responses can be tracked.")]
     [GroupTypeField("Auto RSVP Group Type", "The inherited group type over all RSVP activated Group Types", true, SystemGuid.GroupType.AUTO_RSVP_GROUP, "", 0, Constants.AttributeKey.AutoRSVPGroupType)]
     [TextField("Send Reminders",
-        Description = "Comma delimited list of days after a group meets to send an additional reminder. For example, a value of '2,4' would result in an additional reminder getting sent two and four days after group meets if attendance was not entered.",
+        Description = "Comma delimited list of days before a group meets to send an RSVP reminder. For example, a value of '2,4' would result in an additional reminder getting sent two and four days before group meets if RSVP has not been entered.",
         Key = Constants.AttributeKey.SendReminders,
         IsRequired = false,
         Order = 1)]
@@ -40,7 +40,7 @@ namespace com.razayya.RSVPReminders.Jobs
 
         public override void Execute()
         {
-            var sendRsvpEmailsAttributeGuid = Guid.Empty;
+            var sendRsvpEmailsAttributeGuid = SystemGuid.GroupAttribute.SEND_RSVP_EMAILS;
             var rockContext = new RockContext();
             var groupService = new GroupService( rockContext );
             var groupTypeService = new GroupTypeService(rockContext);
