@@ -30,8 +30,9 @@ namespace com.razayya.RSVPReminders.Jobs
     [TextField("Send Reminders",
         Description = "Comma delimited list of days before a group meets to send an RSVP reminder. For example, a value of '2,4' would result in an additional reminder getting sent two and four days before group meets if RSVP has not been entered.",
         Key = Constants.AttributeKey.SendReminders,
-        IsRequired = false,
-        Order = 1)]
+        IsRequired = true,
+        Order = 1,
+        DefaultValue = "2,7")]
     public class AutoRSVPReminders : RockJob
     {      
         public AutoRSVPReminders()
@@ -44,7 +45,7 @@ namespace com.razayya.RSVPReminders.Jobs
             var rockContext = new RockContext();
             var groupService = new GroupService(rockContext);
             var groupTypeService = new GroupTypeService(rockContext);
-            var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(Constants.AttributeKey.AutoRSVPGroupType).AsGuid() }).FirstOrDefault();
+            var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(Constants.AttributeKey.AutoRSVPGroupType).AsGuid() }).Include(x => x.Attributes).FirstOrDefault();
 
             var results = new StringBuilder();
 
