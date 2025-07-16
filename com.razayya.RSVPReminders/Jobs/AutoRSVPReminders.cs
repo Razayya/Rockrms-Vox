@@ -3,20 +3,21 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data.Entity;
 using System.Linq;
+using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Web;
 
 using Microsoft.Extensions.Logging;
 
+using Rock;
 using Rock.Attribute;
 using Rock.Communication;
 using Rock.Data;
-using Rock;
 using Rock.Jobs;
+using Rock.Lava.RockLiquid.Blocks;
 using Rock.Logging;
 using Rock.Model;
 using Rock.Web.Cache;
-using Rock.Lava.RockLiquid.Blocks;
 
 
 namespace com.razayya.RSVPReminders.Jobs
@@ -90,7 +91,7 @@ namespace com.razayya.RSVPReminders.Jobs
                 .Where(g => groupTypeIds.Contains(g.GroupTypeId))
                 .ToList();
 
-            this.UpdateLastStatusMessage($@"Group Filter 1. {groups.Count} prior to filter.");
+            this.UpdateLastStatusMessage($@"Filtering groups. {groups.Count} prior to filter.");
 
             groups = groups
                 .Where(g =>
@@ -99,7 +100,18 @@ namespace com.razayya.RSVPReminders.Jobs
                     {
                         g.LoadAttributes(rockContext);
                         var value = g.GetAttributeValue(SystemGuid.GroupAttribute.SEND_RSVP_EMAILS.AsGuid());
-                        return value.AsBoolean();
+                        if (value.AsBoolean())
+                        {
+                            var nextDate = g.Schedule?.NextStartDateTime;
+
+                            if (!nextDate.HasValue) return false;
+
+                            return sendReminderOffsets.Any(offset => nextDate == RockDateTime.Today.AddDays(offset * -1));
+                        }
+                        else
+                        {
+                            return false;
+                        }
                     }
                     else
                     {
@@ -107,29 +119,6 @@ namespace com.razayya.RSVPReminders.Jobs
                     }
                 })
                 .ToList();
-
-            this.UpdateLastStatusMessage($@"Group Filter 2. {groups.Count} prior to filter.");
-
-            groups = groups
-                .Where(g =>
-                {
-                    var matchesOffset = false;
-
-                    foreach (int offset in sendReminderOffsets)
-                    {
-                        var reminderDate = RockDateTime.Today.AddDays(offset * -1);
-                        var nextDate = g.Schedule.NextStartDateTime;
-                        if (nextDate != null && nextDate.Value.Date == reminderDate)
-                        {
-                            matchesOffset = true;
-                            break;
-                        }
-                    }
-                    return matchesOffset;
-                })
-                .ToList();
-
-
 
             this.UpdateLastStatusMessage($@"Processing {groups.Count} Groups.");
 
