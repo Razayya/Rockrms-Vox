@@ -26,9 +26,6 @@ namespace com.razayya.RSVPReminders.Migrations
 
         public override void Down()
         {
-            RockMigrationHelper.DeleteGroupType(SystemGuid.GroupType.AUTO_RSVP_GROUP);
-            //TODO: Activate this for plugin as attribute will be brand new, client instance requires some manual handling.
-            //RockMigrationHelper.DeleteAttribute(SystemGuid.Attribute.SEND_RSVP_EMAILS);
         }
     }
 }
