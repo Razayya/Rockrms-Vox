@@ -118,7 +118,8 @@ namespace com.razayya.RSVPReminders.Jobs
                     foreach (int offset in sendReminderOffsets)
                     {
                         var reminderDate = RockDateTime.Today.AddDays(offset * -1);
-                        if (DbFunctions.TruncateTime(g.Schedule.NextStartDateTime) == reminderDate)
+                        var nextDate = g.Schedule.NextStartDateTime;
+                        if (nextDate != null && nextDate.Value.Date == reminderDate)
                         {
                             matchesOffset = true;
                             break;
