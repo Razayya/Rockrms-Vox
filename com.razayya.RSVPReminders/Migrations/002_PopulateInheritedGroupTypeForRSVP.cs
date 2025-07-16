@@ -18,7 +18,7 @@ namespace com.razayya.RSVPReminders.Migrations
         public override void Up()
         {
             Sql(@"
-            DECLARE @GroupTypeId INT = (SELECT TOP 1 Id FROM [GroupType] WHERE [Guid] = '"+SystemGuid.GroupType.RSVP_MASTER_GROUP.ToString()+ @"')
+            DECLARE @GroupTypeId INT = (SELECT TOP 1 Id FROM [GroupType] WHERE [Guid] = '"+SystemGuid.GroupType.AUTO_RSVP_GROUP.ToString()+ @"')
 
             ;WITH RSVPGroupTypes AS
                 (SELECT Id,InheritedGroupTypeId 
