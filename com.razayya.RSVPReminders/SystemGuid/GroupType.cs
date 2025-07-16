@@ -13,6 +13,6 @@ namespace com.razayya.RSVPReminders.SystemGuid
 
     public static class Attribute
     {
-        public static string SEND_RSVP_EMAILS = "60DE05ED-A5D7-46B9-85FE-F1D7375E40C0";
+        public static string SEND_RSVP_EMAILS = "D391A559-9F15-4646-8500-7E88531C34DC";
     }
 }
