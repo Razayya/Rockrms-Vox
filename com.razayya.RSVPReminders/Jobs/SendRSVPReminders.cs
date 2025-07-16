@@ -125,31 +125,28 @@ namespace Rock.Jobs
 
                 foreach (var personId in personIds)
                 {
-                    try
+                    var person = group.Members.FirstOrDefault(m => m.PersonId == personId)?.Person;
+                    if (person == null || !person.IsEmailActive)
                     {
-                        var person = group.Members.FirstOrDefault(m => m.PersonId == personId)?.Person;
-                        if (person == null || !person.IsEmailActive)
-                        {
-                            continue;
-                        }
+                        continue;
+                    }
 
-                        var mergeFields = Rock.Lava.LavaHelper.GetCommonMergeFields(null, person);
-                        mergeFields.Add("Person", person);
-                        mergeFields.Add("Group", group);
-                        mergeFields.Add("Occurrence", occurrence);
+                    var mergeFields = Rock.Lava.LavaHelper.GetCommonMergeFields(null, person);
+                    mergeFields.Add("Person", person);
+                    mergeFields.Add("Group", group);
+                    mergeFields.Add("Occurrence", occurrence);
 
-                        var recipient = new RockEmailMessageRecipient(person, mergeFields);
-                        var message = new RockEmailMessage(communication);
-                        message.SetRecipients(new List<RockEmailMessageRecipient> { recipient });
-                        message.Send(out List<string> errors);
-                        if (!errors.Any())
-                        {
-                            emailsSent++;
-                        }
-                        else
-                        {
-                            emailsFailed++;
-                        }
+                    var recipient = new RockEmailMessageRecipient(person, mergeFields);
+                    var message = new RockEmailMessage(communication);
+                    message.SetRecipients(new List<RockEmailMessageRecipient> { recipient });
+                    message.Send(out List<string> errors);
+                    if (!errors.Any())
+                    {
+                        emailsSent++;
+                    }
+                    else
+                    {
+                        emailsFailed++;
                     }
                 }
             }
