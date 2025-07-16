@@ -19,8 +19,8 @@ namespace com.razayya.RSVPReminders.Migrations
         public override void Up()
         {
             RockMigrationHelper.AddGroupType("Auto RSVP Reminder Group", "Group Type that must be inherited for the AutoRSVPReminder Job to function.",
-                                             "Group", "Member", true, true, true, "", 0, null, 3, null, SystemGuid.Guids.AUTO_RSVP_GROUP);
-            RockMigrationHelper.AddGroupTypeGroupAttribute(SystemGuid.Guids.AUTO_RSVP_GROUP, Rock.SystemGuid.FieldType.BOOLEAN, "Sends RSVP Emails",
+                                             "Group", "Member", true, true, true, "", 0, null, 3, null, SystemGuid.GroupType.AUTO_RSVP_GROUP);
+            RockMigrationHelper.AddGroupTypeGroupAttribute(SystemGuid.GroupType.AUTO_RSVP_GROUP, Rock.SystemGuid.FieldType.BOOLEAN, "Sends RSVP Emails",
                                              "", 0, "False", SystemGuid.GroupAttribute.SEND_RSVP_EMAILS, true);
         }
 
