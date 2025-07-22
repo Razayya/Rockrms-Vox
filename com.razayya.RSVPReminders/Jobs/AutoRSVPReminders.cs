@@ -89,7 +89,7 @@ namespace com.razayya.RSVPReminders.Jobs
 
             var groups = groupService
                 .Queryable("Members.Person,Schedule,GroupType")
-                .Where(g => groupTypeIds.Contains(g.GroupTypeId))
+                .Where(g => groupTypeIds.Contains(g.GroupTypeId) && g.IsActive == true && g.InactiveDateTime == null && g.IsArchived == false)
                 .ToList();
 
             Result += $@"Filtering groups. {groups.Count} prior to filter.
@@ -192,6 +192,7 @@ namespace com.razayya.RSVPReminders.Jobs
                     .ToList();
 
                 var personIds = group.Members
+                    .Where(m => m.IsArchived == false && m.InactiveDateTime == null)
                     .Select(m => m.PersonId)
                     .Distinct()
                     .ToList();
