@@ -35,6 +35,7 @@ namespace com.razayya.RSVPReminders.Jobs
         IsRequired = true,
         Order = 1,
         DefaultValue = "2,7")]
+    [BooleanField("Show Debug Logs", "Enable this to show suppressed DEBUG logging messages for the job.", false, "", 2, Constants.AttributeKey.ShowDebug)]
     public class AutoRSVPReminders : RockJob
     {      
         public AutoRSVPReminders()
@@ -50,6 +51,7 @@ namespace com.razayya.RSVPReminders.Jobs
             var groupService = new GroupService(rockContext);
             var groupTypeService = new GroupTypeService(rockContext);
             var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(Constants.AttributeKey.AutoRSVPGroupType).AsGuid() }).FirstOrDefault();
+            var showDebug = GetAttributeValue(Constants.AttributeKey.ShowDebug).AsBoolean();
 
             var results = new StringBuilder();
 
@@ -171,8 +173,11 @@ namespace com.razayya.RSVPReminders.Jobs
 
                 if (occurrence == null)
                 {
-                    Result += $@"{group.Id} - No Occurrence for NextStartDate. Creating for { group.Schedule.NextStartDateTime.Value.Date.ToString() } 
+                    if (showDebug)
+                    {
+                        Result += $@"{group.Id} - No Occurrence for NextStartDate. Creating for {group.Schedule.NextStartDateTime.Value.Date.ToString()} 
 ";
+                    }
                     occurrence = new AttendanceOccurrence
                     {
                         GroupId = group.Id,
@@ -233,12 +238,18 @@ namespace com.razayya.RSVPReminders.Jobs
                     else
                     {
                         emailsFailed++;
-                        Result += $@"{group.Id}|{personId} - Communication Failed:
+                        if (showDebug)
+                        {
+                            Result += $@"{group.Id}|{personId} - Communication Failed:
 ";
+                        }
                         foreach (var error in errors)
                         {
-                            Result += $@"{error}
+                            if (showDebug)
+                            {
+                                Result += $@"{error}
 ";
+                            }
                         }
                     }
                 }

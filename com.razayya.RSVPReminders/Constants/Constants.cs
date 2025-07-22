@@ -11,6 +11,7 @@ namespace com.razayya.RSVPReminders.Constants
         public const string AutoRSVPGroupType = "AutoRSVPGroupType";
         public const string SendReminders = "SendReminders";
         public const string SendsRsvpEmails = "SendsRsvpEmails";
+        public const string ShowDebug = "ShowDebug";
     }
 
     public static class CRON
