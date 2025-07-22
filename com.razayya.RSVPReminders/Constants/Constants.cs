@@ -16,7 +16,7 @@ namespace com.razayya.RSVPReminders.Constants
 
     public static class CRON
     {
-        public const string AutoRSVPCronExpression = "0 0 7 1/1 * ? *"; //Every day at 7AM
+        public const string AutoRSVPCronExpression = "0 0 7 1/1 * ? *"; //Every 4 Hours
         
     }
 

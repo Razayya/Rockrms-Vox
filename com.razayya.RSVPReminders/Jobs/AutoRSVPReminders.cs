@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data.Entity;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
@@ -103,23 +104,31 @@ namespace com.razayya.RSVPReminders.Jobs
                     if (g.Schedule != null)
                     {
                         g.LoadAttributes(rockContext);
-                        var value = g.GetAttributeValue(SystemGuid.GroupAttribute.SEND_RSVP_EMAILS.AsGuid());
+                        var sendEmails = g.GetAttributeValue(SystemGuid.GroupAttribute.SEND_RSVP_EMAILS.AsGuid());
 
-                        if (value.AsBoolean())
+                        if (sendEmails.AsBoolean())
                         {
-                            var nextDate = g.Schedule?.NextStartDateTime;
+                            var lastRunDate = g.GetAttributeValue(SystemGuid.GroupAttribute.LAST_AUTO_RUN_DATE.AsGuid()).AsDateTime();
 
-                            if (nextDate.HasValue)
-                            {
-                                var date = nextDate.Value.Date;
-                                return sendReminderOffsets.Any(offset => date.AddDays(offset * -1) == RockDateTime.Today);
-                            }
-                            else
+                            if (lastRunDate.HasValue && lastRunDate.Value.Date == RockDateTime.Today)
                             {
                                 return false;
                             }
+                            else
+                            {
+                                var nextDate = g.Schedule?.NextStartDateTime;
 
-                            
+                                if (nextDate.HasValue)
+                                {
+                                    var date = nextDate.Value.Date;
+                                    return sendReminderOffsets.Any(offset => date.AddDays(offset * -1) == RockDateTime.Today);
+                                }
+                                else
+                                {
+                                    return false;
+                                }
+
+                            }
                         }
                         else
                         {
@@ -185,7 +194,7 @@ namespace com.razayya.RSVPReminders.Jobs
                     {
                         GroupId = group.Id,
                         OccurrenceDate = group.Schedule.NextStartDateTime.Value.Date,
-                        ScheduleId = group.ScheduleId
+                        ScheduleId = group.ScheduleId,
                     };
                     occurrenceService.Add(occurrence);
                     rockContext.SaveChanges();
@@ -256,7 +265,8 @@ namespace com.razayya.RSVPReminders.Jobs
                         }
                     }
                 }
-                
+
+                group.SetAttributeValue("LastAutoRSVPRun",$"AutoRSVP|{ RockDateTime.Today.Date.ToString("MM/dd/yyyy") }");
             }
 
             rockContext.SaveChanges();

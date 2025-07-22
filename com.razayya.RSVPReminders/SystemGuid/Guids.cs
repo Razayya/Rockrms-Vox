@@ -14,6 +14,7 @@ namespace com.razayya.RSVPReminders.SystemGuid
     public static class GroupAttribute
     {
         public const string SEND_RSVP_EMAILS = "D391A559-9F15-4646-8500-7E88531C34DC";
+        public const string LAST_AUTO_RUN_DATE = "2E3F82B3-78AA-4988-A599-6601F2A38C8F";
     }
 
     public static class ServiceJob
