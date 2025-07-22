@@ -167,9 +167,12 @@ namespace com.razayya.RSVPReminders.Jobs
                     continue;
                 }
 
+                var targetDate = group.Schedule.NextStartDateTime?.Date;
+
                 var occurrence = occurrenceService
                     .Queryable()
-                    .FirstOrDefault(o => o.GroupId == group.Id && DbFunctions.TruncateTime(o.OccurrenceDate) == group.Schedule.NextStartDateTime.Value.Date );
+                    .FirstOrDefault(o => o.GroupId == group.Id &&
+                                         DbFunctions.TruncateTime(o.OccurrenceDate) == targetDate);
 
                 if (occurrence == null)
                 {
