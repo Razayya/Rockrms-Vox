@@ -108,7 +108,7 @@ namespace com.razayya.RSVPReminders.Jobs
 
                         if (sendEmails.AsBoolean())
                         {
-                            var lastRunDate = g.GetAttributeValue(SystemGuid.GroupAttribute.LAST_AUTO_RUN_DATE.AsGuid()).AsDateTime();
+                            var lastRunDate = g.GetAttributeValue(SystemGuid.GroupAttribute.LAST_AUTO_RSVP_RUN.AsGuid()).AsDateTime();
 
                             if (lastRunDate.HasValue && lastRunDate.Value.Date == RockDateTime.Today)
                             {

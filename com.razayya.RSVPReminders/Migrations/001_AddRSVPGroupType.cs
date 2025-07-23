@@ -23,7 +23,7 @@ namespace com.razayya.RSVPReminders.Migrations
             RockMigrationHelper.AddGroupTypeGroupAttribute(SystemGuid.GroupType.AUTO_RSVP_GROUP, Rock.SystemGuid.FieldType.BOOLEAN, "Sends RSVP Emails",
                                              "Setting to allow Auto RSVP Job", 0, "False", SystemGuid.GroupAttribute.SEND_RSVP_EMAILS, true);
             RockMigrationHelper.AddGroupTypeGroupAttribute(SystemGuid.GroupType.AUTO_RSVP_GROUP, Rock.SystemGuid.FieldType.DATE, "Last Auto RSVP Run",
-                                             "Exclusionary date stored during job runs", 1, null, SystemGuid.GroupAttribute.LAST_AUTO_RUN_DATE, false);
+                                             "Exclusionary date stored during job runs", 1, null, SystemGuid.GroupAttribute.LAST_AUTO_RSVP_RUN, false);
         }
 
         public override void Down()
