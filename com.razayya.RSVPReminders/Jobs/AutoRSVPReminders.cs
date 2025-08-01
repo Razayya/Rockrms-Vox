@@ -56,11 +56,12 @@ namespace com.razayya.RSVPReminders.Jobs
 
             var results = new StringBuilder();
 
-            var sendReminderOffsets = GetAttributeValue(Constants.AttributeKey.SendReminders)
+            var sendReminderOffsetDates = GetAttributeValue(Constants.AttributeKey.SendReminders)
                 .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(s => s.Trim().AsIntegerOrNull())
                 .Where(d => d.HasValue)
                 .Select(d => d.Value)
+                .Select(d => RockDateTime.Today.AddDays(d))
                 .ToList();
 
             if (groupType == null)
@@ -116,12 +117,11 @@ namespace com.razayya.RSVPReminders.Jobs
                             }
                             else
                             {
-                                var nextDate = g.Schedule?.NextStartDateTime;
+                                var nextDates = g.Schedule.GetScheduledStartTimes(sendReminderOffsetDates.Min(), sendReminderOffsetDates.Max().AddSeconds(86399));                           
 
-                                if (nextDate.HasValue)
+                                if (nextDates.Any())
                                 {
-                                    var date = nextDate.Value.Date;
-                                    return sendReminderOffsets.Any(offset => date.AddDays(offset * -1) == RockDateTime.Today);
+                                    return nextDates.Any(d => sendReminderOffsetDates.Any(r => r.Date == d.Date));
                                 }
                                 else
                                 {
@@ -266,7 +266,7 @@ namespace com.razayya.RSVPReminders.Jobs
                     }
                 }
 
-                group.SetAttributeValue("LastAutoRSVPRun",$"AutoRSVP|{ RockDateTime.Today.Date.ToString("MM/dd/yyyy") }");
+                group.SetAttributeValue("LastAutoRSVPRun",$"{ RockDateTime.Today.Date.ToString("MM/dd/yyyy") }");
             }
 
             rockContext.SaveChanges();
