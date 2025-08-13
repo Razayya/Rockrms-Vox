@@ -153,7 +153,7 @@ namespace com.razayya.RSVPReminders.Jobs
 
             foreach (var group in groups)
             {
-                if (sendReminderOffsets.Count == 0)
+                if (sendReminderOffsetDates.Count == 0)
                 {
                     Result += $@"{group.Id} - Validation Error - No Job Offsets Configured
 ";
