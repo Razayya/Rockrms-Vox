@@ -50,6 +50,7 @@
     <Compile Include="Migrations\002_PopulateInheritedGroupTypeForRSVP.cs" />
     <Compile Include="Migrations\001_AddRSVPGroupType.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Services\RsvpAttendanceService.cs" />
     <Compile Include="SystemGuid\Guids.cs" />
   </ItemGroup>
   <ItemGroup>

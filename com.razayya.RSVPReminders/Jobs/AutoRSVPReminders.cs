@@ -8,6 +8,8 @@ using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Web;
 
+using com.razayya.RSVPReminders.Services;
+
 using Microsoft.Extensions.Logging;
 
 using Rock;
@@ -156,7 +158,7 @@ namespace com.razayya.RSVPReminders.Jobs
             int remindersSent = 0;
             int invitationsSent = 0;
             var occurrenceService = new AttendanceOccurrenceService(rockContext);
-            var attendanceService = new AttendanceService(rockContext);
+            var attendanceService = new RsvpAttendanceService(rockContext);
             var systemCommunicationService = new SystemCommunicationService(rockContext);
 
             var inviteCommunicationGuid = GetAttributeValue(Constants.AttributeKey.InvitationSystemCommunication).AsGuid();
@@ -229,12 +231,7 @@ namespace com.razayya.RSVPReminders.Jobs
                     .Distinct()
                     .ToList();
 
-                attendanceService.RegisterRSVPRecipients(occurrence.Id, personIds);
-
-                var attendanceRecords = attendanceService
-                    .Queryable()
-                    .Where(a => a.OccurrenceId == occurrence.Id && a.PersonAlias != null && personIds.Contains(a.PersonAlias.PersonId))
-                    .ToList();
+                var attendanceRecords = attendanceService.RegisterRSVPRecipients(occurrence.Id, personIds, out var returnedAttendance);
 
                 Result += $@"{group.Id} - ProcessRSVPRecipients: {attendanceRecords.Count} Recipients.
 ";
