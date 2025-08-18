@@ -21,4 +21,9 @@ namespace com.razayya.RSVPReminders.SystemGuid
     {
         public const string AUTO_RSVP_JOB = "429B06CA-037F-466E-BF12-3A0364B60849";
     }
+
+    public static class SystemCommunication
+    {
+        public const string RSVP_INVITATION = "8A001F97-7B72-441E-A678-88D09E1BE7F8";
+    }
 }

@@ -36,9 +36,15 @@ namespace com.razayya.RSVPReminders.Jobs
         IsRequired = true,
         Order = 1,
         DefaultValue = "2,7")]
-    [BooleanField("Show Debug Logs", "Enable this to show suppressed DEBUG logging messages for the job.", false, "", 2, Constants.AttributeKey.ShowDebug)]
+    [SystemCommunicationField("RSVP Invitation Communication",
+        Description = "The system communication used when inviting individuals to RSVP.",
+        IsRequired = true,
+        DefaultSystemCommunicationGuid = SystemGuid.SystemCommunication.RSVP_INVITATION,
+        Order = 2,
+        Key = Constants.AttributeKey.InvitationSystemCommunication)]
+    [BooleanField("Show Debug Logs", "Enable this to show suppressed DEBUG logging messages for the job.", false, "", 3, Constants.AttributeKey.ShowDebug)]
     public class AutoRSVPReminders : RockJob
-    {      
+    {
         public AutoRSVPReminders()
         {
         }
@@ -117,7 +123,7 @@ namespace com.razayya.RSVPReminders.Jobs
                             }
                             else
                             {
-                                var nextDates = g.Schedule.GetScheduledStartTimes(sendReminderOffsetDates.Min(), sendReminderOffsetDates.Max().AddSeconds(86399));                           
+                                var nextDates = g.Schedule.GetScheduledStartTimes(sendReminderOffsetDates.Min(), sendReminderOffsetDates.Max().AddSeconds(86399));
 
                                 if (nextDates.Any())
                                 {
@@ -150,6 +156,18 @@ namespace com.razayya.RSVPReminders.Jobs
             var occurrenceService = new AttendanceOccurrenceService(rockContext);
             var attendanceService = new AttendanceService(rockContext);
             var systemCommunicationService = new SystemCommunicationService(rockContext);
+
+            var inviteCommunicationGuid = GetAttributeValue(Constants.AttributeKey.InvitationSystemCommunication).AsGuid();
+            var inviteCommunication = systemCommunicationService.Get(inviteCommunicationGuid);
+
+            if (inviteCommunication == null)
+            {
+                var warning = "Configured RSVP Invitation Communication not found. Job cannot execute.";
+                results.Append(FormatWarningMessage(warning));
+                Logger.LogWarning(warning);
+                this.Result = results.ToString();
+                throw new RockJobWarningException(warning);
+            }
 
             foreach (var group in groups)
             {
@@ -203,31 +221,41 @@ namespace com.razayya.RSVPReminders.Jobs
                 Result += $@"{group.Id} - Occurrence (Id:{occurrence.Id})
 ";
 
-                var attendanceRecords = attendanceService
-                    .Queryable()
-                    .Where(a => a.OccurrenceId == occurrence.Id)
-                    .ToList();
-
                 var personIds = group.Members
                     .Where(m => m.IsArchived == false && m.InactiveDateTime == null)
                     .Select(m => m.PersonId)
                     .Distinct()
                     .ToList();
 
-                var recipientsToNotify = personIds
-                    .Where(pid =>
-                        !attendanceRecords.Any(a => a.PersonAlias != null && a.PersonAlias.PersonId == pid && a.RSVPDateTime.HasValue))
+                attendanceService.RegisterRSVPRecipients(occurrence.Id, personIds);
+
+                var attendanceRecords = attendanceService
+                    .Queryable()
+                    .Where(a => a.OccurrenceId == occurrence.Id && a.PersonAlias != null && personIds.Contains(a.PersonAlias.PersonId))
                     .ToList();
 
-                Result += $@"{group.Id} - RegisterRSVPRecipients: { recipientsToNotify.Count } Recipients.
+                Result += $@"{group.Id} - ProcessRSVPRecipients: {attendanceRecords.Count} Recipients.
 ";
 
-                attendanceService.RegisterRSVPRecipients(occurrence.Id, recipientsToNotify);
-
-                foreach (var personId in recipientsToNotify)
+                foreach (var attendance in attendanceRecords)
                 {
-                    var person = group.Members.FirstOrDefault(m => m.PersonId == personId)?.Person;
+                    var person = attendance.PersonAlias?.Person;
                     if (person == null || !person.IsEmailActive)
+                    {
+                        continue;
+                    }
+
+                    RockEmailMessage message = null;
+
+                    if (attendance.RSVP == RSVP.Yes)
+                    {
+                        message = new RockEmailMessage(communication);
+                    }
+                    else if (attendance.RSVP == RSVP.Unknown || attendance.RSVP == RSVP.Maybe)
+                    {
+                        message = new RockEmailMessage(inviteCommunication);
+                    }
+                    else
                     {
                         continue;
                     }
@@ -238,10 +266,8 @@ namespace com.razayya.RSVPReminders.Jobs
                     mergeFields.Add("Occurrence", occurrence);
 
                     var recipient = new RockEmailMessageRecipient(person, mergeFields);
-                    var message = new RockEmailMessage(communication);
                     message.SetRecipients(new List<RockEmailMessageRecipient> { recipient });
                     message.Send(out List<string> errors);
-                    
 
                     if (!errors.Any())
                     {
@@ -252,7 +278,7 @@ namespace com.razayya.RSVPReminders.Jobs
                         emailsFailed++;
                         if (showDebug)
                         {
-                            Result += $@"{group.Id}|{personId} - Communication Failed:
+                            Result += $@"{group.Id}|{attendance.PersonAlias.PersonId} - Communication Failed:
 ";
                         }
                         foreach (var error in errors)
@@ -266,13 +292,13 @@ namespace com.razayya.RSVPReminders.Jobs
                     }
                 }
 
-                group.SetAttributeValue("LastAutoRSVPRun",$"{ RockDateTime.Today.Date.ToString("MM/dd/yyyy") }");
+                group.SetAttributeValue("LastAutoRSVPRun", $"{RockDateTime.Today.Date.ToString("MM/dd/yyyy")}");
             }
 
             rockContext.SaveChanges();
             Result += $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.";
         }
-        
+
         private StringBuilder FormatWarningMessage(string warning)
         {
             var errorMessages = new List<string> { warning };
