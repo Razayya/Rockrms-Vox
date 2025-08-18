@@ -45,7 +45,9 @@ namespace com.razayya.RSVPReminders.Services
             var people = new PersonService(rockContext).Queryable().AsNoTracking()
                 .Where(p => personIdList.Contains(p.Id))
                 .ToList();
+
             var personAliasIds = people.Select(p => p.PrimaryAliasId).ToList();
+            var personAliases = people.Select(x => x.PrimaryAlias).ToList();
 
             // Check for existing records
             attendanceRecords = this.Queryable().AsNoTracking()
@@ -54,14 +56,15 @@ namespace com.razayya.RSVPReminders.Services
                 .ToList();
 
             var newAttendanceRecords = new List<Attendance>();
-            foreach (int personAliasId in personAliasIds)
+            foreach (var personAlias in personAliases)
             {
-                if (!attendanceRecords.Any(a => a.PersonAliasId == personAliasId))
+                if (!attendanceRecords.Any(a => a.PersonAliasId == personAlias.Id))
                 {
                     newAttendanceRecords.Add(new Attendance
                     {
                         OccurrenceId = occurrenceId,
-                        PersonAliasId = personAliasId,
+                        PersonAliasId = personAlias.Id,
+                        PersonAlias = personAlias,
                         StartDateTime = startDateTime,
                         RSVP = RSVP.Unknown,
                         DidAttend = false
