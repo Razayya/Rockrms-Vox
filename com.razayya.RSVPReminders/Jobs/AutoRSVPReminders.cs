@@ -153,6 +153,8 @@ namespace com.razayya.RSVPReminders.Jobs
 
             int emailsSent = 0;
             int emailsFailed = 0;
+            int remindersSent = 0;
+            int invitationsSent = 0;
             var occurrenceService = new AttendanceOccurrenceService(rockContext);
             var attendanceService = new AttendanceService(rockContext);
             var systemCommunicationService = new SystemCommunicationService(rockContext);
@@ -250,10 +252,12 @@ namespace com.razayya.RSVPReminders.Jobs
                     if (attendance.RSVP == RSVP.Yes)
                     {
                         message = new RockEmailMessage(communication);
+                        remindersSent++;
                     }
                     else if (attendance.RSVP == RSVP.Unknown || attendance.RSVP == RSVP.Maybe)
                     {
                         message = new RockEmailMessage(inviteCommunication);
+                        invitationsSent++;
                     }
                     else
                     {
@@ -296,7 +300,10 @@ namespace com.razayya.RSVPReminders.Jobs
             }
 
             rockContext.SaveChanges();
-            Result += $"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.";
+            Result += $@"Sent {emailsSent} RSVP email{(emailsSent != 1 ? "s" : string.Empty)}. {emailsFailed} RSVPs failed to send.
+";
+            Result += $@"{remindersSent} Reminders. {invitationsSent} Invitations.";
+
         }
 
         private StringBuilder FormatWarningMessage(string warning)
