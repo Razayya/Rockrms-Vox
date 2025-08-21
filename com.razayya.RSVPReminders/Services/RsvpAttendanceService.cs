@@ -64,7 +64,6 @@ namespace com.razayya.RSVPReminders.Services
                     {
                         OccurrenceId = occurrenceId,
                         PersonAliasId = personAlias.Id,
-                        PersonAlias = personAlias,
                         StartDateTime = startDateTime,
                         RSVP = RSVP.Unknown,
                         DidAttend = false
@@ -74,6 +73,17 @@ namespace com.razayya.RSVPReminders.Services
 
             this.AddRange(newAttendanceRecords);
             rockContext.SaveChanges();
+
+            // Hydrate PersonAlias for the newly inserted rows in a single round-trip
+            var idsToHydrate = newAttendanceRecords.Select(a => a.PersonAliasId).ToList();
+            var aliases = new PersonAliasService(rockContext).Queryable()
+                .Where(pa => idsToHydrate.Contains(pa.Id))
+                .ToDictionary(pa => pa.Id);
+
+            foreach (var a in newAttendanceRecords)
+            {
+                a.PersonAlias = aliases[a.PersonAliasId.Value];
+            }
 
             return attendanceRecords.Concat(newAttendanceRecords).ToList();
         }

@@ -198,7 +198,8 @@ namespace com.razayya.RSVPReminders.Jobs
                     continue;
                 }
 
-                var targetDate = group.Schedule.NextStartDateTime?.Date;
+                var nextDates = group.Schedule.GetScheduledStartTimes(sendReminderOffsetDates.Min(), sendReminderOffsetDates.Max().AddSeconds(86399));
+                var targetDate = nextDates.FirstOrDefault(d => sendReminderOffsetDates.Any(r => r.Date == d.Date));
 
                 var occurrence = occurrenceService
                     .Queryable()
@@ -209,13 +210,13 @@ namespace com.razayya.RSVPReminders.Jobs
                 {
                     if (showDebug)
                     {
-                        Result += $@"{group.Id} - No Occurrence for NextStartDate. Creating for {group.Schedule.NextStartDateTime.Value.Date.ToString()} 
+                        Result += $@"{group.Id} - No Occurrence for NextStartDate. Creating for {targetDate.Date} 
 ";
                     }
                     occurrence = new AttendanceOccurrence
                     {
                         GroupId = group.Id,
-                        OccurrenceDate = group.Schedule.NextStartDateTime.Value.Date,
+                        OccurrenceDate = targetDate.Date,
                         ScheduleId = group.ScheduleId,
                     };
                     occurrenceService.Add(occurrence);
@@ -293,7 +294,7 @@ namespace com.razayya.RSVPReminders.Jobs
                     }
                 }
 
-                group.SetAttributeValue("LastAutoRSVPRun", $"{RockDateTime.Today.Date.ToString("MM/dd/yyyy")}");
+                group.SetAttributeValue("LastAutoRSVPRun", RockDateTime.Today.Date);
             }
 
             rockContext.SaveChanges();
