@@ -12,6 +12,7 @@ namespace com.razayya.RSVPReminders.Constants
         public const string SendReminders = "SendReminders";
         public const string SendsRsvpEmails = "SendsRsvpEmails";
         public const string InvitationSystemCommunication = "InvitationSystemCommunication";
+        public const string RSVPLeaders = "RSVPLeaders";
         public const string ShowDebug = "ShowDebug";
     }
 

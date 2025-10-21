@@ -44,7 +44,8 @@ namespace com.razayya.RSVPReminders.Jobs
         DefaultSystemCommunicationGuid = SystemGuid.SystemCommunication.RSVP_INVITATION,
         Order = 2,
         Key = Constants.AttributeKey.InvitationSystemCommunication)]
-    [BooleanField("Show Debug Logs", "Enable this to show suppressed DEBUG logging messages for the job.", false, "", 3, Constants.AttributeKey.ShowDebug)]
+    [BooleanField("Send RSVPs to Leaders", "Sets whether the job will send RSVP emails to group leaders.", true, "", 3, Constants.AttributeKey.RSVPLeaders)]
+    [BooleanField("Show Debug Logs", "Enable this to show suppressed DEBUG logging messages for the job.", false, "", 4, Constants.AttributeKey.ShowDebug)]
     public class AutoRSVPReminders : RockJob
     {
         public AutoRSVPReminders()
@@ -60,6 +61,7 @@ namespace com.razayya.RSVPReminders.Jobs
             var groupService = new GroupService(rockContext);
             var groupTypeService = new GroupTypeService(rockContext);
             var groupType = groupTypeService.GetByGuids(new List<Guid>() { GetAttributeValue(Constants.AttributeKey.AutoRSVPGroupType).AsGuid() }).FirstOrDefault();
+            var rsvpLeaders = GetAttributeValue(Constants.AttributeKey.RSVPLeaders).AsBoolean();
             var showDebug = GetAttributeValue(Constants.AttributeKey.ShowDebug).AsBoolean();
 
             var results = new StringBuilder();
@@ -204,7 +206,7 @@ namespace com.razayya.RSVPReminders.Jobs
                 var occurrence = occurrenceService
                     .Queryable()
                     .FirstOrDefault(o => o.GroupId == group.Id &&
-                                         DbFunctions.TruncateTime(o.OccurrenceDate) == targetDate);
+                                         DbFunctions.TruncateTime(o.OccurrenceDate) == DbFunctions.TruncateTime(targetDate));
 
                 if (occurrence == null)
                 {
@@ -227,7 +229,10 @@ namespace com.razayya.RSVPReminders.Jobs
 ";
 
                 var personIds = group.Members
-                    .Where(m => m.IsArchived == false && m.InactiveDateTime == null)
+                    .Where(m =>
+                        !m.IsArchived &&
+                        m.InactiveDateTime == null &&
+                        (rsvpLeaders || !m.GroupRole.IsLeader))
                     .Select(m => m.PersonId)
                     .Distinct()
                     .ToList();
@@ -295,6 +300,7 @@ namespace com.razayya.RSVPReminders.Jobs
                 }
 
                 group.SetAttributeValue("LastAutoRSVPRun", RockDateTime.Today.Date);
+                group.SaveAttributeValues();
             }
 
             rockContext.SaveChanges();
