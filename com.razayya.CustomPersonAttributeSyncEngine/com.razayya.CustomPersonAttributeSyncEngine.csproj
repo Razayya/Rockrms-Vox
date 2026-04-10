@@ -76,6 +76,7 @@
     <Compile Include="Migrations\003_AddServiceJob.cs" />
     <Compile Include="Migrations\004_PagesAndBlocks.cs" />
     <Compile Include="Migrations\005_AddCalculationRun.cs" />
+    <Compile Include="Migrations\006_RestructurePages.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
