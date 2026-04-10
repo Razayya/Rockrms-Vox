@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Data.Entity;
 using System.Linq;
 
+using com.razayya.CustomPersonAttributeSyncEngine.Data;
 using com.razayya.CustomPersonAttributeSyncEngine.Model;
 
 using Rock;
@@ -103,6 +104,54 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
         protected void gList_GridRebind( object sender, GridRebindEventArgs e )
         {
+            BindGrid();
+        }
+
+        protected void btnImport_Click( object sender, EventArgs e )
+        {
+            ceImportJson.Text = string.Empty;
+            nbImportWarning.Visible = false;
+            mdImport.Show();
+        }
+
+        protected void mdImport_SaveClick( object sender, EventArgs e )
+        {
+            var json = ceImportJson.Text;
+            if ( string.IsNullOrWhiteSpace( json ) )
+            {
+                nbImportWarning.Text = "Please paste a JSON configuration.";
+                nbImportWarning.Visible = true;
+                return;
+            }
+
+            var service = new ImportExportService();
+            var result = service.ImportGroup( json );
+
+            if ( result.Errors.Count > 0 )
+            {
+                nbImportWarning.Text = string.Join( "<br/>", result.Errors );
+                nbImportWarning.Visible = true;
+                return;
+            }
+
+            mdImport.Hide();
+
+            if ( result.Warnings.Count > 0 )
+            {
+                mdGridWarning.Show(
+                    string.Format( "Imported {0} group, {1} sub-group(s), {2} calculation(s) with warnings:<br/>{3}",
+                        result.GroupsCreated, result.SubGroupsCreated, result.CalculationsCreated,
+                        string.Join( "<br/>", result.Warnings ) ),
+                    ModalAlertType.Information );
+            }
+            else
+            {
+                mdGridWarning.Show(
+                    string.Format( "Successfully imported {0} group, {1} sub-group(s), {2} calculation(s).",
+                        result.GroupsCreated, result.SubGroupsCreated, result.CalculationsCreated ),
+                    ModalAlertType.Information );
+            }
+
             BindGrid();
         }
 

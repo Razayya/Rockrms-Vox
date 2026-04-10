@@ -44,6 +44,9 @@
                             OnClick="btnEdit_Click" CausesValidation="false" />
                         <asp:LinkButton ID="btnPlay" runat="server" Text="<i class='fa fa-play'></i> Preview"
                             CssClass="btn btn-default" OnClick="btnPlay_Click" CausesValidation="false" />
+                        <asp:LinkButton ID="btnCopy" runat="server" Text="Copy" CssClass="btn btn-default btn-sm"
+                            OnClick="btnCopy_Click" CausesValidation="false"
+                            ToolTip="Create a copy of this calculation." />
                         <asp:LinkButton ID="btnBack" runat="server" Text="Back" CssClass="btn btn-link"
                             OnClick="btnBack_Click" CausesValidation="false" />
                     </div>

@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data.Entity;
 using System.Linq;
 
+using com.razayya.CustomPersonAttributeSyncEngine.Data;
 using com.razayya.CustomPersonAttributeSyncEngine.Model;
 
 using Rock;
@@ -136,6 +138,16 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             else
             {
                 ShowDetail( SubGroupId );
+            }
+        }
+
+        protected void btnCopy_Click( object sender, EventArgs e )
+        {
+            var service = new ImportExportService();
+            int newId = service.CopySubGroup( SubGroupId );
+            if ( newId > 0 )
+            {
+                NavigateToCurrentPageReference( new Dictionary<string, string> { { "CalculationSubGroupId", newId.ToString() } } );
             }
         }
 

@@ -38,6 +38,10 @@
 
                     <div class="actions">
                         <asp:LinkButton ID="btnEdit" runat="server" Text="Edit" CssClass="btn btn-primary" OnClick="btnEdit_Click" CausesValidation="false" />
+                        <asp:LinkButton ID="btnCopy" runat="server" Text="Copy" CssClass="btn btn-default btn-sm" OnClick="btnCopy_Click" CausesValidation="false"
+                            ToolTip="Create a deep copy of this group including all sub-groups and calculations." />
+                        <asp:LinkButton ID="btnExport" runat="server" Text="Export" CssClass="btn btn-default btn-sm" OnClick="btnExport_Click" CausesValidation="false"
+                            ToolTip="Download this group configuration as a portable JSON file." />
                         <Rock:SecurityButton ID="btnSecurity" runat="server" class="btn btn-sm btn-square btn-security pull-right" />
                     </div>
 

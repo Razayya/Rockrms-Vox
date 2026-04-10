@@ -56,6 +56,7 @@
     <Compile Include="Model\CalculationGroupService.cs" />
     <Compile Include="Model\CalculationSubGroupService.cs" />
     <Compile Include="Model\CalculationService.cs" />
+    <Compile Include="Model\ExportModels.cs" />
     <Compile Include="Model\CalculationRun.cs" />
     <Compile Include="Model\CalculationRunService.cs" />
     <!-- Calculation Types -->
@@ -67,6 +68,7 @@
     <Compile Include="CalculationTypes\GroupMembershipCalculation.cs" />
     <Compile Include="CalculationTypes\CompletionCalculation.cs" />
     <!-- Data / Services -->
+    <Compile Include="Data\ImportExportService.cs" />
     <Compile Include="Data\SyncEngineService.cs" />
     <!-- Jobs -->
     <Compile Include="Jobs\RunAttributeSyncEngine.cs" />

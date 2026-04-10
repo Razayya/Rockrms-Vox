@@ -11,6 +11,20 @@
                 </h1>
             </div>
             <div class="panel-body">
+                <asp:LinkButton ID="btnImport" runat="server" CssClass="btn btn-default btn-sm margin-b-md"
+                    OnClick="btnImport_Click" CausesValidation="false">
+                    <i class="fa fa-upload"></i> Import
+                </asp:LinkButton>
+
+                <Rock:ModalDialog ID="mdImport" runat="server" Title="Import Calculation Group" OnSaveClick="mdImport_SaveClick" SaveButtonText="Import">
+                    <Content>
+                        <Rock:NotificationBox ID="nbImportWarning" runat="server" NotificationBoxType="Warning" Visible="false" />
+                        <Rock:CodeEditor ID="ceImportJson" runat="server" Label="JSON Configuration"
+                            EditorMode="JavaScript" EditorTheme="Rock" EditorHeight="400"
+                            Help="Paste the exported JSON configuration for a Calculation Group." />
+                    </Content>
+                </Rock:ModalDialog>
+
                 <div class="grid grid-panel">
                     <Rock:ModalAlert ID="mdGridWarning" runat="server" />
                     <Rock:Grid ID="gList" runat="server" RowItemText="Calculation Group"

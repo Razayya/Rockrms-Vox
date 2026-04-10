@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data.Entity;
 using System.Linq;
 
+using com.razayya.CustomPersonAttributeSyncEngine.Data;
 using com.razayya.CustomPersonAttributeSyncEngine.Model;
 
 using Rock;
@@ -123,6 +125,37 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             else
             {
                 ShowDetail( CalculationGroupId );
+            }
+        }
+
+        protected void btnCopy_Click( object sender, EventArgs e )
+        {
+            var service = new ImportExportService();
+            int newId = service.CopyGroup( CalculationGroupId );
+            if ( newId > 0 )
+            {
+                NavigateToCurrentPageReference( new Dictionary<string, string> { { "CalculationGroupId", newId.ToString() } } );
+            }
+        }
+
+        protected void btnExport_Click( object sender, EventArgs e )
+        {
+            var service = new ImportExportService();
+            string json = service.ExportGroup( CalculationGroupId );
+            if ( !string.IsNullOrEmpty( json ) )
+            {
+                string groupName;
+                using ( var rockContext = new RockContext() )
+                {
+                    groupName = new CalculationGroupService( rockContext ).GetSelect( CalculationGroupId, g => g.Name ) ?? "Export";
+                }
+
+                var safeFileName = groupName.Replace( " ", "_" ).RemoveSpecialCharacters();
+                Page.Response.Clear();
+                Page.Response.ContentType = "application/json";
+                Page.Response.AddHeader( "content-disposition", $"attachment; filename=SyncEngine_Group_{safeFileName}.json" );
+                Page.Response.Write( json );
+                Page.Response.End();
             }
         }
 

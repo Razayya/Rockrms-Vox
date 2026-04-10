@@ -180,6 +180,16 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             }
         }
 
+        protected void btnCopy_Click( object sender, EventArgs e )
+        {
+            var service = new ImportExportService();
+            int newId = service.CopyCalculation( CalculationId );
+            if ( newId > 0 )
+            {
+                NavigateToCurrentPageReference( new Dictionary<string, string> { { "CalculationId", newId.ToString() } } );
+            }
+        }
+
         protected void btnBack_Click( object sender, EventArgs e )
         {
             NavigateToLinkedPage( "ParentPage", "CalculationSubGroupId", ParentSubGroupId );
