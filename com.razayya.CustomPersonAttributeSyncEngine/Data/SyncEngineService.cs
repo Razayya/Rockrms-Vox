@@ -201,6 +201,11 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
 
                 preview.TotalPopulation = population.Count;
 
+                if ( maxResults == 0 )
+                {
+                    return preview;
+                }
+
                 // Resolve component and evaluate
                 var entityType = EntityTypeCache.Get( calc.CalculationTypeEntityTypeId );
                 var component = CalculationTypeContainer.GetComponent( entityType?.Name );
