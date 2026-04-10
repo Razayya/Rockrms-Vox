@@ -59,9 +59,9 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
         {
             var results = new Dictionary<int, Dictionary<string, object>>();
 
-            var groupTypeGuid = GetAttributeValue( AttributeKey.GroupType ).AsGuidOrNull();
-            var minimumCount = GetAttributeValue( AttributeKey.MinimumCount ).AsIntegerOrNull() ?? 1;
-            var withinDays = GetAttributeValue( AttributeKey.WithinDays ).AsIntegerOrNull() ?? 90;
+            var groupTypeGuid = calculation.GetAttributeValue( AttributeKey.GroupType ).AsGuidOrNull();
+            var minimumCount = calculation.GetAttributeValue( AttributeKey.MinimumCount ).AsIntegerOrNull() ?? 1;
+            var withinDays = calculation.GetAttributeValue( AttributeKey.WithinDays ).AsIntegerOrNull() ?? 90;
 
             if ( !groupTypeGuid.HasValue )
             {

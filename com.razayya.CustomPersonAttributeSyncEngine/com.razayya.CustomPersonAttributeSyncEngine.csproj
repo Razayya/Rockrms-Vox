@@ -56,6 +56,8 @@
     <Compile Include="Model\CalculationGroupService.cs" />
     <Compile Include="Model\CalculationSubGroupService.cs" />
     <Compile Include="Model\CalculationService.cs" />
+    <Compile Include="Model\CalculationRun.cs" />
+    <Compile Include="Model\CalculationRunService.cs" />
     <!-- Calculation Types -->
     <Compile Include="CalculationTypes\CalculationTypeContainer.cs" />
     <Compile Include="CalculationTypes\CalculationTypeComponent.cs" />
@@ -64,6 +66,8 @@
     <Compile Include="CalculationTypes\DataViewInclusionCalculation.cs" />
     <Compile Include="CalculationTypes\GroupMembershipCalculation.cs" />
     <Compile Include="CalculationTypes\CompletionCalculation.cs" />
+    <!-- Data / Services -->
+    <Compile Include="Data\SyncEngineService.cs" />
     <!-- Jobs -->
     <Compile Include="Jobs\RunAttributeSyncEngine.cs" />
     <!-- Migrations -->
@@ -71,6 +75,7 @@
     <Compile Include="Migrations\002_RegisterEntityTypes.cs" />
     <Compile Include="Migrations\003_AddServiceJob.cs" />
     <Compile Include="Migrations\004_PagesAndBlocks.cs" />
+    <Compile Include="Migrations\005_AddCalculationRun.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

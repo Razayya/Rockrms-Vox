@@ -34,6 +34,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Constants
         public const string CalculationGroup = "_com_razayya_CustomPersonAttributeSyncEngine_CalculationGroup";
         public const string CalculationSubGroup = "_com_razayya_CustomPersonAttributeSyncEngine_CalculationSubGroup";
         public const string Calculation = "_com_razayya_CustomPersonAttributeSyncEngine_Calculation";
+        public const string CalculationRun = "_com_razayya_CustomPersonAttributeSyncEngine_CalculationRun";
     }
 
     public static class CRON

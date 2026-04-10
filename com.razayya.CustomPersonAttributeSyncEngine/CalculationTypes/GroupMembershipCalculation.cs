@@ -59,9 +59,9 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
         {
             var results = new Dictionary<int, Dictionary<string, object>>();
 
-            var groupTypeGuid = GetAttributeValue( AttributeKey.GroupTypeOrGroup ).AsGuidOrNull();
-            var groupRoleGuid = GetAttributeValue( AttributeKey.GroupRole ).AsGuidOrNull();
-            var activeMembersOnly = GetAttributeValue( AttributeKey.ActiveMembersOnly ).AsBoolean();
+            var groupTypeGuid = calculation.GetAttributeValue( AttributeKey.GroupTypeOrGroup ).AsGuidOrNull();
+            var groupRoleGuid = calculation.GetAttributeValue( AttributeKey.GroupRole ).AsGuidOrNull();
+            var activeMembersOnly = calculation.GetAttributeValue( AttributeKey.ActiveMembersOnly ).AsBoolean();
 
             if ( !groupTypeGuid.HasValue )
             {
@@ -87,16 +87,30 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 query = query.Where( gm => populationPersonIds.Contains( gm.PersonId ) );
             }
 
-            var memberSummary = query
-                .GroupBy( gm => gm.PersonId )
-                .Select( g => new
+            // Project flat columns that EF6 can safely translate, then group in memory.
+            var memberRows = query
+                .Select( gm => new
                 {
-                    PersonId = g.Key,
-                    JoinDate = g.Min( gm => gm.CreatedDateTime ),
-                    GroupRole = g.FirstOrDefault().GroupRole.Name,
-                    GroupName = g.FirstOrDefault().Group.Name
+                    gm.PersonId,
+                    gm.CreatedDateTime,
+                    GroupRoleName = gm.GroupRole.Name,
+                    GroupName = gm.Group.Name
                 } )
                 .ToList();
+
+            var memberSummary = memberRows
+                .GroupBy( r => r.PersonId )
+                .Select( g =>
+                {
+                    var earliest = g.OrderBy( r => r.CreatedDateTime ).First();
+                    return new
+                    {
+                        PersonId = g.Key,
+                        JoinDate = earliest.CreatedDateTime,
+                        GroupRole = earliest.GroupRoleName,
+                        GroupName = earliest.GroupName
+                    };
+                } );
 
             foreach ( var summary in memberSummary )
             {

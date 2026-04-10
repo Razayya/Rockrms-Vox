@@ -11,6 +11,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.SystemGuid
         public const string CALCULATION_TYPE_DATAVIEW = "E5F6A7B8-C9D0-4E1F-2A3B-5C6D7E8F9A0B";
         public const string CALCULATION_TYPE_GROUP_MEMBERSHIP = "F6A7B8C9-D0E1-4F2A-3B4C-6D7E8F9A0B1C";
         public const string CALCULATION_TYPE_COMPLETION = "A7B8C9D0-E1F2-4A3B-4C5D-7E8F9A0B1C2D";
+        public const string CALCULATION_RUN = "B8C9D0E1-F2A3-4B4C-5D6E-8F9A0B1C2D3E";
     }
 
     public static class ServiceJob

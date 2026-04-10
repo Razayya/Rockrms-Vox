@@ -5,6 +5,7 @@ using System.Data.Entity;
 using System.Linq;
 
 using com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes;
+using com.razayya.CustomPersonAttributeSyncEngine.Data;
 using com.razayya.CustomPersonAttributeSyncEngine.Model;
 
 using Rock;
@@ -86,6 +87,8 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
         protected void btnSave_Click( object sender, EventArgs e )
         {
+            nbWarning.Visible = false;
+
             using ( var rockContext = new RockContext() )
             {
                 var service = new CalculationService( rockContext );
@@ -105,12 +108,28 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                 calc.Name = tbName.Text;
                 calc.Description = tbDescription.Text;
                 calc.IsActive = cbIsActive.Checked;
-                calc.PersonAttributeId = apTargetAttribute.SelectedValueAsInt() ?? 0;
+
+                var selectedAttributeId = apTargetAttribute.SelectedValueAsInt();
+                if ( !selectedAttributeId.HasValue || selectedAttributeId.Value == 0 )
+                {
+                    nbWarning.Text = "A Target Person Attribute is required.";
+                    nbWarning.Visible = true;
+                    return;
+                }
+
+                calc.PersonAttributeId = selectedAttributeId.Value;
                 calc.ResultLavaTemplate = ceResultLava.Text;
                 calc.NoMatchBehavior = ddlNoMatchBehavior.SelectedValue.AsInteger() == 1
                     ? NoMatchBehavior.WriteLava
                     : NoMatchBehavior.LeaveUnchanged;
                 calc.NoMatchLavaTemplate = ceNoMatchLava.Text;
+
+                if ( calc.NoMatchBehavior == NoMatchBehavior.WriteLava && string.IsNullOrWhiteSpace( calc.NoMatchLavaTemplate ) )
+                {
+                    nbWarning.Text = "A No Match Lava Template is required when No Match Behavior is set to 'Write Lava Value'.";
+                    nbWarning.Visible = true;
+                    return;
+                }
 
                 // Resolve selected component to EntityTypeId
                 var componentEntityTypeGuid = cpCalculationType.SelectedValue.AsGuidOrNull();
@@ -121,6 +140,13 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                     {
                         calc.CalculationTypeEntityTypeId = entityType.Id;
                     }
+                }
+
+                if ( calc.CalculationTypeEntityTypeId == 0 )
+                {
+                    nbWarning.Text = "A Calculation Type is required.";
+                    nbWarning.Visible = true;
+                    return;
                 }
 
                 if ( !calc.IsValid )
@@ -171,18 +197,46 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
         protected void btnPlay_Click( object sender, EventArgs e )
         {
-            RunPreview();
+            RunPreview( null );
+        }
+
+        protected void btnPreviewSinglePerson_Click( object sender, EventArgs e )
+        {
+            var personId = ppSinglePerson.PersonId;
+            if ( personId.HasValue )
+            {
+                RunPreview( new HashSet<int> { personId.Value } );
+            }
+            else
+            {
+                nbPreviewInfo.Text = "Please select a person first.";
+                nbPreviewInfo.NotificationBoxType = NotificationBoxType.Warning;
+            }
+        }
+
+        protected void btnExecuteSinglePerson_Click( object sender, EventArgs e )
+        {
+            var personId = ppSinglePerson.PersonId;
+            if ( !personId.HasValue )
+            {
+                nbPreviewInfo.Text = "Please select a person first.";
+                nbPreviewInfo.NotificationBoxType = NotificationBoxType.Warning;
+                return;
+            }
+
+            ExecuteForPopulation( new HashSet<int> { personId.Value } );
         }
 
         protected void btnExecutePreview_Click( object sender, EventArgs e )
         {
-            ExecuteCalculation();
+            ExecuteForPopulation( null );
         }
 
         protected void btnClosePreview_Click( object sender, EventArgs e )
         {
             pnlPreview.Visible = false;
             pnlView.Visible = true;
+            nbExecutionResult.Visible = false;
         }
 
         #endregion
@@ -377,128 +431,86 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             }
         }
 
-        private void RunPreview()
+        private void RunPreview( HashSet<int> personIdOverride )
+        {
+            pnlView.Visible = false;
+            pnlPreview.Visible = true;
+            nbExecutionResult.Visible = false;
+
+            var service = new SyncEngineService();
+            var preview = service.PreviewCalculation( CalculationId, personIdOverride );
+
+            if ( !string.IsNullOrEmpty( preview.ErrorMessage ) )
+            {
+                nbPreviewInfo.Text = preview.ErrorMessage;
+                nbPreviewInfo.NotificationBoxType = NotificationBoxType.Warning;
+                return;
+            }
+
+            nbPreviewInfo.Text = string.Format(
+                "Population: {0} people. Matched: {1}. Showing {2} rows.",
+                preview.TotalPopulation, preview.MatchedCount, preview.Rows.Count );
+            nbPreviewInfo.NotificationBoxType = NotificationBoxType.Info;
+
+            gPreview.DataSource = preview.Rows;
+            gPreview.DataBind();
+        }
+
+        private const int MaxOnDemandPopulation = 50;
+
+        private void ExecuteForPopulation( HashSet<int> personIdOverride )
         {
             pnlView.Visible = false;
             pnlPreview.Visible = true;
 
-            using ( var rockContext = new RockContext() )
+            // Guard against large populations — full runs should use the nightly job
+            if ( personIdOverride == null || personIdOverride.Count == 0 )
             {
-                var calc = new CalculationService( rockContext ).Queryable()
-                    .Include( c => c.CalculationTypeEntityType )
-                    .Include( c => c.CalculationSubGroup.CalculationGroup )
-                    .FirstOrDefault( c => c.Id == CalculationId );
-
-                if ( calc == null )
+                var service = new SyncEngineService();
+                var preview = service.PreviewCalculation( CalculationId, null, 0 );
+                if ( preview.TotalPopulation > MaxOnDemandPopulation )
                 {
-                    nbPreviewInfo.Text = "Calculation not found.";
-                    nbPreviewInfo.NotificationBoxType = NotificationBoxType.Warning;
+                    nbExecutionResult.Visible = true;
+                    nbExecutionResult.NotificationBoxType = NotificationBoxType.Warning;
+                    nbExecutionResult.Text = string.Format(
+                        "Population of {0} exceeds the on-demand limit of {1}. Use the \"Execute for Person\" button to test individuals, or run the <strong>Custom Person Attribute Sync Engine</strong> job from Admin Tools &gt; System Settings &gt; Jobs Administration.",
+                        preview.TotalPopulation, MaxOnDemandPopulation );
                     return;
                 }
-
-                // Build population (simplified — uses parent group's filters)
-                var group = calc.CalculationSubGroup.CalculationGroup;
-                var personQuery = new PersonService( rockContext ).Queryable().AsNoTracking();
-
-                if ( group.RecordStatusValueId.HasValue )
-                {
-                    personQuery = personQuery.Where( p => p.RecordStatusValueId == group.RecordStatusValueId.Value );
-                }
-                if ( group.ConnectionStatusValueId.HasValue )
-                {
-                    personQuery = personQuery.Where( p => p.ConnectionStatusValueId == group.ConnectionStatusValueId.Value );
-                }
-                if ( group.CampusId.HasValue )
-                {
-                    personQuery = personQuery.Where( p => p.PrimaryCampusId == group.CampusId.Value );
-                }
-
-                var populationIds = new HashSet<int>( personQuery.Select( p => p.Id ).Take( 5000 ).ToList() );
-
-                // Resolve component
-                var entityType = EntityTypeCache.Get( calc.CalculationTypeEntityTypeId );
-                var component = CalculationTypeContainer.GetComponent( entityType?.Name );
-
-                if ( component == null )
-                {
-                    nbPreviewInfo.Text = "Calculation type component not found.";
-                    nbPreviewInfo.NotificationBoxType = NotificationBoxType.Warning;
-                    return;
-                }
-
-                calc.LoadAttributes( rockContext );
-                var matchedResults = component.Evaluate( rockContext, calc, populationIds );
-
-                // Build preview data
-                var targetAttribute = AttributeCache.Get( calc.PersonAttributeId );
-                var previewData = new List<PreviewRow>();
-
-                var samplePersonIds = matchedResults.Keys.Take( 100 ).ToList();
-                // Also include some non-matches
-                var nonMatchIds = populationIds.Where( id => !matchedResults.ContainsKey( id ) ).Take( 20 ).ToList();
-                samplePersonIds.AddRange( nonMatchIds );
-
-                var persons = new PersonService( rockContext ).Queryable().AsNoTracking()
-                    .Where( p => samplePersonIds.Contains( p.Id ) )
-                    .ToList();
-
-                foreach ( var person in persons )
-                {
-                    person.LoadAttributes( rockContext );
-                    var currentValue = person.GetAttributeValue( targetAttribute?.Key ?? string.Empty ) ?? string.Empty;
-
-                    string newValue;
-                    string action;
-
-                    if ( matchedResults.TryGetValue( person.Id, out var mergeFields ) )
-                    {
-                        newValue = !string.IsNullOrWhiteSpace( calc.ResultLavaTemplate )
-                            ? calc.ResultLavaTemplate.ResolveMergeFields( mergeFields )
-                            : mergeFields.ContainsKey( "Matched" ) ? mergeFields["Matched"]?.ToString() : "True";
-                        action = currentValue == newValue ? "No Change" : "Update";
-                    }
-                    else
-                    {
-                        newValue = calc.NoMatchBehavior == NoMatchBehavior.LeaveUnchanged ? currentValue : "(Write No-Match Value)";
-                        action = calc.NoMatchBehavior == NoMatchBehavior.LeaveUnchanged ? "Skip" : "Update";
-                    }
-
-                    previewData.Add( new PreviewRow
-                    {
-                        PersonName = person.FullName,
-                        CurrentValue = currentValue,
-                        NewValue = newValue,
-                        Action = action
-                    } );
-                }
-
-                nbPreviewInfo.Text = string.Format(
-                    "Population: {0} people. Matched: {1}. Showing sample of {2}.",
-                    populationIds.Count, matchedResults.Count, previewData.Count );
-                nbPreviewInfo.NotificationBoxType = NotificationBoxType.Info;
-
-                gPreview.DataSource = previewData.OrderBy( r => r.Action ).ThenBy( r => r.PersonName ).ToList();
-                gPreview.DataBind();
             }
-        }
 
-        private void ExecuteCalculation()
-        {
-            // This leverages the same job logic but for a single calculation
-            nbPreviewInfo.Text = "Execution from UI is a future enhancement. For now, use the 'Run Now' button on the Service Job.";
-            nbPreviewInfo.NotificationBoxType = NotificationBoxType.Info;
-        }
+            var execService = new SyncEngineService { RunByPersonAliasId = CurrentPersonAliasId };
+            SyncResult result;
 
-        #endregion
+            if ( personIdOverride != null && personIdOverride.Count > 0 )
+            {
+                result = execService.ProcessCalculation( CalculationId, personIdOverride );
+            }
+            else
+            {
+                result = execService.ProcessCalculation( CalculationId );
+            }
 
-        #region Helper Classes
+            nbExecutionResult.Visible = true;
 
-        private class PreviewRow
-        {
-            public string PersonName { get; set; }
-            public string CurrentValue { get; set; }
-            public string NewValue { get; set; }
-            public string Action { get; set; }
+            if ( result.Errors.Any() )
+            {
+                nbExecutionResult.NotificationBoxType = NotificationBoxType.Warning;
+                nbExecutionResult.Text = string.Format(
+                    "Execution completed with errors. {0} updated, {1} skipped, {2} error(s).<br/>{3}",
+                    result.Updated, result.Skipped, result.Errors.Count,
+                    string.Join( "<br/>", result.Errors ) );
+            }
+            else
+            {
+                nbExecutionResult.NotificationBoxType = NotificationBoxType.Success;
+                nbExecutionResult.Text = string.Format(
+                    "Execution completed successfully. {0} attribute(s) updated, {1} skipped.",
+                    result.Updated, result.Skipped );
+            }
+
+            // Refresh preview to show new current values
+            RunPreview( personIdOverride );
         }
 
         #endregion

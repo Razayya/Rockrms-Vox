@@ -128,7 +128,27 @@
                 <%-- Preview/Play Panel --%>
                 <asp:Panel ID="pnlPreview" runat="server" Visible="false">
                     <h4><i class="fa fa-play"></i> Calculation Preview</h4>
+
+                    <div class="well well-sm">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <Rock:PersonPicker ID="ppSinglePerson" runat="server" Label="Test Single Person"
+                                    Help="Optional. Select a person to preview/execute this calculation for just that individual." />
+                            </div>
+                            <div class="col-md-6" style="padding-top: 24px;">
+                                <asp:LinkButton ID="btnPreviewSinglePerson" runat="server" Text="<i class='fa fa-search'></i> Preview for Person"
+                                    CssClass="btn btn-default btn-sm" OnClick="btnPreviewSinglePerson_Click" CausesValidation="false" />
+                                <asp:LinkButton ID="btnExecuteSinglePerson" runat="server" Text="<i class='fa fa-bolt'></i> Execute for Person"
+                                    CssClass="btn btn-warning btn-sm" OnClick="btnExecuteSinglePerson_Click" CausesValidation="false"
+                                    OnClientClick="return Rock.dialogs.confirmPreventOnCancel(event, 'This will write the attribute value for this person. Continue?');" />
+                                <asp:LinkButton ID="btnPreviewAll" runat="server" Text="<i class='fa fa-users'></i> Preview Full Population"
+                                    CssClass="btn btn-default btn-sm" OnClick="btnPlay_Click" CausesValidation="false" />
+                            </div>
+                        </div>
+                    </div>
+
                     <Rock:NotificationBox ID="nbPreviewInfo" runat="server" NotificationBoxType="Info" />
+                    <Rock:NotificationBox ID="nbExecutionResult" runat="server" NotificationBoxType="Success" Visible="false" />
 
                     <div class="grid grid-panel">
                         <Rock:Grid ID="gPreview" runat="server" RowItemText="Person" AllowSorting="true"
@@ -143,9 +163,9 @@
                     </div>
 
                     <div class="actions">
-                        <asp:LinkButton ID="btnExecutePreview" runat="server" Text="<i class='fa fa-bolt'></i> Execute for All Shown"
+                        <asp:LinkButton ID="btnExecutePreview" runat="server" Text="<i class='fa fa-bolt'></i> Execute for All in Population"
                             CssClass="btn btn-warning" OnClick="btnExecutePreview_Click"
-                            OnClientClick="return Rock.dialogs.confirmPreventOnCancel(event, 'This will write attribute values for all shown people. Continue?');" />
+                            OnClientClick="return Rock.dialogs.confirmPreventOnCancel(event, 'This will write attribute values for the entire population. This cannot be undone. Continue?');" />
                         <asp:LinkButton ID="btnClosePreview" runat="server" Text="Close Preview"
                             CssClass="btn btn-link" CausesValidation="false" OnClick="btnClosePreview_Click" />
                     </div>

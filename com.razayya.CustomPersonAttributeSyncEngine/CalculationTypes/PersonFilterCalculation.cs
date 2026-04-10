@@ -61,8 +61,8 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
         {
             var results = new Dictionary<int, Dictionary<string, object>>();
 
-            var conditionsJson = GetAttributeValue( AttributeKey.FilterConditions );
-            var matchAll = GetAttributeValue( AttributeKey.MatchAll ).AsBoolean();
+            var conditionsJson = calculation.GetAttributeValue( AttributeKey.FilterConditions );
+            var matchAll = calculation.GetAttributeValue( AttributeKey.MatchAll ).AsBoolean();
 
             List<FilterCondition> conditions;
             try
@@ -79,43 +79,84 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 return results;
             }
 
-            var personService = new PersonService( rockContext );
-            var personsQuery = personService.Queryable().AsNoTracking();
-
-            if ( populationPersonIds != null && populationPersonIds.Count > 0 )
-            {
-                personsQuery = personsQuery.Where( p => populationPersonIds.Contains( p.Id ) );
-            }
-
-            var persons = personsQuery.ToList();
-
-            // Load attributes for all persons if any condition uses attributes
+            bool needsProperties = conditions.Any( c => c.Source == FilterSource.Property );
             bool needsAttributes = conditions.Any( c => c.Source == FilterSource.Attribute );
 
-            foreach ( var person in persons )
+            // Batch-load attribute values in one query (replaces per-person LoadAttributes)
+            Dictionary<int, Dictionary<string, string>> attributeLookup = null;
+            if ( needsAttributes )
             {
-                if ( needsAttributes )
+                var attributeKeys = conditions
+                    .Where( c => c.Source == FilterSource.Attribute )
+                    .Select( c => c.Key )
+                    .Distinct()
+                    .ToList();
+
+                attributeLookup = new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                    .Where( av =>
+                        av.Attribute.Key != null &&
+                        attributeKeys.Contains( av.Attribute.Key ) &&
+                        av.EntityId.HasValue &&
+                        populationPersonIds.Contains( av.EntityId.Value ) )
+                    .Select( av => new { EntityId = av.EntityId.Value, av.Attribute.Key, av.Value } )
+                    .ToList()
+                    .GroupBy( av => av.EntityId )
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.ToDictionary( av => av.Key, av => av.Value ?? string.Empty ) );
+            }
+
+            // Only load Person entities if we have Property conditions
+            if ( needsProperties )
+            {
+                var personService = new PersonService( rockContext );
+                var personsQuery = personService.Queryable().AsNoTracking();
+
+                if ( populationPersonIds != null && populationPersonIds.Count > 0 )
                 {
-                    person.LoadAttributes( rockContext );
+                    personsQuery = personsQuery.Where( p => populationPersonIds.Contains( p.Id ) );
                 }
 
-                bool matched = matchAll
-                    ? conditions.All( c => EvaluateCondition( person, c ) )
-                    : conditions.Any( c => EvaluateCondition( person, c ) );
+                var persons = personsQuery.ToList();
 
-                if ( matched )
+                foreach ( var person in persons )
                 {
-                    results[person.Id] = new Dictionary<string, object>
+                    bool matched = matchAll
+                        ? conditions.All( c => EvaluateCondition( person, c, attributeLookup ) )
+                        : conditions.Any( c => EvaluateCondition( person, c, attributeLookup ) );
+
+                    if ( matched )
                     {
-                        { "Matched", true }
-                    };
+                        results[person.Id] = new Dictionary<string, object>
+                        {
+                            { "Matched", true }
+                        };
+                    }
+                }
+            }
+            else
+            {
+                // Attribute-only conditions — no need to load Person entities at all
+                foreach ( var personId in populationPersonIds )
+                {
+                    bool matched = matchAll
+                        ? conditions.All( c => EvaluateAttributeCondition( personId, c, attributeLookup ) )
+                        : conditions.Any( c => EvaluateAttributeCondition( personId, c, attributeLookup ) );
+
+                    if ( matched )
+                    {
+                        results[personId] = new Dictionary<string, object>
+                        {
+                            { "Matched", true }
+                        };
+                    }
                 }
             }
 
             return results;
         }
 
-        private bool EvaluateCondition( Person person, FilterCondition condition )
+        private bool EvaluateCondition( Person person, FilterCondition condition, Dictionary<int, Dictionary<string, string>> attributeLookup )
         {
             string actualValue;
 
@@ -132,10 +173,28 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
             }
             else
             {
-                actualValue = person.GetAttributeValue( condition.Key ) ?? string.Empty;
+                actualValue = GetAttributeValueFromLookup( person.Id, condition.Key, attributeLookup );
             }
 
             return CompareValues( actualValue, condition.Comparison, condition.Value );
+        }
+
+        private bool EvaluateAttributeCondition( int personId, FilterCondition condition, Dictionary<int, Dictionary<string, string>> attributeLookup )
+        {
+            var actualValue = GetAttributeValueFromLookup( personId, condition.Key, attributeLookup );
+            return CompareValues( actualValue, condition.Comparison, condition.Value );
+        }
+
+        private static string GetAttributeValueFromLookup( int personId, string key, Dictionary<int, Dictionary<string, string>> attributeLookup )
+        {
+            if ( attributeLookup != null
+                && attributeLookup.TryGetValue( personId, out var personAttrs )
+                && personAttrs.TryGetValue( key, out var value ) )
+            {
+                return value;
+            }
+
+            return string.Empty;
         }
 
         /// <summary>

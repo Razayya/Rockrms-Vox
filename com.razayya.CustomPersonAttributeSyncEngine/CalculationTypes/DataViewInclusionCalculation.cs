@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.Composition;
@@ -43,7 +44,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
         {
             var results = new Dictionary<int, Dictionary<string, object>>();
 
-            var dataViewGuid = GetAttributeValue( AttributeKey.DataView ).AsGuidOrNull();
+            var dataViewGuid = calculation.GetAttributeValue( AttributeKey.DataView ).AsGuidOrNull();
             if ( !dataViewGuid.HasValue )
             {
                 return results;
@@ -56,9 +57,18 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 return results;
             }
 
-            var dataViewPersonIds = dataView.GetQuery( new DataViewGetQueryArgs { DbContext = rockContext } )
-                .Select( e => e.Id )
-                .ToList();
+            List<int> dataViewPersonIds;
+            try
+            {
+                dataViewPersonIds = dataView.GetQuery( new DataViewGetQueryArgs { DbContext = rockContext, DatabaseTimeoutSeconds = 180 } )
+                    .Select( e => e.Id )
+                    .ToList();
+            }
+            catch ( Exception ex )
+            {
+                Rock.Model.ExceptionLogService.LogException( ex );
+                return results;
+            }
 
             // Intersect with population
             var matchedIds = populationPersonIds != null && populationPersonIds.Count > 0

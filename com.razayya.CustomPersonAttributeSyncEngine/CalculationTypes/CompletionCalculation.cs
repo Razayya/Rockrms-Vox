@@ -55,7 +55,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
         {
             var results = new Dictionary<int, Dictionary<string, object>>();
 
-            var criteriaJson = GetAttributeValue( AttributeKey.CompletionCriteria );
+            var criteriaJson = calculation.GetAttributeValue( AttributeKey.CompletionCriteria );
             List<CompletionCriterion> criteria;
             try
             {
@@ -88,7 +88,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 return results;
             }
 
-            // Resolve the target attribute keys for each referenced calculation
+            // Resolve the target attribute for each referenced calculation
             var calculationService = new CalculationService( rockContext );
             var calculationIds = requiredCriteria.Select( c => c.CalculationId ).Distinct().ToList();
             var siblingCalculations = calculationService.Queryable().AsNoTracking()
@@ -96,7 +96,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 .Select( c => new { c.Id, c.PersonAttributeId } )
                 .ToList();
 
-            // Map CalculationId => Attribute
+            // Map CalculationId => AttributeCache
             var attributeMap = new Dictionary<int, Rock.Web.Cache.AttributeCache>();
             foreach ( var sibling in siblingCalculations )
             {
@@ -107,21 +107,24 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 }
             }
 
-            // Evaluate each person
-            var personService = new PersonService( rockContext );
-            var personsQuery = personService.Queryable().AsNoTracking();
+            // Batch-load only the specific attribute values we need — one query instead of N
+            var neededAttributeIds = attributeMap.Values.Select( a => a.Id ).Distinct().ToList();
 
-            if ( populationPersonIds != null && populationPersonIds.Count > 0 )
+            var attributeLookup = new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                .Where( av =>
+                    neededAttributeIds.Contains( av.AttributeId ) &&
+                    av.EntityId.HasValue &&
+                    populationPersonIds.Contains( av.EntityId.Value ) )
+                .Select( av => new { EntityId = av.EntityId.Value, av.AttributeId, av.Value } )
+                .ToList()
+                .GroupBy( av => av.EntityId )
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.ToDictionary( av => av.AttributeId, av => av.Value ?? string.Empty ) );
+
+            // Evaluate each person against the criteria — no Person entity load needed
+            foreach ( var personId in populationPersonIds )
             {
-                personsQuery = personsQuery.Where( p => populationPersonIds.Contains( p.Id ) );
-            }
-
-            var persons = personsQuery.ToList();
-
-            foreach ( var person in persons )
-            {
-                person.LoadAttributes( rockContext );
-
                 int completedCount = 0;
                 bool allRequiredMet = true;
 
@@ -129,12 +132,17 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 {
                     if ( !attributeMap.TryGetValue( criterion.CalculationId, out var targetAttribute ) )
                     {
-                        // Referenced calculation not found — treat as not met
                         allRequiredMet = false;
                         continue;
                     }
 
-                    var attrValue = person.GetAttributeValue( targetAttribute.Key ) ?? string.Empty;
+                    string attrValue = string.Empty;
+                    if ( attributeLookup.TryGetValue( personId, out var personAttrs )
+                        && personAttrs.TryGetValue( targetAttribute.Id, out var val ) )
+                    {
+                        attrValue = val;
+                    }
+
                     bool met = PersonFilterCalculation.CompareValues( attrValue, criterion.Comparison, criterion.Value );
 
                     if ( met )
@@ -149,7 +157,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
 
                 if ( allRequiredMet )
                 {
-                    results[person.Id] = new Dictionary<string, object>
+                    results[personId] = new Dictionary<string, object>
                     {
                         { "Matched", true },
                         { "CompletedCount", completedCount },
