@@ -7,6 +7,7 @@ using System.Linq;
 using com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes;
 using com.razayya.CustomPersonAttributeSyncEngine.Data;
 using com.razayya.CustomPersonAttributeSyncEngine.Model;
+using System.Web.UI.WebControls;
 
 using Rock;
 using Rock.Attribute;
@@ -68,6 +69,7 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                 ParentSubGroupId = subGroupId;
 
                 PopulateDropDowns();
+                PopulateValidCategoriesPanel();
                 ShowDetail( calcId );
             }
         }
@@ -258,6 +260,102 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             ddlNoMatchBehavior.Items.Clear();
             ddlNoMatchBehavior.Items.Add( new System.Web.UI.WebControls.ListItem( "Leave Unchanged", "0" ) );
             ddlNoMatchBehavior.Items.Add( new System.Web.UI.WebControls.ListItem( "Write Lava Value", "1" ) );
+
+            // Load calculation types
+            cpCalculationType.Items.Clear();
+            cpCalculationType.Items.Add( new ListItem() );
+            foreach ( var calcType in CalculationTypeComponent.GetAllTypes() )
+            {
+                cpCalculationType.Items.Add( new ListItem( calcType.Title, calcType.EntityTypeGuid.ToString().ToUpper() ) );
+            }
+
+            // Resolve allowed categories from the parent CalculationGroup
+            var allowedCategoryIds = GetParentGroupCategoryIds();
+
+            // Load Person attributes for the target attribute picker
+            apTargetAttribute.Items.Clear();
+            apTargetAttribute.Items.Add( new System.Web.UI.WebControls.ListItem() );
+
+            var personEntityTypeId = EntityTypeCache.Get( typeof( Person ) ).Id;
+            var personAttributes = AttributeCache.All()
+                .Where( a => a.EntityTypeId == personEntityTypeId && a.IsActive )
+                .Where( a => !allowedCategoryIds.Any() || a.Categories.Any( c => allowedCategoryIds.Contains( c.Id ) ) )
+                .OrderBy( a => a.Categories.FirstOrDefault()?.Name )
+                .ThenBy( a => a.Name )
+                .ToList();
+
+            foreach ( var attr in personAttributes )
+            {
+                var categoryPrefix = attr.Categories.Any()
+                    ? attr.Categories.First().Name + " - "
+                    : string.Empty;
+                apTargetAttribute.Items.Add( new System.Web.UI.WebControls.ListItem(
+                    categoryPrefix + attr.Name, attr.Id.ToString() ) );
+            }
+        }
+
+        /// <summary>
+        /// Gets the allowed Person Attribute Category IDs from the parent CalculationGroup.
+        /// </summary>
+        private List<int> GetParentGroupCategoryIds()
+        {
+            int subGroupId = ParentSubGroupId;
+            if ( subGroupId == 0 && CalculationId > 0 )
+            {
+                using ( var rockContext = new RockContext() )
+                {
+                    subGroupId = new CalculationService( rockContext )
+                        .GetSelect( CalculationId, c => c.CalculationSubGroupId );
+                }
+            }
+
+            if ( subGroupId > 0 )
+            {
+                using ( var rockContext = new RockContext() )
+                {
+                    var group = new CalculationSubGroupService( rockContext ).Queryable()
+                        .Where( sg => sg.Id == subGroupId )
+                        .Select( sg => sg.CalculationGroup )
+                        .FirstOrDefault();
+
+                    if ( group != null )
+                    {
+                        group.LoadAttributes( rockContext );
+                        var categoryGuids = group.GetAttributeValue( "PersonAttributeCategories" );
+                        if ( !string.IsNullOrWhiteSpace( categoryGuids ) )
+                        {
+                            return categoryGuids.SplitDelimitedValues()
+                                .Select( g => CategoryCache.Get( g.AsGuid() ) )
+                                .Where( c => c != null )
+                                .Select( c => c.Id )
+                                .ToList();
+                        }
+                    }
+                }
+            }
+
+            return new List<int>();
+        }
+
+        private void PopulateValidCategoriesPanel()
+        {
+            var categoryIds = GetParentGroupCategoryIds();
+            if ( !categoryIds.Any() )
+            {
+                pnlValidCategories.Visible = false;
+                return;
+            }
+
+            pnlValidCategories.Visible = true;
+            var categoryNames = categoryIds
+                .Select( id => CategoryCache.Get( id ) )
+                .Where( c => c != null )
+                .OrderBy( c => c.Name )
+                .Select( c => string.Format( "<li>{0}</li>", c.Name ) );
+
+            lValidCategories.Text = string.Format(
+                "<p class='text-muted'>Target attributes are restricted to the following categories (configured on the parent Calculation Group):</p><ul>{0}</ul>",
+                string.Join( "", categoryNames ) );
         }
 
         private void ShowDetail( int calcId )
@@ -386,7 +484,7 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                 return;
             }
 
-            var component = CalculationTypeContainer.GetComponent( entityType.Name );
+            var component = CalculationTypeComponent.GetComponent( entityType.Name );
             if ( component == null )
             {
                 return;

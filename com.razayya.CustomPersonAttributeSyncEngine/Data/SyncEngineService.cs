@@ -58,6 +58,52 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
         }
 
         /// <summary>
+        /// Processes a single person through a Calculation Group.
+        /// </summary>
+        public SyncResult ProcessGroupForPerson( int calculationGroupId, int personId )
+        {
+            var result = new SyncResult();
+
+            using ( var rockContext = new RockContext() )
+            {
+                var group = new CalculationGroupService( rockContext ).Get( calculationGroupId );
+                if ( group == null )
+                {
+                    result.Errors.Add( $"Calculation Group Id {calculationGroupId} not found." );
+                    return result;
+                }
+
+                var singlePersonPopulation = new HashSet<int> { personId };
+                result.Log.Add( $"Group '{group.Name}': single-person sync for PersonId {personId}" );
+
+                var subGroups = new CalculationSubGroupService( rockContext ).Queryable()
+                    .Where( sg => sg.CalculationGroupId == group.Id && sg.IsActive )
+                    .OrderBy( sg => sg.Order )
+                    .ThenBy( sg => sg.Name )
+                    .ToList();
+
+                var subGroupPassers = new Dictionary<int, HashSet<int>>();
+
+                foreach ( var subGroup in subGroups )
+                {
+                    try
+                    {
+                        var subResult = ProcessSubGroupInternal( subGroup, singlePersonPopulation, subGroupPassers, rockContext );
+                        result.Merge( subResult.Result );
+                        subGroupPassers[subGroup.Id] = subResult.Passers;
+                    }
+                    catch ( Exception ex )
+                    {
+                        result.Errors.Add( $"SubGroup '{subGroup.Name}': {ex.Message}" );
+                        subGroupPassers[subGroup.Id] = singlePersonPopulation;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Processes a single Calculation Group by Id.
         /// </summary>
         public SyncResult ProcessGroup( int calculationGroupId )
@@ -82,20 +128,20 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
                     .ThenBy( sg => sg.Name )
                     .ToList();
 
-                HashSet<int> previousSubGroupPassers = null;
+                var subGroupPassers = new Dictionary<int, HashSet<int>>();
 
                 foreach ( var subGroup in subGroups )
                 {
                     try
                     {
-                        var subResult = ProcessSubGroupInternal( subGroup, basePopulation, previousSubGroupPassers, rockContext );
+                        var subResult = ProcessSubGroupInternal( subGroup, basePopulation, subGroupPassers, rockContext );
                         result.Merge( subResult.Result );
-                        previousSubGroupPassers = subResult.Passers;
+                        subGroupPassers[subGroup.Id] = subResult.Passers;
                     }
                     catch ( Exception ex )
                     {
                         result.Errors.Add( $"SubGroup '{subGroup.Name}': {ex.Message}" );
-                        previousSubGroupPassers = basePopulation;
+                        subGroupPassers[subGroup.Id] = basePopulation;
                     }
                 }
 
@@ -123,7 +169,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
                 }
 
                 var basePopulation = BuildBasePopulation( subGroup.CalculationGroup, rockContext );
-                var internalResult = ProcessSubGroupInternal( subGroup, basePopulation, null, rockContext );
+                var internalResult = ProcessSubGroupInternal( subGroup, basePopulation, new Dictionary<int, HashSet<int>>(), rockContext );
                 return internalResult.Result;
             }
         }
@@ -208,7 +254,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
 
                 // Resolve component and evaluate
                 var entityType = EntityTypeCache.Get( calc.CalculationTypeEntityTypeId );
-                var component = CalculationTypeContainer.GetComponent( entityType?.Name );
+                var component = CalculationTypeComponent.GetComponent( entityType?.Name );
                 if ( component == null )
                 {
                     preview.ErrorMessage = $"Component '{entityType?.Name}' not found.";
@@ -289,15 +335,34 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
         private SubGroupProcessResult ProcessSubGroupInternal(
             CalculationSubGroup subGroup,
             HashSet<int> basePopulation,
-            HashSet<int> previousSubGroupPassers,
+            Dictionary<int, HashSet<int>> subGroupPassers,
             RockContext rockContext )
         {
             var result = new SyncResult();
 
             HashSet<int> workingPopulation;
-            if ( subGroup.ScopeToPreviousSubGroup && previousSubGroupPassers != null )
+            var prerequisiteIds = ( subGroup.PrerequisiteSubGroupIds ?? string.Empty )
+                .Split( new[] { ',' }, StringSplitOptions.RemoveEmptyEntries )
+                .Select( s => s.Trim().AsInteger() )
+                .Where( id => id > 0 )
+                .ToList();
+
+            if ( prerequisiteIds.Any() )
             {
-                workingPopulation = new HashSet<int>( previousSubGroupPassers );
+                // Start with a copy of base population, then intersect with each prerequisite's passers.
+                workingPopulation = new HashSet<int>( basePopulation );
+
+                foreach ( var prereqId in prerequisiteIds )
+                {
+                    if ( subGroupPassers.TryGetValue( prereqId, out var passers ) )
+                    {
+                        workingPopulation.IntersectWith( passers );
+                    }
+                    else
+                    {
+                        result.Log.Add( $"  SubGroup '{subGroup.Name}': prerequisite SubGroup Id {prereqId} not found in processed results — skipping that prerequisite." );
+                    }
+                }
             }
             else
             {
@@ -321,6 +386,13 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
                     {
                         result.Errors.Add( $"SubGroup '{subGroup.Name}' DataView error: {ex.Message}" );
                         ExceptionLogService.LogException( ex );
+
+                        result.Log.Add( $"  SubGroup '{subGroup.Name}': SKIPPED — DataView query failed." );
+                        return new SubGroupProcessResult
+                        {
+                            Result = result,
+                            Passers = basePopulation
+                        };
                     }
                 }
             }
@@ -378,7 +450,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
                 return result;
             }
 
-            var component = CalculationTypeContainer.GetComponent( entityType.Name );
+            var component = CalculationTypeComponent.GetComponent( entityType.Name );
             if ( component == null )
             {
                 result.Errors.Add( $"Component '{entityType.Name}' not found." );

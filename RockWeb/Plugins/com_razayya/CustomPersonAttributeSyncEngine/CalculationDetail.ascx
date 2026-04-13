@@ -77,16 +77,41 @@
 
                     <div class="row">
                         <div class="col-md-6">
-                            <Rock:ComponentPicker ID="cpCalculationType" runat="server" Label="Calculation Type"
-                                ContainerType="com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes.CalculationTypeContainer, com.razayya.CustomPersonAttributeSyncEngine"
+                            <Rock:RockDropDownList ID="cpCalculationType" runat="server" Label="Calculation Type"
                                 Required="true" AutoPostBack="true" OnSelectedIndexChanged="cpCalculationType_SelectedIndexChanged" />
                         </div>
                         <div class="col-md-6">
-                            <Rock:AttributePicker ID="apTargetAttribute" runat="server" Label="Target Person Attribute"
-                                AllowMulti="false" Required="true"
+                            <Rock:RockDropDownList ID="apTargetAttribute" runat="server" Label="Target Person Attribute"
+                                Required="true" EnhanceForLongLists="true"
                                 Help="The Person Attribute that this calculation will write its result to." />
                         </div>
                     </div>
+
+                    <%-- Valid target attribute categories --%>
+                    <asp:Panel ID="pnlValidCategories" runat="server" Visible="false">
+                        <div class="panel panel-default">
+                            <div class="panel-heading" role="button" data-toggle="collapse" data-target="#collapseValidCategories" aria-expanded="false" style="cursor: pointer;">
+                                <h5 class="panel-title">
+                                    <i class="fa fa-filter"></i> Valid Target Attribute Categories
+                                    <i class="fa fa-chevron-right pull-right js-cat-toggle-icon" style="transition: transform 0.2s;"></i>
+                                </h5>
+                            </div>
+                            <div id="collapseValidCategories" class="panel-collapse collapse">
+                                <div class="panel-body">
+                                    <asp:Literal ID="lValidCategories" runat="server" />
+                                </div>
+                            </div>
+                        </div>
+                        <script>
+                            $(function () {
+                                $('#collapseValidCategories').on('show.bs.collapse', function () {
+                                    $(this).parent().find('.js-cat-toggle-icon').css('transform', 'rotate(90deg)');
+                                }).on('hide.bs.collapse', function () {
+                                    $(this).parent().find('.js-cat-toggle-icon').css('transform', 'rotate(0deg)');
+                                });
+                            });
+                        </script>
+                    </asp:Panel>
 
                     <%-- Dynamic attributes for the selected calculation type component --%>
                     <asp:Panel ID="pnlComponentAttributes" runat="server" CssClass="well">
@@ -116,9 +141,29 @@
                     </div>
 
                     <%-- Merge field documentation --%>
-                    <asp:Panel ID="pnlMergeFields" runat="server" Visible="false" CssClass="well well-sm">
-                        <h5>Available Merge Fields</h5>
-                        <asp:Literal ID="lMergeFields" runat="server" />
+                    <asp:Panel ID="pnlMergeFields" runat="server" Visible="false">
+                        <div class="panel panel-default margin-t-md">
+                            <div class="panel-heading" role="button" data-toggle="collapse" data-target="#collapseMergeFields" aria-expanded="false" style="cursor: pointer;">
+                                <h5 class="panel-title">
+                                    <i class="fa fa-code"></i> Available Merge Fields
+                                    <i class="fa fa-chevron-right pull-right js-toggle-icon" style="transition: transform 0.2s;"></i>
+                                </h5>
+                            </div>
+                            <div id="collapseMergeFields" class="panel-collapse collapse">
+                                <div class="panel-body">
+                                    <asp:Literal ID="lMergeFields" runat="server" />
+                                </div>
+                            </div>
+                        </div>
+                        <script>
+                            $(function () {
+                                $('#collapseMergeFields').on('show.bs.collapse', function () {
+                                    $(this).parent().find('.js-toggle-icon').css('transform', 'rotate(90deg)');
+                                }).on('hide.bs.collapse', function () {
+                                    $(this).parent().find('.js-toggle-icon').css('transform', 'rotate(0deg)');
+                                });
+                            });
+                        </script>
                     </asp:Panel>
 
                     <div class="actions">

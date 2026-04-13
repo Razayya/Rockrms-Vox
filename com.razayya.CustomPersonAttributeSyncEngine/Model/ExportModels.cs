@@ -31,7 +31,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Model
         public string Description { get; set; }
         public bool IsActive { get; set; }
         public int Order { get; set; }
-        public bool ScopeToPreviousSubGroup { get; set; }
+        public string PrerequisiteSubGroupNames { get; set; }
 
         public string AdditionalDataViewGuid { get; set; }
 

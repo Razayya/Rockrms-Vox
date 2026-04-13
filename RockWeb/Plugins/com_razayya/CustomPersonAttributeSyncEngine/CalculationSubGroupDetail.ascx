@@ -73,12 +73,8 @@
                                 SourceTypeName="com.razayya.CustomPersonAttributeSyncEngine.Model.CalculationSubGroup, com.razayya.CustomPersonAttributeSyncEngine"
                                 PropertyName="Name" />
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-6">
                             <Rock:RockCheckBox ID="cbIsActive" runat="server" Label="Active" />
-                        </div>
-                        <div class="col-md-3">
-                            <Rock:RockCheckBox ID="cbScopeToPrevious" runat="server" Label="Scope to Previous Sub Group"
-                                Help="When enabled, only people who passed the previous Sub Group's Completion calculation will be evaluated." />
                         </div>
                     </div>
 
@@ -88,8 +84,13 @@
 
                     <div class="row">
                         <div class="col-md-6">
+                            <Rock:RockCheckBoxList ID="cblPrerequisites" runat="server" Label="Prerequisite Sub Groups"
+                                Help="Select one or more sibling sub-groups whose Completion calculation passers will be intersected to form this sub-group's working population. Leave empty to use the parent group's full base population."
+                                RepeatDirection="Vertical" />
+                        </div>
+                        <div class="col-md-6">
                             <Rock:DataViewItemPicker ID="dvpAdditionalDataView" runat="server" Label="Additional Data View Filter"
-                                Help="Optional. Further narrows the population beyond the parent group's filters." />
+                                Help="Optional. Further narrows the population beyond the parent group's filters and any prerequisite scoping." />
                         </div>
                     </div>
 

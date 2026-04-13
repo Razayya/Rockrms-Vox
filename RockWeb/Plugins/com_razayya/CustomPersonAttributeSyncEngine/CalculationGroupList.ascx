@@ -28,16 +28,16 @@
                 <div class="grid grid-panel">
                     <Rock:ModalAlert ID="mdGridWarning" runat="server" />
                     <Rock:Grid ID="gList" runat="server" RowItemText="Calculation Group"
-                        AllowSorting="true" OnRowSelected="gList_RowSelected" TooltipField="Description">
+                        OnRowSelected="gList_RowSelected" TooltipField="Description">
                         <Columns>
                             <Rock:ReorderField />
-                            <Rock:RockBoundField DataField="Name" HeaderText="Name" SortExpression="Name" />
-                            <Rock:RockBoundField DataField="Description" HeaderText="Description" SortExpression="Description"
+                            <Rock:RockBoundField DataField="Name" HeaderText="Name" />
+                            <Rock:RockBoundField DataField="Description" HeaderText="Description"
                                 TruncateLength="80" />
-                            <Rock:RockBoundField DataField="SubGroupCount" HeaderText="Sub Groups" SortExpression="SubGroupCount"
+                            <Rock:RockBoundField DataField="SubGroupCount" HeaderText="Sub Groups"
                                 ItemStyle-HorizontalAlign="Center" HeaderStyle-HorizontalAlign="Center" />
-                            <Rock:DateTimeField DataField="LastRunDateTime" HeaderText="Last Run" SortExpression="LastRunDateTime" />
-                            <Rock:BoolField DataField="IsActive" HeaderText="Active" SortExpression="IsActive" />
+                            <Rock:DateTimeField DataField="LastRunDateTime" HeaderText="Last Run" />
+                            <Rock:BoolField DataField="IsActive" HeaderText="Active" />
                             <Rock:SecurityField TitleField="Name" />
                             <Rock:DeleteField OnClick="gList_Delete" />
                         </Columns>

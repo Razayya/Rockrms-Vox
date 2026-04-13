@@ -70,6 +70,10 @@
     <!-- Data / Services -->
     <Compile Include="Data\ImportExportService.cs" />
     <Compile Include="Data\SyncEngineService.cs" />
+    <!-- Field Types -->
+    <Compile Include="Field\Types\CalculationGroupFieldType.cs" />
+    <!-- Workflow Actions -->
+    <Compile Include="Workflow\Action\RunPersonAttributeSync.cs" />
     <!-- Jobs -->
     <Compile Include="Jobs\RunAttributeSyncEngine.cs" />
     <!-- Migrations -->
@@ -79,6 +83,10 @@
     <Compile Include="Migrations\004_PagesAndBlocks.cs" />
     <Compile Include="Migrations\005_AddCalculationRun.cs" />
     <Compile Include="Migrations\006_RestructurePages.cs" />
+    <Compile Include="Migrations\007_RegisterCategoryAttribute.cs" />
+    <Compile Include="Migrations\008_RegisterFieldTypeAndWorkflowAction.cs" />
+    <Compile Include="Migrations\009_PageListAsBlocks.cs" />
+    <Compile Include="Migrations\010_PrerequisiteSubGroups.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

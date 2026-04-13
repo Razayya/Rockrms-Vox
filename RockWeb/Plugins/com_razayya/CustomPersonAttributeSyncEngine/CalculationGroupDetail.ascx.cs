@@ -110,6 +110,15 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
                 rockContext.SaveChanges();
 
+                // Save attribute values (PersonAttributeCategories)
+                group.LoadAttributes( rockContext );
+                var selectedCategoryGuids = cpAttributeCategories.SelectedValuesAsInt()
+                    .Select( id => CategoryCache.Get( id ) )
+                    .Where( c => c != null )
+                    .Select( c => c.Guid.ToString() );
+                group.SetAttributeValue( "PersonAttributeCategories", string.Join( ",", selectedCategoryGuids ) );
+                group.SaveAttributeValues( rockContext );
+
                 CalculationGroupId = group.Id;
             }
 
@@ -272,6 +281,23 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             {
                 populationHtml = "<dt>Population</dt><dd>All People</dd>";
             }
+
+            using ( var attrCtx = new RockContext() )
+            {
+                group.LoadAttributes( attrCtx );
+                var categoryGuids = group.GetAttributeValue( "PersonAttributeCategories" );
+                if ( !string.IsNullOrWhiteSpace( categoryGuids ) )
+                {
+                    var categoryNames = categoryGuids.SplitDelimitedValues()
+                        .Select( g => CategoryCache.Get( g.AsGuid() ) )
+                        .Where( c => c != null )
+                        .Select( c => c.Name )
+                        .OrderBy( n => n );
+                    populationHtml += string.Format( "<dt>Target Attribute Categories</dt><dd>{0}</dd>",
+                        string.Join( ", ", categoryNames ) );
+                }
+            }
+
             lPopulationSummary.Text = populationHtml;
 
             btnSecurity.Visible = group.IsAuthorized( Authorization.ADMINISTRATE, CurrentPerson );
@@ -310,6 +336,25 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
             cpCampus.SetValue( group.CampusId );
             dvpDataView.SetValue( group.DataViewId );
+
+            // Configure the category picker for Person Attribute categories
+            var attributeEntityTypeId = EntityTypeCache.Get( typeof( Rock.Model.Attribute ) ).Id;
+            cpAttributeCategories.EntityTypeId = attributeEntityTypeId;
+
+            using ( var attrCtx = new RockContext() )
+            {
+                group.LoadAttributes( attrCtx );
+                var categoryGuids = group.GetAttributeValue( "PersonAttributeCategories" );
+                if ( !string.IsNullOrWhiteSpace( categoryGuids ) )
+                {
+                    var categoryIds = categoryGuids.SplitDelimitedValues()
+                        .Select( g => CategoryCache.Get( g.AsGuid() ) )
+                        .Where( c => c != null )
+                        .Select( c => c.Id )
+                        .ToList();
+                    cpAttributeCategories.SetValues( categoryIds );
+                }
+            }
         }
 
         private void BindSubGroupsGrid()

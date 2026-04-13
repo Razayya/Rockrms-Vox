@@ -1,7 +1,10 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using Rock.Data;
 using Rock.Extension;
+using Rock.Web.Cache;
 
 namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
 {
@@ -11,6 +14,18 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
     /// </summary>
     public abstract class CalculationTypeComponent : Component
     {
+        /// <summary>
+        /// Gets the attribute value defaults.
+        /// </summary>
+        public override Dictionary<string, string> AttributeValueDefaults
+        {
+            get => new Dictionary<string, string>
+            {
+                { "Active", "True" },
+                { "Order", "0" }
+            };
+        }
+
         /// <summary>
         /// Gets the display title of this calculation type.
         /// </summary>
@@ -46,6 +61,67 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
         /// Used for documentation and Lava template help.
         /// </summary>
         public abstract List<MergeFieldInfo> GetMergeFields();
+
+        #region Static Factory
+
+        private static readonly Dictionary<string, Lazy<CalculationTypeComponent>> _componentsByTypeName =
+            new Dictionary<string, Lazy<CalculationTypeComponent>>( StringComparer.OrdinalIgnoreCase )
+            {
+                { typeof( AttendanceCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new AttendanceCalculation() ) },
+                { typeof( CompletionCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new CompletionCalculation() ) },
+                { typeof( DataViewInclusionCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new DataViewInclusionCalculation() ) },
+                { typeof( GroupMembershipCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new GroupMembershipCalculation() ) },
+                { typeof( PersonFilterCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new PersonFilterCalculation() ) },
+            };
+
+        /// <summary>
+        /// Gets a component instance by its EntityType name.
+        /// </summary>
+        public static CalculationTypeComponent GetComponent( string entityTypeName )
+        {
+            if ( string.IsNullOrWhiteSpace( entityTypeName ) )
+            {
+                return null;
+            }
+
+            return _componentsByTypeName.TryGetValue( entityTypeName, out var lazy ) ? lazy.Value : null;
+        }
+
+        /// <summary>
+        /// Gets all registered calculation types as EntityTypeId/Title pairs for use in dropdowns.
+        /// </summary>
+        public static List<CalculationTypeInfo> GetAllTypes()
+        {
+            return _componentsByTypeName.Values
+                .Select( lazy =>
+                {
+                    var component = lazy.Value;
+                    var entityType = EntityTypeCache.Get( component.GetType() );
+                    return new CalculationTypeInfo
+                    {
+                        EntityTypeId = entityType?.Id ?? 0,
+                        EntityTypeGuid = entityType?.Guid ?? Guid.Empty,
+                        Title = component.Title,
+                        IconCssClass = component.IconCssClass
+                    };
+                } )
+                .Where( t => t.EntityTypeId > 0 )
+                .OrderBy( t => t.Title )
+                .ToList();
+        }
+
+        #endregion
+    }
+
+    /// <summary>
+    /// Info about a registered calculation type for use in pickers.
+    /// </summary>
+    public class CalculationTypeInfo
+    {
+        public int EntityTypeId { get; set; }
+        public Guid EntityTypeGuid { get; set; }
+        public string Title { get; set; }
+        public string IconCssClass { get; set; }
     }
 
     /// <summary>

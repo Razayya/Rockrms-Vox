@@ -106,6 +106,16 @@
                         </div>
                     </div>
 
+                    <h4>Target Attribute Categories</h4>
+                    <p class="text-muted">Restrict which Person Attribute categories are available as targets for calculations in this group. Leave blank to allow all.</p>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <Rock:CategoryPicker ID="cpAttributeCategories" runat="server" Label="Person Attribute Categories"
+                                AllowMultiSelect="true"
+                                Help="Select one or more Person Attribute categories. Only attributes in these categories will be available as targets when configuring calculations." />
+                        </div>
+                    </div>
+
                     <div class="actions">
                         <asp:LinkButton ID="btnSave" runat="server" Text="Save" CssClass="btn btn-primary" OnClick="btnSave_Click" />
                         <asp:LinkButton ID="btnCancel" runat="server" Text="Cancel" CssClass="btn btn-link" CausesValidation="false" OnClick="btnCancel_Click" />

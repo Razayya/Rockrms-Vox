@@ -112,7 +112,7 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                 subGroup.Name = tbName.Text;
                 subGroup.Description = tbDescription.Text;
                 subGroup.IsActive = cbIsActive.Checked;
-                subGroup.ScopeToPreviousSubGroup = cbScopeToPrevious.Checked;
+                subGroup.PrerequisiteSubGroupIds = string.Join( ",", cblPrerequisites.SelectedValues );
                 subGroup.AdditionalDataViewId = dvpAdditionalDataView.SelectedValueAsInt();
 
                 if ( !subGroup.IsValid )
@@ -226,7 +226,7 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
             if ( subGroup == null )
             {
-                subGroup = new CalculationSubGroup { IsActive = true, ScopeToPreviousSubGroup = true, CalculationGroupId = ParentGroupId };
+                subGroup = new CalculationSubGroup { IsActive = true, CalculationGroupId = ParentGroupId };
                 lTitle.Text = ActionTitle.Add( "Calculation Sub Group" ).FormatAsHtmlTitle();
                 ShowEditDetails( subGroup );
                 return;
@@ -242,7 +242,28 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             lDescription.Text = subGroup.Description;
 
             string summary = string.Empty;
-            summary += string.Format( "<dt>Scope to Previous</dt><dd>{0}</dd>", subGroup.ScopeToPreviousSubGroup ? "Yes" : "No" );
+
+            var prereqIds = ( subGroup.PrerequisiteSubGroupIds ?? string.Empty )
+                .Split( new[] { ',' }, StringSplitOptions.RemoveEmptyEntries )
+                .Select( s => s.Trim().AsInteger() )
+                .Where( id => id > 0 )
+                .ToList();
+
+            if ( prereqIds.Any() )
+            {
+                using ( var ctx = new RockContext() )
+                {
+                    var names = new CalculationSubGroupService( ctx ).Queryable()
+                        .Where( sg => prereqIds.Contains( sg.Id ) )
+                        .Select( sg => sg.Name )
+                        .ToList();
+                    summary += string.Format( "<dt>Prerequisites</dt><dd>{0}</dd>", string.Join( ", ", names ) );
+                }
+            }
+            else
+            {
+                summary += "<dt>Prerequisites</dt><dd>None (uses full base population)</dd>";
+            }
 
             if ( subGroup.AdditionalDataViewId.HasValue )
             {
@@ -272,8 +293,31 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             tbName.Text = subGroup.Name;
             tbDescription.Text = subGroup.Description;
             cbIsActive.Checked = subGroup.IsActive;
-            cbScopeToPrevious.Checked = subGroup.ScopeToPreviousSubGroup;
             dvpAdditionalDataView.SetValue( subGroup.AdditionalDataViewId );
+
+            // Populate prerequisite picker with sibling sub-groups (excluding self)
+            cblPrerequisites.Items.Clear();
+            using ( var rockContext = new RockContext() )
+            {
+                var siblings = new CalculationSubGroupService( rockContext ).Queryable()
+                    .Where( sg => sg.CalculationGroupId == subGroup.CalculationGroupId && sg.Id != subGroup.Id )
+                    .OrderBy( sg => sg.Order )
+                    .ThenBy( sg => sg.Name )
+                    .Select( sg => new { sg.Id, sg.Name } )
+                    .ToList();
+
+                foreach ( var sibling in siblings )
+                {
+                    cblPrerequisites.Items.Add( new System.Web.UI.WebControls.ListItem( sibling.Name, sibling.Id.ToString() ) );
+                }
+            }
+
+            // Set selected prerequisites
+            var selectedIds = ( subGroup.PrerequisiteSubGroupIds ?? string.Empty )
+                .Split( new[] { ',' }, StringSplitOptions.RemoveEmptyEntries )
+                .Select( s => s.Trim() )
+                .ToList();
+            cblPrerequisites.SetValues( selectedIds );
         }
 
         private void BindCalculationsGrid()

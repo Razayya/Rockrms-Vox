@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.ComponentModel.Composition;
 using System.Data.Entity;
 using System.Linq;
 
@@ -26,8 +25,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
     /// a person passes a SubGroup and flows into the next one.
     /// </summary>
     [Description( "Checks completion of sibling calculations by evaluating their target attribute values against configured criteria." )]
-    [Export( typeof( CalculationTypeComponent ) )]
-    [ExportMetadata( "ComponentName", "Completion" )]
+
 
     [CodeEditorField( "Completion Criteria",
         Description = "JSON array defining completion criteria. Each entry has: CalculationId (int), IsRequired (bool), ComparisonType, and Value.",

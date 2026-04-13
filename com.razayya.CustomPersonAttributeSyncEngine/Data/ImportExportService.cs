@@ -106,7 +106,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
                 Description = subGroup.Description,
                 IsActive = subGroup.IsActive,
                 Order = subGroup.Order,
-                ScopeToPreviousSubGroup = subGroup.ScopeToPreviousSubGroup,
+                PrerequisiteSubGroupNames = ResolvePrerequisiteNames( subGroup, rockContext ),
                 AdditionalDataViewGuid = subGroup.AdditionalDataView?.Guid.ToString()
             };
 
@@ -200,6 +200,9 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
                 {
                     ImportSubGroupInto( group.Id, sgExport, rockContext, result );
                 }
+
+                // Second pass: resolve prerequisite names to IDs now that all sub-groups exist
+                ResolveImportedPrerequisites( group.Id, export.SubGroups, rockContext );
             }
 
             result.WasSuccessful = result.Errors.Count == 0;
@@ -248,7 +251,6 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
                 Description = sgExport.Description,
                 IsActive = sgExport.IsActive,
                 Order = sgExport.Order,
-                ScopeToPreviousSubGroup = sgExport.ScopeToPreviousSubGroup,
                 AdditionalDataViewId = ResolveDataViewId( sgExport.AdditionalDataViewGuid, $"SubGroup '{sgExport.Name}' DataView", rockContext, result )
             };
 
@@ -426,7 +428,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
                 Description = source.Description,
                 IsActive = source.IsActive,
                 Order = source.Order,
-                ScopeToPreviousSubGroup = source.ScopeToPreviousSubGroup,
+                PrerequisiteSubGroupIds = source.PrerequisiteSubGroupIds,
                 AdditionalDataViewId = source.AdditionalDataViewId
             };
 
@@ -547,6 +549,71 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
 
             result.Warnings.Add( $"{label} '{guidString}' not found on this instance." );
             return null;
+        }
+
+        private string ResolvePrerequisiteNames( CalculationSubGroup subGroup, RockContext rockContext )
+        {
+            if ( string.IsNullOrWhiteSpace( subGroup.PrerequisiteSubGroupIds ) )
+            {
+                return null;
+            }
+
+            var ids = subGroup.PrerequisiteSubGroupIds
+                .Split( new[] { ',' }, StringSplitOptions.RemoveEmptyEntries )
+                .Select( s => s.Trim().AsInteger() )
+                .Where( id => id > 0 )
+                .ToList();
+
+            if ( !ids.Any() )
+            {
+                return null;
+            }
+
+            var names = new CalculationSubGroupService( rockContext ).Queryable()
+                .Where( sg => ids.Contains( sg.Id ) )
+                .Select( sg => sg.Name )
+                .ToList();
+
+            return string.Join( ",", names );
+        }
+
+        private void ResolveImportedPrerequisites( int groupId, List<CalculationSubGroupExport> exports, RockContext rockContext )
+        {
+            var siblings = new CalculationSubGroupService( rockContext ).Queryable()
+                .Where( sg => sg.CalculationGroupId == groupId )
+                .Select( sg => new { sg.Id, sg.Name } )
+                .ToList();
+
+            foreach ( var sgExport in exports )
+            {
+                if ( string.IsNullOrWhiteSpace( sgExport.PrerequisiteSubGroupNames ) )
+                {
+                    continue;
+                }
+
+                var prereqNames = sgExport.PrerequisiteSubGroupNames
+                    .Split( new[] { ',' }, StringSplitOptions.RemoveEmptyEntries )
+                    .Select( n => n.Trim() )
+                    .ToList();
+
+                var matchedIds = siblings
+                    .Where( s => prereqNames.Contains( s.Name, StringComparer.OrdinalIgnoreCase ) )
+                    .Select( s => s.Id )
+                    .ToList();
+
+                if ( matchedIds.Any() )
+                {
+                    var subGroup = new CalculationSubGroupService( rockContext ).Queryable()
+                        .FirstOrDefault( sg => sg.CalculationGroupId == groupId && sg.Name == sgExport.Name );
+
+                    if ( subGroup != null )
+                    {
+                        subGroup.PrerequisiteSubGroupIds = string.Join( ",", matchedIds );
+                    }
+                }
+            }
+
+            rockContext.SaveChanges();
         }
 
         #endregion

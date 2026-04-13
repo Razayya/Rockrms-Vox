@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.ComponentModel.Composition;
 using System.Data.Entity;
 using System.Linq;
 
@@ -20,8 +19,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
     /// optionally filtered by group role.
     /// </summary>
     [Description( "Checks whether a person is a member of a specified group or group type." )]
-    [Export( typeof( CalculationTypeComponent ) )]
-    [ExportMetadata( "ComponentName", "Group Membership" )]
+
 
     [GroupTypeField( "Group Type",
         Description = "The group type to check membership for. Leave blank if specifying a specific group.",

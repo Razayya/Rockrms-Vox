@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.ComponentModel.Composition;
 using System.Data.Entity;
 using System.Linq;
 
@@ -25,8 +24,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
     /// AND/OR logic. Supports comparisons like EqualTo, IsNotBlank, GreaterThan, etc.
     /// </summary>
     [Description( "Evaluates person properties and attributes against configurable filter conditions." )]
-    [Export( typeof( CalculationTypeComponent ) )]
-    [ExportMetadata( "ComponentName", "Person Filter" )]
+
 
     [CodeEditorField( "Filter Conditions",
         Description = "JSON array defining filter conditions. Each condition has: Source (Property|Attribute), Key, ComparisonType, and Value.",

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.ComponentModel.Composition;
 using System.Linq;
 
 using com.razayya.CustomPersonAttributeSyncEngine.Constants;
@@ -18,8 +17,6 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
     /// Evaluates whether persons are included in a specified DataView.
     /// </summary>
     [Description( "Checks whether a person is included in a specified Data View." )]
-    [Export( typeof( CalculationTypeComponent ) )]
-    [ExportMetadata( "ComponentName", "Data View Inclusion" )]
 
     [DataViewField( "Data View",
         Description = "The Data View to check for person inclusion.",

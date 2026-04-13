@@ -12,7 +12,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Model
 {
     /// <summary>
     /// Represents a step/stage within a CalculationGroup. Contains ordered Calculations.
-    /// Can optionally scope its population to the previous SubGroup's Completion result (funnel behavior).
+    /// Can optionally scope its population to one or more prerequisite SubGroups' Completion passers.
     /// </summary>
     [Table( Constants.TableName.CalculationSubGroup )]
     [DataContract]
@@ -54,12 +54,14 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Model
         public int Order { get; set; }
 
         /// <summary>
-        /// Gets or sets whether this sub-group scopes its population to the previous
-        /// sub-group's Completion calculation passers. When true, only people who passed
-        /// the prior sub-group's Completion calculation will be evaluated.
+        /// Gets or sets the comma-delimited list of prerequisite CalculationSubGroup Ids.
+        /// When set, this sub-group's working population is the intersection of all
+        /// prerequisite sub-groups' Completion calculation passers.
+        /// When empty, the parent group's base population is used.
         /// </summary>
         [DataMember]
-        public bool ScopeToPreviousSubGroup { get; set; } = true;
+        [MaxLength( 500 )]
+        public string PrerequisiteSubGroupIds { get; set; }
 
         /// <summary>
         /// Gets or sets an optional DataView Id for additional population narrowing
