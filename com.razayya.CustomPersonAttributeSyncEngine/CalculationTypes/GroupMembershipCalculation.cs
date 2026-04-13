@@ -96,28 +96,31 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 } )
                 .ToList();
 
-            var memberSummary = memberRows
-                .GroupBy( r => r.PersonId )
-                .Select( g =>
-                {
-                    var earliest = g.OrderBy( r => r.CreatedDateTime ).First();
-                    return new
-                    {
-                        PersonId = g.Key,
-                        JoinDate = earliest.CreatedDateTime,
-                        GroupRole = earliest.GroupRoleName,
-                        GroupName = earliest.GroupName
-                    };
-                } );
+            var grouped = memberRows
+                .GroupBy( r => r.PersonId );
 
-            foreach ( var summary in memberSummary )
+            foreach ( var personGroup in grouped )
             {
-                results[summary.PersonId] = new Dictionary<string, object>
+                var memberships = personGroup
+                    .OrderBy( r => r.CreatedDateTime )
+                    .Select( r => new Dictionary<string, object>
+                    {
+                        { "GroupName", r.GroupName },
+                        { "GroupRole", r.GroupRoleName },
+                        { "JoinDate", r.CreatedDateTime }
+                    } )
+                    .ToList();
+
+                var earliest = memberships.First();
+
+                results[personGroup.Key] = new Dictionary<string, object>
                 {
                     { "Matched", true },
-                    { "JoinDate", summary.JoinDate },
-                    { "GroupRole", summary.GroupRole },
-                    { "GroupName", summary.GroupName }
+                    { "GroupName", earliest["GroupName"] },
+                    { "GroupRole", earliest["GroupRole"] },
+                    { "JoinDate", earliest["JoinDate"] },
+                    { "Groups", memberships },
+                    { "GroupCount", memberships.Count }
                 };
             }
 
@@ -130,9 +133,11 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
             return new List<MergeFieldInfo>
             {
                 new MergeFieldInfo { Name = "Matched", Description = "True if person is a member.", DataType = "Boolean" },
+                new MergeFieldInfo { Name = "GroupName", Description = "Name of the earliest-joined group.", DataType = "String" },
+                new MergeFieldInfo { Name = "GroupRole", Description = "Role in the earliest-joined group.", DataType = "String" },
                 new MergeFieldInfo { Name = "JoinDate", Description = "Earliest group membership creation date.", DataType = "DateTime" },
-                new MergeFieldInfo { Name = "GroupRole", Description = "The person's group role name.", DataType = "String" },
-                new MergeFieldInfo { Name = "GroupName", Description = "The name of the group.", DataType = "String" }
+                new MergeFieldInfo { Name = "GroupCount", Description = "Total number of matching groups.", DataType = "Integer" },
+                new MergeFieldInfo { Name = "Groups", Description = "Array of all memberships. Each has GroupName, GroupRole, JoinDate. Use: {% for g in Groups %}{{ g.GroupName }}{% endfor %}", DataType = "Array" }
             };
         }
     }
