@@ -153,6 +153,49 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
         }
 
         /// <summary>
+        /// Finds all failed CalculationRuns (since a given date) and re-runs those calculations.
+        /// Safe to call repeatedly — the batch-read/diff logic means already-written values are skipped.
+        /// </summary>
+        public SyncResult ReprocessFailedRuns( DateTime? since = null )
+        {
+            var result = new SyncResult();
+            var cutoff = since ?? RockDateTime.Now.AddDays( -7 );
+
+            List<int> failedCalculationIds;
+            using ( var rockContext = new RockContext() )
+            {
+                failedCalculationIds = new CalculationRunService( rockContext ).Queryable().AsNoTracking()
+                    .Where( r => !r.WasSuccessful && r.RunDateTime >= cutoff )
+                    .Select( r => r.CalculationId )
+                    .Distinct()
+                    .ToList();
+            }
+
+            if ( !failedCalculationIds.Any() )
+            {
+                result.Log.Add( "No failed runs found to reprocess." );
+                return result;
+            }
+
+            result.Log.Add( $"Reprocessing {failedCalculationIds.Count} calculation(s) with failed runs since {cutoff:yyyy-MM-dd}." );
+
+            foreach ( var calcId in failedCalculationIds )
+            {
+                try
+                {
+                    var calcResult = ProcessCalculation( calcId );
+                    result.Merge( calcResult );
+                }
+                catch ( Exception ex )
+                {
+                    result.Errors.Add( $"Reprocess CalculationId {calcId}: {ex.Message}" );
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Processes a single SubGroup by Id, building its parent group's population context.
         /// </summary>
         public SyncResult ProcessSubGroup( int calculationSubGroupId )
@@ -472,6 +515,20 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
                 return result;
             }
 
+            // Batch-read all existing attribute values for this attribute + population in one query.
+            Dictionary<int, string> existingValues;
+            using ( var readContext = new RockContext() )
+            {
+                var personIdList = workingPopulation.ToList();
+                existingValues = new AttributeValueService( readContext ).Queryable().AsNoTracking()
+                    .Where( av => av.AttributeId == targetAttribute.Id && personIdList.Contains( av.EntityId.Value ) )
+                    .Select( av => new { av.EntityId, av.Value } )
+                    .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+            }
+
+            // Build the list of writes needed (resolve Lava templates first, then diff against existing).
+            var pendingWrites = new List<AttributeWrite>();
+
             foreach ( var personId in workingPopulation )
             {
                 string newValue = null;
@@ -495,36 +552,63 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
 
                 if ( newValue != null )
                 {
+                    existingValues.TryGetValue( personId, out var existingValue );
+                    existingValue = existingValue ?? string.Empty;
+
+                    if ( !string.Equals( existingValue, newValue, StringComparison.OrdinalIgnoreCase ) )
+                    {
+                        pendingWrites.Add( new AttributeWrite
+                        {
+                            PersonId = personId,
+                            NewValue = newValue,
+                            IsUpdate = existingValues.ContainsKey( personId )
+                        } );
+                    }
+                    else
+                    {
+                        result.Skipped++;
+                    }
+                }
+            }
+
+            // Execute writes in batches. On partial failure, record progress and continue
+            // with remaining batches so a single bad row doesn't block the entire population.
+            const int batchSize = 200;
+            int writtenCount = 0;
+
+            for ( int i = 0; i < pendingWrites.Count; i += batchSize )
+            {
+                var batch = pendingWrites.GetRange( i, Math.Min( batchSize, pendingWrites.Count - i ) );
+
+                try
+                {
                     using ( var writeContext = new RockContext() )
                     {
-                        // Read existing value directly — avoids loading the full Person entity
-                        var existingValue = new AttributeValueService( writeContext ).Queryable().AsNoTracking()
-                            .Where( av => av.AttributeId == targetAttribute.Id && av.EntityId == personId )
-                            .Select( av => av.Value )
-                            .FirstOrDefault() ?? string.Empty;
-
-                        if ( !string.Equals( existingValue, newValue, StringComparison.OrdinalIgnoreCase ) )
+                        foreach ( var write in batch )
                         {
-                            // Write attribute value via direct SQL to bypass Rock's automatic
-                            // AttributeValue history hooks. Run history is tracked via CalculationRun.
-                            int rowsUpdated = writeContext.Database.ExecuteSqlCommand(
-                                "UPDATE [AttributeValue] SET [Value] = @p0, [ModifiedDateTime] = GETDATE(), [IsPersistedValueDirty] = 1 WHERE [AttributeId] = @p1 AND [EntityId] = @p2",
-                                newValue, targetAttribute.Id, personId );
-
-                            if ( rowsUpdated == 0 )
+                            if ( write.IsUpdate )
+                            {
+                                writeContext.Database.ExecuteSqlCommand(
+                                    "UPDATE [AttributeValue] SET [Value] = @p0, [ModifiedDateTime] = GETDATE(), [IsPersistedValueDirty] = 1 WHERE [AttributeId] = @p1 AND [EntityId] = @p2",
+                                    write.NewValue, targetAttribute.Id, write.PersonId );
+                            }
+                            else
                             {
                                 writeContext.Database.ExecuteSqlCommand(
                                     "INSERT INTO [AttributeValue] ([IsSystem], [AttributeId], [EntityId], [Value], [Guid], [CreatedDateTime], [ModifiedDateTime], [IsPersistedValueDirty]) VALUES (0, @p0, @p1, @p2, NEWID(), GETDATE(), GETDATE(), 1)",
-                                    targetAttribute.Id, personId, newValue );
+                                    targetAttribute.Id, write.PersonId, write.NewValue );
                             }
 
-                            result.Updated++;
-                        }
-                        else
-                        {
-                            result.Skipped++;
+                            writtenCount++;
                         }
                     }
+
+                    result.Updated += batch.Count;
+                }
+                catch ( Exception ex )
+                {
+                    result.Errors.Add( $"Write batch failed after {writtenCount} of {pendingWrites.Count} writes for attribute '{targetAttribute.Name}': {ex.Message}" );
+                    ExceptionLogService.LogException( ex );
                 }
             }
 
@@ -640,6 +724,13 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Data
         {
             public SyncResult Result { get; set; }
             public HashSet<int> Passers { get; set; }
+        }
+
+        private class AttributeWrite
+        {
+            public int PersonId { get; set; }
+            public string NewValue { get; set; }
+            public bool IsUpdate { get; set; }
         }
 
         #endregion

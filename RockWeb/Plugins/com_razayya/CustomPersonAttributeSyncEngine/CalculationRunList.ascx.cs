@@ -2,7 +2,9 @@ using System;
 using System.ComponentModel;
 using System.Data.Entity;
 using System.Linq;
+using System.Web.UI.WebControls;
 
+using com.razayya.CustomPersonAttributeSyncEngine.Data;
 using com.razayya.CustomPersonAttributeSyncEngine.Model;
 
 using Rock;
@@ -56,6 +58,51 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
         protected void gRunHistory_GridRebind( object sender, GridRebindEventArgs e )
         {
+            BindGrid();
+        }
+
+        protected void btnRetry_Click( object sender, EventArgs e )
+        {
+            var btn = sender as LinkButton;
+            int runId = btn.CommandArgument.AsInteger();
+
+            if ( runId == 0 )
+            {
+                return;
+            }
+
+            int calculationId;
+            using ( var rockContext = new RockContext() )
+            {
+                var run = new CalculationRunService( rockContext ).Get( runId );
+                if ( run == null )
+                {
+                    nbResult.NotificationBoxType = NotificationBoxType.Warning;
+                    nbResult.Text = "Run record not found.";
+                    nbResult.Visible = true;
+                    return;
+                }
+
+                calculationId = run.CalculationId;
+            }
+
+            var service = new SyncEngineService { RunByPersonAliasId = CurrentPersonAliasId };
+            var result = service.ProcessCalculation( calculationId );
+
+            if ( result.Errors.Any() )
+            {
+                nbResult.NotificationBoxType = NotificationBoxType.Warning;
+                nbResult.Text = string.Format(
+                    "Retry completed with errors. {0} updated, {1} skipped, {2} error(s): {3}",
+                    result.Updated, result.Skipped, result.Errors.Count, string.Join( "; ", result.Errors ) );
+            }
+            else
+            {
+                nbResult.NotificationBoxType = NotificationBoxType.Success;
+                nbResult.Text = string.Format( "Retry completed. {0} updated, {1} skipped.", result.Updated, result.Skipped );
+            }
+
+            nbResult.Visible = true;
             BindGrid();
         }
 

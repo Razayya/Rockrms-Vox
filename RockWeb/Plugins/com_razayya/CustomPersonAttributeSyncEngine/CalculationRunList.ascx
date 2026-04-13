@@ -11,6 +11,8 @@
                 </h1>
             </div>
             <div class="panel-body">
+                <Rock:NotificationBox ID="nbResult" runat="server" Visible="false" />
+
                 <div class="grid-filter">
                     <Rock:RockDropDownList ID="ddlCalculation" runat="server" Label="Calculation"
                         EnhanceForLongLists="true" AutoPostBack="true" OnSelectedIndexChanged="ddlCalculation_SelectedIndexChanged" />
@@ -42,6 +44,18 @@
                             <Rock:RockBoundField DataField="ErrorCount" HeaderText="Errors"
                                 ItemStyle-HorizontalAlign="Right" HeaderStyle-HorizontalAlign="Right" SortExpression="ErrorCount" />
                             <Rock:BoolField DataField="WasSuccessful" HeaderText="Success" SortExpression="WasSuccessful" />
+                            <Rock:RockTemplateField HeaderText="">
+                                <ItemTemplate>
+                                    <asp:LinkButton ID="btnRetry" runat="server" CssClass="btn btn-warning btn-sm"
+                                        CommandName="RetryRun" CommandArgument='<%# Eval("Id") %>'
+                                        Visible='<%# !(bool)Eval("WasSuccessful") %>'
+                                        OnClick="btnRetry_Click"
+                                        ToolTip="Reprocess this calculation"
+                                        CausesValidation="false">
+                                        <i class="fa fa-redo"></i> Retry
+                                    </asp:LinkButton>
+                                </ItemTemplate>
+                            </Rock:RockTemplateField>
                         </Columns>
                     </Rock:Grid>
                 </div>
