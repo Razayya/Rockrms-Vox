@@ -370,7 +370,7 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                         sg.Id,
                         sg.Name,
                         sg.IsActive,
-                        sg.ScopeToPreviousSubGroup,
+                        HasPrerequisites = !string.IsNullOrEmpty( sg.PrerequisiteSubGroupIds ),
                         CalculationCount = sg.Calculations.Count()
                     } )
                     .ToList();

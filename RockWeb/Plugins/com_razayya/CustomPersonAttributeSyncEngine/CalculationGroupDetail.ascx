@@ -57,7 +57,7 @@
                                 <Rock:RockBoundField DataField="Name" HeaderText="Name" />
                                 <Rock:RockBoundField DataField="CalculationCount" HeaderText="Calculations"
                                     ItemStyle-HorizontalAlign="Center" HeaderStyle-HorizontalAlign="Center" />
-                                <Rock:BoolField DataField="ScopeToPreviousSubGroup" HeaderText="Scoped to Previous" />
+                                <Rock:BoolField DataField="HasPrerequisites" HeaderText="Has Prerequisites" />
                                 <Rock:BoolField DataField="IsActive" HeaderText="Active" />
                                 <Rock:DeleteField OnClick="gSubGroups_Delete" />
                             </Columns>
