@@ -3,9 +3,6 @@
 
 <asp:UpdatePanel ID="upnlContent" runat="server">
     <ContentTemplate>
-        <asp:HiddenField ID="hfSelectedItemType" runat="server" />
-        <asp:HiddenField ID="hfSelectedItemId" runat="server" />
-
         <div class="treeview">
             <div class="panel panel-block">
                 <div class="panel-heading">
@@ -32,11 +29,13 @@
                         </div>
                     </div>
                 </div>
-                <div class="panel-body" style="padding: 0;">
+                <div class="panel-body">
                     <div class="treeview-scroll scroll-container scroll-container-horizontal">
                         <div class="viewport">
                             <div class="overview">
-                                <asp:Literal ID="lTreeHtml" runat="server" />
+                                <div class="treeview-frame">
+                                    <asp:Literal ID="lTreeHtml" runat="server" />
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -46,20 +45,20 @@
 
         <script type="text/javascript">
             Sys.Application.add_load(function () {
-                // Toggle collapse/expand on caret click
-                $('.js-sync-tree-toggle').off('click').on('click', function (e) {
+                $('.js-synctree-toggle').off('click.synctree').on('click.synctree', function (e) {
                     e.preventDefault();
                     e.stopPropagation();
-                    var $li = $(this).closest('li');
-                    var $children = $li.children('ul');
+
+                    var $item = $(this).closest('.rocktree-item');
+                    var $children = $item.children('.rocktree-children');
                     var $icon = $(this).find('i');
 
                     if ($children.is(':visible')) {
                         $children.slideUp(150);
-                        $icon.removeClass('fa-caret-down').addClass('fa-caret-right');
+                        $icon.removeClass('fa-chevron-down').addClass('fa-chevron-right');
                     } else {
                         $children.slideDown(150);
-                        $icon.removeClass('fa-caret-right').addClass('fa-caret-down');
+                        $icon.removeClass('fa-chevron-right').addClass('fa-chevron-down');
                     }
                 });
             });

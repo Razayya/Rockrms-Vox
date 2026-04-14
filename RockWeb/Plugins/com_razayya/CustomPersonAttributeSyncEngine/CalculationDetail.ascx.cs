@@ -414,9 +414,15 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             using ( var rockContext = new RockContext() )
             {
                 calc.LoadAttributes( rockContext );
+                var excludeKeys = new HashSet<string>( StringComparer.OrdinalIgnoreCase ) { "Active", "Order" };
                 string configHtml = string.Empty;
                 foreach ( var attr in calc.Attributes )
                 {
+                    if ( excludeKeys.Contains( attr.Key ) )
+                    {
+                        continue;
+                    }
+
                     var value = calc.GetAttributeValue( attr.Key );
                     if ( !string.IsNullOrWhiteSpace( value ) )
                     {
@@ -528,7 +534,8 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                 }
 
                 calc.LoadAttributes( rockContext );
-                Rock.Attribute.Helper.AddEditControls( calc, phComponentAttributes, true, BlockValidationGroup );
+                var excludeKeys = new List<string> { "Active", "Order" };
+                Rock.Attribute.Helper.AddEditControls( calc, phComponentAttributes, true, BlockValidationGroup, excludeKeys );
             }
             finally
             {

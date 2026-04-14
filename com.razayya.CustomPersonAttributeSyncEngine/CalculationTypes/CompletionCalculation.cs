@@ -28,7 +28,13 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
 
 
     [CodeEditorField( "Completion Criteria",
-        Description = "JSON array defining completion criteria. Each entry has: CalculationId (int), IsRequired (bool), ComparisonType, and Value.",
+        Description = "A JSON array defining what sibling calculations must be satisfied for completion. "
+            + "Each entry specifies a calculation in this sub-group and how its target attribute value should be evaluated."
+            + "<br/><br/><strong>CalculationId</strong>: The Id of a sibling calculation in this sub-group. "
+            + "<br/><strong>IsRequired</strong>: If <code>true</code>, this criterion must pass. If <code>false</code>, it is optional."
+            + "<br/><strong>ComparisonType</strong>: EqualTo, NotEqualTo, IsNotBlank, IsBlank, GreaterThan, LessThan, Contains."
+            + "<br/><strong>Value</strong>: The value to compare against (leave empty for IsNotBlank/IsBlank)."
+            + "<br/><br/>Example:<br/><pre>[\n  { \"CalculationId\": 12, \"IsRequired\": true, \"ComparisonType\": \"EqualTo\", \"Value\": \"True\" },\n  { \"CalculationId\": 15, \"IsRequired\": true, \"ComparisonType\": \"IsNotBlank\", \"Value\": \"\" }\n]</pre>",
         IsRequired = true,
         DefaultValue = "[]",
         Order = 0,

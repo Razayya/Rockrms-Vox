@@ -27,7 +27,10 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
 
 
     [CodeEditorField( "Filter Conditions",
-        Description = "JSON array defining filter conditions. Each condition has: Source (Property|Attribute), Key, ComparisonType, and Value.",
+        Description = "A JSON array of conditions to evaluate against each person. "
+            + "<br/><br/><strong>Source</strong>: <code>Property</code> (e.g. Email, NickName, ConnectionStatusValueId) or <code>Attribute</code> (person attribute key). "
+            + "<br/><strong>ComparisonType</strong>: EqualTo, NotEqualTo, IsNotBlank, IsBlank, GreaterThan, LessThan, Contains, StartsWith, EndsWith."
+            + "<br/><br/>Example:<br/><pre>[\n  { \"Source\": \"Property\", \"Key\": \"ConnectionStatusValueId\", \"ComparisonType\": \"EqualTo\", \"Value\": \"65\" },\n  { \"Source\": \"Attribute\", \"Key\": \"BaptismDate\", \"ComparisonType\": \"IsNotBlank\", \"Value\": \"\" }\n]</pre>",
         IsRequired = true,
         DefaultValue = "[]",
         Order = 0,

@@ -40,19 +40,11 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
     public partial class CalculationGroupTreeView : RockBlock
     {
+        private const string NodeType_Group = "group";
+        private const string NodeType_SubGroup = "subgroup";
+        private const string NodeType_Calc = "calc";
+
         #region Properties
-
-        private string SelectedType
-        {
-            get { return ViewState["SelectedType"] as string ?? string.Empty; }
-            set { ViewState["SelectedType"] = value; }
-        }
-
-        private int SelectedId
-        {
-            get { return ViewState["SelectedId"] as int? ?? 0; }
-            set { ViewState["SelectedId"] = value; }
-        }
 
         private int SelectedGroupId
         {
@@ -68,6 +60,16 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
         #endregion
 
+        #region Fields
+
+        private string _selectedType = string.Empty;
+        private int _selectedId;
+        private string _groupBaseUrl;
+        private string _subGroupBaseUrl;
+        private string _calcBaseUrl;
+
+        #endregion
+
         #region Base Control Methods
 
         protected override void OnLoad( EventArgs e )
@@ -76,9 +78,7 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
             if ( !Page.IsPostBack )
             {
-                ResolveSelectedNode();
-                ConfigureAddButtons();
-                RenderTree();
+                LoadTree();
             }
         }
 
@@ -113,9 +113,22 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
         #region Methods
 
-        /// <summary>
-        /// Determines the currently selected node from page parameters.
-        /// </summary>
+        private void LoadTree()
+        {
+            ResolveSelectedNode();
+
+            lbAddGroup.Enabled = true;
+            lbAddSubGroup.Enabled = SelectedGroupId > 0;
+            lbAddCalculation.Enabled = SelectedSubGroupId > 0;
+
+            // Cache base URLs once instead of resolving per-node
+            _groupBaseUrl = LinkedPageUrl( "GroupDetailPage", new Dictionary<string, string> { { "CalculationGroupId", "PLACEHOLDER" } } );
+            _subGroupBaseUrl = LinkedPageUrl( "SubGroupDetailPage", new Dictionary<string, string> { { "CalculationSubGroupId", "PLACEHOLDER" } } );
+            _calcBaseUrl = LinkedPageUrl( "CalculationDetailPage", new Dictionary<string, string> { { "CalculationId", "PLACEHOLDER" } } );
+
+            RenderTree();
+        }
+
         private void ResolveSelectedNode()
         {
             int calcId = PageParameter( "CalculationId" ).AsInteger();
@@ -124,10 +137,9 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
             if ( calcId > 0 )
             {
-                SelectedType = "calc";
-                SelectedId = calcId;
+                _selectedType = NodeType_Calc;
+                _selectedId = calcId;
 
-                // Resolve parent sub-group and group
                 using ( var rockContext = new RockContext() )
                 {
                     var calc = new CalculationService( rockContext ).Queryable()
@@ -144,11 +156,10 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             }
             else if ( subGroupId > 0 )
             {
-                SelectedType = "subgroup";
-                SelectedId = subGroupId;
+                _selectedType = NodeType_SubGroup;
+                _selectedId = subGroupId;
                 SelectedSubGroupId = subGroupId;
 
-                // Resolve parent group
                 using ( var rockContext = new RockContext() )
                 {
                     SelectedGroupId = new CalculationSubGroupService( rockContext )
@@ -157,35 +168,12 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             }
             else if ( groupId > 0 )
             {
-                SelectedType = "group";
-                SelectedId = groupId;
+                _selectedType = NodeType_Group;
+                _selectedId = groupId;
                 SelectedGroupId = groupId;
             }
-
-            hfSelectedItemType.Value = SelectedType;
-            hfSelectedItemId.Value = SelectedId.ToString();
         }
 
-        /// <summary>
-        /// Enables or disables the Add dropdown items based on the current selection.
-        /// </summary>
-        private void ConfigureAddButtons()
-        {
-            // "Add Group" is always enabled
-            lbAddGroup.Enabled = true;
-
-            // "Add Sub Group" is enabled when a group-level node is selected
-            // (either directly on a group, or when viewing a sub-group/calc within a group)
-            lbAddSubGroup.Enabled = SelectedGroupId > 0;
-
-            // "Add Calculation" is enabled when a sub-group-level node is selected
-            // (either directly on a sub-group, or when viewing a calc within a sub-group)
-            lbAddCalculation.Enabled = SelectedSubGroupId > 0;
-        }
-
-        /// <summary>
-        /// Renders the full tree of all Calculation Groups.
-        /// </summary>
         private void RenderTree()
         {
             using ( var rockContext = new RockContext() )
@@ -203,7 +191,7 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                 }
 
                 var sb = new StringBuilder();
-                sb.Append( "<ul class='list-unstyled' style='margin: 0;'>" );
+                sb.Append( "<ul class='rocktree'>" );
 
                 foreach ( var group in groups )
                 {
@@ -215,20 +203,25 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
             }
         }
 
+        private string BuildGroupUrl( int id )
+        {
+            return _groupBaseUrl.Replace( "PLACEHOLDER", id.ToString() );
+        }
+
+        private string BuildSubGroupUrl( int id )
+        {
+            return _subGroupBaseUrl.Replace( "PLACEHOLDER", id.ToString() );
+        }
+
+        private string BuildCalcUrl( int id )
+        {
+            return _calcBaseUrl.Replace( "PLACEHOLDER", id.ToString() );
+        }
+
         private void RenderGroupNode( StringBuilder sb, CalculationGroup group )
         {
-            bool isActive = SelectedType == "group" && SelectedId == group.Id;
-            bool containsSelected = SelectedGroupId == group.Id;
-            bool isExpanded = containsSelected;
-
-            string groupUrl = LinkedPageUrl( "GroupDetailPage", new Dictionary<string, string>
-            {
-                { "CalculationGroupId", group.Id.ToString() }
-            } );
-
-            string activeStyle = isActive ? " background-color: #e8f0fe;" : "";
-            string activeLinkStyle = isActive ? " color: #2196F3; font-weight: 600;" : "";
-            string inactiveLabel = group.IsActive ? "" : " <span class='label label-danger' style='font-size: 10px;'>Inactive</span>";
+            bool isSelected = _selectedType == NodeType_Group && _selectedId == group.Id;
+            bool isExpanded = SelectedGroupId == group.Id;
 
             var subGroups = group.CalculationSubGroups
                 .OrderBy( sg => sg.Order )
@@ -236,24 +229,33 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                 .ToList();
 
             bool hasChildren = subGroups.Any();
-            string caretIcon = hasChildren
-                ? string.Format( "<a href='#' class='js-sync-tree-toggle' style='margin-right: 4px;'><i class='fa {0}' style='width: 12px;'></i></a>",
-                    isExpanded ? "fa-caret-down" : "fa-caret-right" )
-                : "<span style='display: inline-block; width: 16px;'></span>";
+            string inactiveClass = group.IsActive ? "" : " is-inactive";
 
-            sb.AppendFormat(
-                "<li style='padding: 6px 12px;{0}'>{1}<a href='{2}' style='text-decoration: none;{3}'><i class='fa fa-sync' style='margin-right: 4px;'></i>{4}</a>{5}",
-                activeStyle,
-                caretIcon,
-                HttpUtility.HtmlAttributeEncode( groupUrl ),
-                activeLinkStyle,
-                HttpUtility.HtmlEncode( group.Name ),
-                inactiveLabel );
+            sb.AppendFormat( "<li class='rocktree-item{0}' data-id='g-{1}'>", inactiveClass, group.Id );
 
             if ( hasChildren )
             {
-                string displayStyle = isExpanded ? "" : " style='display: none;'";
-                sb.AppendFormat( "<ul class='list-unstyled' style='margin: 2px 0 0 0; padding-left: 16px;'{0}>", displayStyle );
+                sb.AppendFormat(
+                    "<span class='rocktree-icon js-synctree-toggle'><i class='fa {0}'></i></span>",
+                    isExpanded ? "fa-chevron-down" : "fa-chevron-right" );
+            }
+            else
+            {
+                sb.Append( "<span class='rocktree-icon'></span>" );
+            }
+
+            string selectedClass = isSelected ? " selected" : "";
+            sb.AppendFormat(
+                "<a class='rocktree-name{0}' href='{1}'><i class='fa fa-sync'></i> {2} <span class='label label-tree'>{3}</span></a>",
+                selectedClass,
+                HttpUtility.HtmlAttributeEncode( BuildGroupUrl( group.Id ) ),
+                HttpUtility.HtmlEncode( group.Name ),
+                subGroups.Count );
+
+            if ( hasChildren )
+            {
+                string displayStyle = isExpanded ? "" : " style='display:none'";
+                sb.AppendFormat( "<ul class='rocktree-children'{0}>", displayStyle );
 
                 foreach ( var subGroup in subGroups )
                 {
@@ -268,18 +270,8 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
         private void RenderSubGroupNode( StringBuilder sb, CalculationSubGroup subGroup )
         {
-            bool isActive = SelectedType == "subgroup" && SelectedId == subGroup.Id;
-            bool containsSelected = SelectedSubGroupId == subGroup.Id;
-            bool isExpanded = containsSelected;
-
-            string sgUrl = LinkedPageUrl( "SubGroupDetailPage", new Dictionary<string, string>
-            {
-                { "CalculationSubGroupId", subGroup.Id.ToString() }
-            } );
-
-            string activeStyle = isActive ? " background-color: #e8f0fe;" : "";
-            string activeLinkStyle = isActive ? " color: #2196F3; font-weight: 600;" : "";
-            string inactiveLabel = subGroup.IsActive ? "" : " <span class='label label-danger' style='font-size: 10px;'>Inactive</span>";
+            bool isSelected = _selectedType == NodeType_SubGroup && _selectedId == subGroup.Id;
+            bool isExpanded = SelectedSubGroupId == subGroup.Id;
 
             var calcs = subGroup.Calculations
                 .OrderBy( c => c.Order )
@@ -287,24 +279,33 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
                 .ToList();
 
             bool hasChildren = calcs.Any();
-            string caretIcon = hasChildren
-                ? string.Format( "<a href='#' class='js-sync-tree-toggle' style='margin-right: 4px;'><i class='fa {0}' style='width: 12px;'></i></a>",
-                    isExpanded ? "fa-caret-down" : "fa-caret-right" )
-                : "<span style='display: inline-block; width: 16px;'></span>";
+            string inactiveClass = subGroup.IsActive ? "" : " is-inactive";
 
-            sb.AppendFormat(
-                "<li style='padding: 5px 12px;{0}'>{1}<a href='{2}' style='text-decoration: none;{3}'><i class='fa fa-layer-group' style='margin-right: 4px;'></i>{4}</a>{5}",
-                activeStyle,
-                caretIcon,
-                HttpUtility.HtmlAttributeEncode( sgUrl ),
-                activeLinkStyle,
-                HttpUtility.HtmlEncode( subGroup.Name ),
-                inactiveLabel );
+            sb.AppendFormat( "<li class='rocktree-item{0}' data-id='sg-{1}'>", inactiveClass, subGroup.Id );
 
             if ( hasChildren )
             {
-                string displayStyle = isExpanded ? "" : " style='display: none;'";
-                sb.AppendFormat( "<ul class='list-unstyled' style='margin: 2px 0 0 0; padding-left: 16px;'{0}>", displayStyle );
+                sb.AppendFormat(
+                    "<span class='rocktree-icon js-synctree-toggle'><i class='fa {0}'></i></span>",
+                    isExpanded ? "fa-chevron-down" : "fa-chevron-right" );
+            }
+            else
+            {
+                sb.Append( "<span class='rocktree-icon'></span>" );
+            }
+
+            string selectedClass = isSelected ? " selected" : "";
+            sb.AppendFormat(
+                "<a class='rocktree-name{0}' href='{1}'><i class='fa fa-layer-group'></i> {2} <span class='label label-tree'>{3}</span></a>",
+                selectedClass,
+                HttpUtility.HtmlAttributeEncode( BuildSubGroupUrl( subGroup.Id ) ),
+                HttpUtility.HtmlEncode( subGroup.Name ),
+                calcs.Count );
+
+            if ( hasChildren )
+            {
+                string displayStyle = isExpanded ? "" : " style='display:none'";
+                sb.AppendFormat( "<ul class='rocktree-children'{0}>", displayStyle );
 
                 foreach ( var calc in calcs )
                 {
@@ -319,24 +320,17 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
         private void RenderCalculationNode( StringBuilder sb, Calculation calc )
         {
-            bool isActive = SelectedType == "calc" && SelectedId == calc.Id;
+            bool isSelected = _selectedType == NodeType_Calc && _selectedId == calc.Id;
+            string inactiveClass = calc.IsActive ? "" : " is-inactive";
+            string selectedClass = isSelected ? " selected" : "";
 
-            string calcUrl = LinkedPageUrl( "CalculationDetailPage", new Dictionary<string, string>
-            {
-                { "CalculationId", calc.Id.ToString() }
-            } );
-
-            string activeStyle = isActive ? " background-color: #e8f0fe;" : "";
-            string activeLinkStyle = isActive ? " color: #2196F3; font-weight: 600;" : "";
-            string inactiveLabel = calc.IsActive ? "" : " <span class='label label-danger' style='font-size: 10px;'>Inactive</span>";
-
+            sb.AppendFormat( "<li class='rocktree-item rocktree-leaf{0}' data-id='c-{1}'>", inactiveClass, calc.Id );
             sb.AppendFormat(
-                "<li style='padding: 4px 12px 4px 28px;{0}'><a href='{1}' style='text-decoration: none;{2}'><i class='fa fa-calculator' style='margin-right: 4px;'></i>{3}</a>{4}</li>",
-                activeStyle,
-                HttpUtility.HtmlAttributeEncode( calcUrl ),
-                activeLinkStyle,
-                HttpUtility.HtmlEncode( calc.Name ),
-                inactiveLabel );
+                "<a class='rocktree-name{0}' href='{1}'><i class='fa fa-calculator'></i> {2}</a>",
+                selectedClass,
+                HttpUtility.HtmlAttributeEncode( BuildCalcUrl( calc.Id ) ),
+                HttpUtility.HtmlEncode( calc.Name ) );
+            sb.Append( "</li>" );
         }
 
         #endregion
