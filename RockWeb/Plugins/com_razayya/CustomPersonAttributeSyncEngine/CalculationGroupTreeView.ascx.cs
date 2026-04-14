@@ -246,11 +246,12 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
             string selectedClass = isSelected ? " selected" : "";
             sb.AppendFormat(
-                "<a class='rocktree-name{0}' href='{1}'><i class='fa fa-sync'></i> {2} <span class='label label-tree'>{3}</span></a>",
+                "<span class='rocktree-name js-synctree-toggle{0}'><i class='fa fa-sync'></i> {1} <span class='label label-tree'>{2}</span>"
+                    + " <a class='js-synctree-nav' href='{3}' title='Edit group'><i class='fa fa-pencil'></i></a></span>",
                 selectedClass,
-                HttpUtility.HtmlAttributeEncode( BuildGroupUrl( group.Id ) ),
                 HttpUtility.HtmlEncode( group.Name ),
-                subGroups.Count );
+                subGroups.Count,
+                HttpUtility.HtmlAttributeEncode( BuildGroupUrl( group.Id ) ) );
 
             if ( hasChildren )
             {
@@ -296,11 +297,12 @@ namespace RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine
 
             string selectedClass = isSelected ? " selected" : "";
             sb.AppendFormat(
-                "<a class='rocktree-name{0}' href='{1}'><i class='fa fa-layer-group'></i> {2} <span class='label label-tree'>{3}</span></a>",
+                "<span class='rocktree-name js-synctree-toggle{0}'><i class='fa fa-layer-group'></i> {1} <span class='label label-tree'>{2}</span>"
+                    + " <a class='js-synctree-nav' href='{3}' title='Edit sub group'><i class='fa fa-pencil'></i></a></span>",
                 selectedClass,
-                HttpUtility.HtmlAttributeEncode( BuildSubGroupUrl( subGroup.Id ) ),
                 HttpUtility.HtmlEncode( subGroup.Name ),
-                calcs.Count );
+                calcs.Count,
+                HttpUtility.HtmlAttributeEncode( BuildSubGroupUrl( subGroup.Id ) ) );
 
             if ( hasChildren )
             {
