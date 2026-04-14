@@ -38,8 +38,19 @@ WHERE o.[ScopeToPreviousSubGroup] = 1
   AND o.PreviousId IS NOT NULL
 " );
 
-            // 3. Drop the old column
+            // 3. Drop the default constraint and old column
             Sql( $@"
+DECLARE @constraintName NVARCHAR(256)
+SELECT @constraintName = d.name
+FROM sys.default_constraints d
+INNER JOIN sys.columns c ON d.parent_column_id = c.column_id AND d.parent_object_id = c.object_id
+WHERE c.name = 'ScopeToPreviousSubGroup' AND d.parent_object_id = OBJECT_ID('{TableName}')
+
+IF @constraintName IS NOT NULL
+BEGIN
+    EXEC('ALTER TABLE [dbo].[{TableName}] DROP CONSTRAINT [' + @constraintName + ']')
+END
+
 IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{TableName}' AND COLUMN_NAME = 'ScopeToPreviousSubGroup')
 BEGIN
     ALTER TABLE [dbo].[{TableName}] DROP COLUMN [ScopeToPreviousSubGroup]
