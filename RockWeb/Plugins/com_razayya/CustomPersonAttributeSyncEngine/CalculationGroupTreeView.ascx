@@ -43,36 +43,43 @@
             </div>
         </div>
 
-        <style>
-            .js-synctree-toggle { cursor: pointer; }
-            .js-synctree-nav { margin-left: 4px; opacity: 0; transition: opacity 0.15s; font-size: 11px; }
-            .rocktree-item:hover > .rocktree-name .js-synctree-nav,
-            .rocktree-item:hover > .rocktree-icon + .rocktree-name .js-synctree-nav { opacity: 0.6; }
-            .js-synctree-nav:hover { opacity: 1 !important; }
-        </style>
-
-        <script type="text/javascript">
-            $(document).on('click.synctree', '.js-synctree-toggle', function (e) {
-                // Don't toggle when clicking the pencil nav link
-                if ($(e.target).closest('.js-synctree-nav').length) return;
-
-                e.preventDefault();
-                e.stopPropagation();
-
-                var $item = $(this).closest('.rocktree-item');
-                var $children = $item.children('.rocktree-children');
-                var $chevron = $item.children('.rocktree-icon').find('i');
-
-                if ($children.length === 0) return;
-
-                if ($children.is(':visible')) {
-                    $children.slideUp(150);
-                    $chevron.removeClass('fa-chevron-down').addClass('fa-chevron-right');
-                } else {
-                    $children.slideDown(150);
-                    $chevron.removeClass('fa-chevron-right').addClass('fa-chevron-down');
-                }
-            });
-        </script>
     </ContentTemplate>
 </asp:UpdatePanel>
+
+<style>
+    .js-synctree-toggle { cursor: pointer; }
+    .js-synctree-nav { margin-left: 4px; opacity: 0; transition: opacity 0.15s; font-size: 11px; }
+    .rocktree-item:hover > .rocktree-name .js-synctree-nav,
+    .rocktree-item:hover > .rocktree-icon + .rocktree-name .js-synctree-nav { opacity: 0.6; }
+    .js-synctree-nav:hover { opacity: 1 !important; }
+</style>
+
+<script type="text/javascript">
+    $(function () {
+        $(document).off('click.synctree').on('click.synctree', '.js-synctree-toggle', function (e) {
+            // Don't toggle when clicking the pencil nav link
+            if ($(e.target).closest('.js-synctree-nav').length) {
+                return;
+            }
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            var $item = $(this).closest('.rocktree-item');
+            var $children = $item.children('.rocktree-children');
+            var $chevron = $item.children('.rocktree-icon').find('i');
+
+            if ($children.length === 0) {
+                return;
+            }
+
+            if ($children.is(':visible')) {
+                $children.slideUp(150);
+                $chevron.removeClass('fa-chevron-down').addClass('fa-chevron-right');
+            } else {
+                $children.slideDown(150);
+                $chevron.removeClass('fa-chevron-right').addClass('fa-chevron-down');
+            }
+        });
+    });
+</script>
