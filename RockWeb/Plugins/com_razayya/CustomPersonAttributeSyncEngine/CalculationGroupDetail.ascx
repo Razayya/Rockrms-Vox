@@ -2,6 +2,9 @@
     Inherits="RockWeb.Plugins.com_razayya.CustomPersonAttributeSyncEngine.CalculationGroupDetail" %>
 
 <asp:UpdatePanel ID="upnlContent" runat="server">
+    <Triggers>
+        <asp:PostBackTrigger ControlID="btnExport" />
+    </Triggers>
     <ContentTemplate>
         <asp:Panel ID="pnlDetails" CssClass="panel panel-block" runat="server">
             <asp:HiddenField ID="hfId" runat="server" />
