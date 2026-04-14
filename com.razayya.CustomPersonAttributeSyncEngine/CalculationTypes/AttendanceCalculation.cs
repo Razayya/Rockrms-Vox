@@ -20,11 +20,11 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
     /// </summary>
     [Description( "Evaluates attendance against group type, minimum count, and date range criteria." )]
 
-    [GroupTypeField( "Group Type",
-        Description = "The group type to check attendance for.",
+    [GroupTypesField( "Group Types",
+        Description = "The group types to check attendance for.",
         IsRequired = true,
         Order = 0,
-        Key = AttributeKey.GroupType )]
+        Key = AttributeKey.GroupTypes )]
 
     [IntegerField( "Minimum Count",
         Description = "The minimum number of times a person must have attended.",
@@ -56,11 +56,13 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
         {
             var results = new Dictionary<int, Dictionary<string, object>>();
 
-            var groupTypeGuid = calculation.GetAttributeValue( AttributeKey.GroupType ).AsGuidOrNull();
+            var groupTypeGuids = calculation.GetAttributeValue( AttributeKey.GroupTypes )
+                .SplitDelimitedValues()
+                .AsGuidList();
             var minimumCount = calculation.GetAttributeValue( AttributeKey.MinimumCount ).AsIntegerOrNull() ?? 1;
             var withinDays = calculation.GetAttributeValue( AttributeKey.WithinDays ).AsIntegerOrNull() ?? 90;
 
-            if ( !groupTypeGuid.HasValue )
+            if ( !groupTypeGuids.Any() )
             {
                 return results;
             }
@@ -73,7 +75,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                     a.DidAttend == true &&
                     a.StartDateTime >= sinceDate &&
                     a.Occurrence.Group != null &&
-                    a.Occurrence.Group.GroupType.Guid == groupTypeGuid.Value &&
+                    groupTypeGuids.Contains( a.Occurrence.Group.GroupType.Guid ) &&
                     a.PersonAlias != null );
 
             // Scope to population

@@ -7,7 +7,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Constants
         public const string ShowDebug = "ShowDebug";
 
         // Attendance calculation
-        public const string GroupType = "GroupType";
+        public const string GroupTypes = "GroupTypes";
         public const string MinimumCount = "MinimumCount";
         public const string WithinDays = "WithinDays";
         public const string Schedule = "Schedule";
@@ -21,7 +21,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Constants
         public const string DataView = "DataView";
 
         // Group membership calculation
-        public const string GroupTypeOrGroup = "GroupTypeOrGroup";
+        public const string GroupTypes_Membership = "GroupTypes_Membership";
         public const string GroupRole = "GroupRole";
         public const string ActiveMembersOnly = "ActiveMembersOnly";
 

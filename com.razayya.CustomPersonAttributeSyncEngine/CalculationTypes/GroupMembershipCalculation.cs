@@ -21,11 +21,11 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
     [Description( "Checks whether a person is a member of a specified group or group type." )]
 
 
-    [GroupTypeField( "Group Type",
-        Description = "The group type to check membership for. Leave blank if specifying a specific group.",
-        IsRequired = false,
+    [GroupTypesField( "Group Types",
+        Description = "The group types to check membership for.",
+        IsRequired = true,
         Order = 0,
-        Key = AttributeKey.GroupTypeOrGroup )]
+        Key = AttributeKey.GroupTypes_Membership )]
 
     [GroupRoleField( "",
         "Group Role",
@@ -57,18 +57,20 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
         {
             var results = new Dictionary<int, Dictionary<string, object>>();
 
-            var groupTypeGuid = calculation.GetAttributeValue( AttributeKey.GroupTypeOrGroup ).AsGuidOrNull();
+            var groupTypeGuids = calculation.GetAttributeValue( AttributeKey.GroupTypes_Membership )
+                .SplitDelimitedValues()
+                .AsGuidList();
             var groupRoleGuid = calculation.GetAttributeValue( AttributeKey.GroupRole ).AsGuidOrNull();
             var activeMembersOnly = calculation.GetAttributeValue( AttributeKey.ActiveMembersOnly ).AsBoolean();
 
-            if ( !groupTypeGuid.HasValue )
+            if ( !groupTypeGuids.Any() )
             {
                 return results;
             }
 
             var memberService = new GroupMemberService( rockContext );
             var query = memberService.Queryable().AsNoTracking()
-                .Where( gm => gm.Group.GroupType.Guid == groupTypeGuid.Value );
+                .Where( gm => groupTypeGuids.Contains( gm.Group.GroupType.Guid ) );
 
             if ( activeMembersOnly )
             {
