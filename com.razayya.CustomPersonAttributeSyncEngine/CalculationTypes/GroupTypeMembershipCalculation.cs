@@ -15,45 +15,39 @@ using Rock.Model;
 namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
 {
     /// <summary>
-    /// Evaluates whether persons are active members of a specific group,
-    /// optionally including its child groups, and filtered by group role.
+    /// Evaluates whether persons are active members of any group belonging to the
+    /// specified group type(s), optionally filtered by group role.
     /// </summary>
-    [Description( "Checks whether a person is a member of a specific group, optionally including child groups." )]
+    [Description( "Checks whether a person is a member of any group under the selected group types." )]
 
-    [GroupField( "Group",
-        Description = "The group to check membership for.",
+
+    [GroupTypesField( "Group Types",
+        Description = "The group types to check membership for.",
         IsRequired = true,
         Order = 0,
-        Key = AttributeKey.Group )]
-
-    [BooleanField( "Include Child Groups",
-        Description = "When enabled, membership in any child group of the selected group is also included.",
-        IsRequired = true,
-        DefaultBooleanValue = false,
-        Order = 1,
-        Key = AttributeKey.IncludeChildGroups )]
+        Key = AttributeKey.GroupTypes_Membership )]
 
     [GroupRoleField( "",
         "Group Role",
         Description = "Optional. Only include members with this role.",
         IsRequired = false,
-        Order = 2,
-        Key = AttributeKey.GroupRole_GroupMembership )]
+        Order = 1,
+        Key = AttributeKey.GroupRole )]
 
     [BooleanField( "Active Members Only",
         Description = "When enabled, only active group members are included.",
         IsRequired = true,
         DefaultBooleanValue = true,
-        Order = 3,
-        Key = AttributeKey.ActiveMembersOnly_GroupMembership )]
+        Order = 2,
+        Key = AttributeKey.ActiveMembersOnly )]
 
-    public class GroupMembershipCalculation : CalculationTypeComponent
+    public class GroupTypeMembershipCalculation : CalculationTypeComponent
     {
         /// <inheritdoc/>
-        public override string Title => "Group Membership";
+        public override string Title => "Group Type Membership";
 
         /// <inheritdoc/>
-        public override string IconCssClass => "fa fa-user-check";
+        public override string IconCssClass => "fa fa-users";
 
         /// <inheritdoc/>
         public override Dictionary<int, Dictionary<string, object>> Evaluate(
@@ -63,37 +57,20 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
         {
             var results = new Dictionary<int, Dictionary<string, object>>();
 
-            var groupGuid = calculation.GetAttributeValue( AttributeKey.Group ).AsGuidOrNull();
-            var includeChildGroups = calculation.GetAttributeValue( AttributeKey.IncludeChildGroups ).AsBoolean();
-            var groupRoleGuid = calculation.GetAttributeValue( AttributeKey.GroupRole_GroupMembership ).AsGuidOrNull();
-            var activeMembersOnly = calculation.GetAttributeValue( AttributeKey.ActiveMembersOnly_GroupMembership ).AsBoolean();
+            var groupTypeGuids = calculation.GetAttributeValue( AttributeKey.GroupTypes_Membership )
+                .SplitDelimitedValues()
+                .AsGuidList();
+            var groupRoleGuid = calculation.GetAttributeValue( AttributeKey.GroupRole ).AsGuidOrNull();
+            var activeMembersOnly = calculation.GetAttributeValue( AttributeKey.ActiveMembersOnly ).AsBoolean();
 
-            if ( !groupGuid.HasValue )
+            if ( !groupTypeGuids.Any() )
             {
                 return results;
-            }
-
-            var groupService = new GroupService( rockContext );
-            var selectedGroup = groupService.Get( groupGuid.Value );
-            if ( selectedGroup == null )
-            {
-                return results;
-            }
-
-            // Build the set of group IDs to query.
-            var groupIds = new HashSet<int> { selectedGroup.Id };
-            if ( includeChildGroups )
-            {
-                var descendantIds = groupService.GetAllDescendentGroupIds( selectedGroup.Id, false );
-                foreach ( var id in descendantIds )
-                {
-                    groupIds.Add( id );
-                }
             }
 
             var memberService = new GroupMemberService( rockContext );
             var query = memberService.Queryable().AsNoTracking()
-                .Where( gm => groupIds.Contains( gm.GroupId ) );
+                .Where( gm => groupTypeGuids.Contains( gm.Group.GroupType.Guid ) );
 
             if ( activeMembersOnly )
             {
@@ -110,6 +87,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 query = query.Where( gm => populationPersonIds.Contains( gm.PersonId ) );
             }
 
+            // Project flat columns that EF6 can safely translate, then group in memory.
             var memberRows = query
                 .Select( gm => new
                 {

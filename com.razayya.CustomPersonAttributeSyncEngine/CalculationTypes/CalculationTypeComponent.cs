@@ -70,6 +70,7 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.CalculationTypes
                 { typeof( AttendanceCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new AttendanceCalculation() ) },
                 { typeof( CompletionCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new CompletionCalculation() ) },
                 { typeof( DataViewInclusionCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new DataViewInclusionCalculation() ) },
+                { typeof( GroupTypeMembershipCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new GroupTypeMembershipCalculation() ) },
                 { typeof( GroupMembershipCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new GroupMembershipCalculation() ) },
                 { typeof( PersonFilterCalculation ).FullName, new Lazy<CalculationTypeComponent>( () => new PersonFilterCalculation() ) },
             };

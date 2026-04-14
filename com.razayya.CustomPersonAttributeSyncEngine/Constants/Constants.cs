@@ -20,10 +20,16 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Constants
         // DataView inclusion calculation
         public const string DataView = "DataView";
 
-        // Group membership calculation
+        // Group type membership calculation
         public const string GroupTypes_Membership = "GroupTypes_Membership";
         public const string GroupRole = "GroupRole";
         public const string ActiveMembersOnly = "ActiveMembersOnly";
+
+        // Group membership calculation
+        public const string Group = "Group";
+        public const string IncludeChildGroups = "IncludeChildGroups";
+        public const string GroupRole_GroupMembership = "GroupRole_GroupMembership";
+        public const string ActiveMembersOnly_GroupMembership = "ActiveMembersOnly_GroupMembership";
 
         // Completion calculation
         public const string CompletionCriteria = "CompletionCriteria";

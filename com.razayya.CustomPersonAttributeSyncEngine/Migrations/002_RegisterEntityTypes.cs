@@ -56,11 +56,11 @@ namespace com.razayya.CustomPersonAttributeSyncEngine.Migrations
                 SystemGuid.EntityType.CALCULATION_TYPE_DATAVIEW );
 
             RockMigrationHelper.UpdateEntityType(
-                $"{CalcTypeNs}.GroupMembershipCalculation",
-                "Group Membership Calculation",
-                $"{CalcTypeNs}.GroupMembershipCalculation, {AssemblyName}, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                $"{CalcTypeNs}.GroupTypeMembershipCalculation",
+                "Group Type Membership Calculation",
+                $"{CalcTypeNs}.GroupTypeMembershipCalculation, {AssemblyName}, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
                 false, true,
-                SystemGuid.EntityType.CALCULATION_TYPE_GROUP_MEMBERSHIP );
+                SystemGuid.EntityType.CALCULATION_TYPE_GROUP_TYPE_MEMBERSHIP );
 
             RockMigrationHelper.UpdateEntityType(
                 $"{CalcTypeNs}.CompletionCalculation",

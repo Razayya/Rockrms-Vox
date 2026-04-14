@@ -65,6 +65,7 @@
     <Compile Include="CalculationTypes\AttendanceCalculation.cs" />
     <Compile Include="CalculationTypes\PersonFilterCalculation.cs" />
     <Compile Include="CalculationTypes\DataViewInclusionCalculation.cs" />
+    <Compile Include="CalculationTypes\GroupTypeMembershipCalculation.cs" />
     <Compile Include="CalculationTypes\GroupMembershipCalculation.cs" />
     <Compile Include="CalculationTypes\CompletionCalculation.cs" />
     <!-- Data / Services -->
@@ -87,6 +88,7 @@
     <Compile Include="Migrations\008_RegisterFieldTypeAndWorkflowAction.cs" />
     <Compile Include="Migrations\009_PageListAsBlocks.cs" />
     <Compile Include="Migrations\010_PrerequisiteSubGroups.cs" />
+    <Compile Include="Migrations\011_GroupMembershipCalculationType.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
