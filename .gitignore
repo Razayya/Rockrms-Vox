@@ -44,6 +44,12 @@ TestResults/
 
 Packages/*
 
+# Claude Code local config — track only the rock-project-review skill
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/rock-project-review/
+
 # javascript deps
 node_modules
 .cache
