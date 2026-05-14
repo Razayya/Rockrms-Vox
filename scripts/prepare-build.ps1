@@ -177,6 +177,25 @@ if ($sln -notmatch $refPattern) {
 
 Set-Content -LiteralPath $slnPath -Value $sln -Encoding UTF8 -NoNewline
 
+# ============================================================
+# 4. NuGet restore (PackageReference + packages.config in one pass)
+# ============================================================
+$msbuild = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\2022\*\MSBuild\Current\Bin\MSBuild.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $msbuild) {
+    Write-Warning "MSBuild not found under VS 2022; skipping restore. Run manually before building."
+} else {
+    Write-Host "Restoring NuGet packages (PackageReference + packages.config) ..."
+    Push-Location $TargetDir
+    try {
+        & $msbuild.FullName 'Rock.sln' -t:Restore -p:RestorePackagesConfig=true -p:Configuration=Debug -m -nologo -v:minimal
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Restore exited with code $LASTEXITCODE - inspect output above and rerun manually if needed."
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
 Write-Host ''
 Write-Host "Build tree ready: $TargetDir"
 Write-Host "Open: $slnPath"
