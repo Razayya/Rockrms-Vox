@@ -1,1 +1,0 @@
-If you get a 'Please insert disk.' warning when installing, that is due to the path being too long. To fix this, copy this folder to c:\temp and run it from there instead.

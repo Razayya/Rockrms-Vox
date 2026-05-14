@@ -1,1 +1,0 @@
-﻿<%@ WebHandler Language="C#" CodeBehind="~/App_Code/GetCommunication.ashx.cs" Class="RockWeb.GetCommunication" %>

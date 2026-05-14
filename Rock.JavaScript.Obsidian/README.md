@@ -1,3 +1,0 @@
-# Rock.JavaScript.ObsidianJs
-
-

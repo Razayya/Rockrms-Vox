@@ -1,7 +1,0 @@
-#Ignore Packages
-/packages/*
-!/packages/repositories.config
-/bin/
-/obj/
-/*.suo
-/*.user

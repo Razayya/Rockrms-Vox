@@ -1,5 +1,0 @@
-[Autorun]
-open=AutoRunPro.exe /s
-
-[AutorunPro]
-Run1=html\index.htm

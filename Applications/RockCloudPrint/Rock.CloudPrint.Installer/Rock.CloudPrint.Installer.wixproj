@@ -1,6 +1,0 @@
-﻿<Project Sdk="WixToolset.Sdk/5.0.0">
-  <ItemGroup>
-    <ProjectReference Include="..\Rock.CloudPrint.Desktop\Rock.CloudPrint.Desktop.csproj" />
-    <ProjectReference Include="..\Rock.CloudPrint.Service\Rock.CloudPrint.Service.csproj" />
-  </ItemGroup>
-</Project>

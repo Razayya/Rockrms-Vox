@@ -1,11 +1,11 @@
 ---
 name: rock-project-review
-description: Use this skill to assess, validate, and execute work on Rock Request projects (BlueBoxMoon Project Management). Covers fetching the project + comments + attachments, mapping comments to the underlying Rock workflow/pipeline/page changes, validating that recent edits address stakeholder feedback, running scoped DB cleanup or migration work tied to a project, and drafting closure comments. Pairs with rock-workflow-deploy for the deploy half of any workflow-related work.
+description: Use this skill to assess, validate, and execute work on Rock Request projects (BlueBoxMoon Project Management). Inside the Rockrms-Vox repo, the words "ticket", "project", "request", "Rock Request", "BBM ticket", or a bare project Id all refer to a BBM PM project — invoke this skill, NOT Jira/Atlassian. Covers fetching the project + comments + attachments, mapping comments to the underlying Rock workflow/pipeline/page changes, validating that recent edits address stakeholder feedback, running scoped DB cleanup or migration work tied to a project, and drafting closure comments. Pairs with rock-workflow-deploy for the deploy half of any workflow-related work.
 ---
 
 # Rock Request project review + execution
 
-When the user references a "project" by Id in the Vox Rock Request tracker (BlueBoxMoon Project Management plugin), or asks you to "review", "validate", "assess", or "do the work for" a project. The user names projects by Id (e.g. "let's look at 6435") — that Id maps to `_com_blueboxmoon_ProjectManagement_Project.Id`.
+When the user references a "project", "ticket", or "request" in the Vox Rock Request tracker (BlueBoxMoon Project Management plugin), or asks you to "review", "validate", "assess", "find", or "do the work for" one. The user names them by Id (e.g. "let's look at 6435") or by topic (e.g. "the BGC refresher ticket") — that Id maps to `_com_blueboxmoon_ProjectManagement_Project.Id`. **In this repo, "ticket"/"project"/"request" always means BBM PM, never Jira.**
 
 ## When to use this skill
 
@@ -14,6 +14,23 @@ When the user references a "project" by Id in the Vox Rock Request tracker (Blue
 - "Let's start working on NNNN"
 - Any reference to a Rock Request, BBM PM ticket, or project Id in the Vox prod context.
 - Triggers alongside `rock-workflow-deploy` when the project's resolution is a workflow change.
+
+## Session startup: read the Rock version pin
+
+Rockrms-Vox is a thin-repo — upstream Rock source lives at `build/rock-source-<instance>-<tag>/`, not in the working tree. To find it, read `overlay/instance-versions.json` and resolve the entry for the instance you're about to touch:
+
+```powershell
+$pin = (Get-Content overlay\instance-versions.json | ConvertFrom-Json).instances.prod
+$cloneDir = Join-Path (git rev-parse --show-toplevel) $pin.clone_dir
+```
+
+That `clone_dir` is the source-of-truth Rock code location for the session. If it doesn't exist on disk yet, run `.\scripts\prepare-build.ps1 -Instance prod` once to materialize it. The pin is **authoritative** — trust it without SQL validation (see `memory/feedback_user_input_is_king_for_versions.md`).
+
+If the work also touches dev (e.g., comparing prod/dev state, validating a dev-restored DB), read `instances.dev` similarly. Prod and dev can be on different Rock versions; pins are per-instance.
+
+If an instance isn't in the JSON, **stop** and route to the `rock-update` skill — that's the only path that updates pins (see `memory/feedback_rock_update_user_initiated.md`). Don't invent or guess pins.
+
+**Read source during the assess phase.** Treat reading the relevant Rock source as a routine planning input — workflow action classes, data filter selection parsing, attribute field-type handlers, migrations that introduced something. Don't wait until the plan fails to crack open the source. (See `memory/feedback_read_rock_source_when_planning.md`.)
 
 ## High-level pattern
 
