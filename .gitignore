@@ -44,11 +44,17 @@ TestResults/
 
 Packages/*
 
-# Claude Code local config — track only the rock-project-review skill
+# Claude Code local config — track skills used in the Vox Rock workflow
 .claude/*
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/rock-project-review/
+!.claude/skills/rock-update/
+!.claude/skills/rock-workflow-deploy/
+!.claude/skills/rock-page-create/
+
+# thin-repo build output (clone of upstream Rock + plugin overlay)
+build/
 
 # javascript deps
 node_modules
