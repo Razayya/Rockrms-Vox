@@ -82,8 +82,17 @@ if (-not (Test-Path $TargetDir)) {
     $parent = Split-Path $TargetDir -Parent
     if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     Write-Host "Cloning $RockRepo @ $tag (shallow) ..."
-    & git clone --depth 1 --branch $tag $RockRepo $TargetDir
-    if ($LASTEXITCODE -ne 0) { throw "git clone failed for tag '$tag'. Confirm the tag exists upstream." }
+    # ErrorActionPreference=Stop wraps git's normal stderr ("Cloning into...") as a
+    # terminating error before the clone finishes. Drop to Continue locally and rely
+    # on $LASTEXITCODE for the actual outcome.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & git clone --depth 1 --branch $tag $RockRepo $TargetDir
+        if ($LASTEXITCODE -ne 0) { throw "git clone failed for tag '$tag'. Confirm the tag exists upstream." }
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
 }
 
 # ============================================================

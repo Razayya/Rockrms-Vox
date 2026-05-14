@@ -4,8 +4,8 @@
                       "prod":  {
                                    "friendly_version":  "Rock McKinley 17.5 (issue #6486)",
                                    "file_version":  "17.5.2.2",
-                                   "tag":  "17.5.2.2",
-                                   "clone_dir":  "build/rock-source-prod-17.5.2.2",
+                                   "tag":  "17.5.2",
+                                   "clone_dir":  "build/rock-source-prod-17.5.2",
                                    "pinned_at":  "2026-05-14",
                                    "pinned_by":  "user-supplied"
                                },
