@@ -47,7 +47,7 @@ namespace com.razayya.JourneyTrack.Model
     /// <summary>
     /// Identifies which level of object queued a JourneyCommunicationLog row.
     /// </summary>
-    public enum CommunicationContextType
+    public enum CommunicationContextType : byte
     {
         /// <summary>
         /// Queued by a single JourneyCalculation's OnMatchSystemCommunication.
