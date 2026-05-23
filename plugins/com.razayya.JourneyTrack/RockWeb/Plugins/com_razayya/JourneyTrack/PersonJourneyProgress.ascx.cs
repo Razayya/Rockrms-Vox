@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Data.Entity;
 using System.Linq;
 using System.Text;
+using System.Web.UI.WebControls;
 
 using com.razayya.JourneyTrack.Data;
 using com.razayya.JourneyTrack.Model;
@@ -17,8 +20,9 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
     [Category( "Razayya > JourneyTrack" )]
     [Description( "Shows a person's progress through one or more Journey Programs as a horizontal stage bar. Drop this on a Person profile page." )]
 
-    [TextField( "Journey Program Guids",
-        Description = "Comma-delimited list of JourneyProgram Guids to render for the displayed person. Each renders as its own progress bar with one segment per Stage.",
+    [CustomDropdownListField( "Journey Program",
+        description: "The Journey Program to render progress for on this block. Reads program list from the JourneyTrack database; only active programs appear.",
+        listSource: "SELECT CAST([Guid] AS NVARCHAR(50)) AS [Value], [Name] AS [Text] FROM _com_razayya_JourneyTrack_JourneyProgram WHERE IsActive = 1 ORDER BY [Order], [Name]",
         IsRequired = true,
         Order = 0,
         Key = AttributeKey.JourneyProgramGuids )]
@@ -52,6 +56,12 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
         private void Render()
         {
+            // Reset
+            nbMessage.Visible = false;
+            lOutput.Text = string.Empty;
+            rEnrollPrompts.DataSource = null;
+            rEnrollPrompts.DataBind();
+
             if ( Person == null )
             {
                 nbMessage.NotificationBoxType = Rock.Web.UI.Controls.NotificationBoxType.Info;
@@ -79,10 +89,13 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             var service = new JourneyTrackService();
             var sb = new StringBuilder();
             int rendered = 0;
+            var enrollPrompts = new List<EnrollPrompt>();
 
             using ( var rockContext = new RockContext() )
             {
                 var programService = new JourneyProgramService( rockContext );
+                var enrollmentService = new JourneyProgramEnrollmentService( rockContext );
+
                 foreach ( var guid in programGuids )
                 {
                     var program = programService.Get( guid );
@@ -91,21 +104,98 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                         continue;
                     }
 
+                    // Programs that require enrollment surface an enroll card when the
+                    // displayed person isn't enrolled. Programs without RequiresEnrollment
+                    // always render the progress bar (legacy "everyone is in scope" mode).
+                    if ( program.RequiresEnrollment )
+                    {
+                        var isEnrolled = enrollmentService.Queryable().AsNoTracking()
+                            .Any( e => e.JourneyProgramId == program.Id
+                                && e.IsActive
+                                && e.PersonAlias.PersonId == Person.Id );
+                        if ( !isEnrolled )
+                        {
+                            enrollPrompts.Add( new EnrollPrompt { ProgramId = program.Id, ProgramName = program.Name } );
+                            continue;
+                        }
+                    }
+
                     var progress = service.GetProgramProgressForPerson( program.Id, Person.Id );
                     sb.Append( RenderProgressBar( progress ) );
                     rendered++;
                 }
             }
 
-            if ( rendered == 0 )
+            lOutput.Text = sb.ToString();
+
+            if ( enrollPrompts.Count > 0 )
             {
+                rEnrollPrompts.DataSource = enrollPrompts;
+                rEnrollPrompts.DataBind();
+            }
+            else if ( rendered == 0 )
+            {
+                // No programs to render at all + no enroll prompts → static empty message.
                 nbMessage.NotificationBoxType = Rock.Web.UI.Controls.NotificationBoxType.Info;
                 nbMessage.Text = GetAttributeValue( AttributeKey.EmptyMessage );
                 nbMessage.Visible = true;
-                return;
+            }
+        }
+
+        protected void rEnrollPrompts_ItemCommand( object source, RepeaterCommandEventArgs e )
+        {
+            if ( e.CommandName != "Enroll" ) return;
+            var programId = e.CommandArgument.ToString().AsInteger();
+            if ( programId <= 0 || Person == null ) return;
+
+            using ( var rockContext = new RockContext() )
+            {
+                var aliasId = new Rock.Model.PersonAliasService( rockContext ).Queryable()
+                    .Where( pa => pa.PersonId == Person.Id && pa.AliasPersonId == Person.Id )
+                    .Select( pa => ( int? ) pa.Id ).FirstOrDefault();
+                if ( !aliasId.HasValue )
+                {
+                    nbMessage.NotificationBoxType = Rock.Web.UI.Controls.NotificationBoxType.Danger;
+                    nbMessage.Text = "Could not resolve a primary PersonAlias for the displayed person.";
+                    nbMessage.Visible = true;
+                    return;
+                }
+
+                var enrollmentService = new JourneyProgramEnrollmentService( rockContext );
+                var existing = enrollmentService.Queryable()
+                    .Where( en => en.JourneyProgramId == programId && en.PersonAlias.PersonId == Person.Id )
+                    .OrderByDescending( en => en.Id )
+                    .FirstOrDefault();
+
+                if ( existing == null )
+                {
+                    enrollmentService.Add( new JourneyProgramEnrollment
+                    {
+                        JourneyProgramId = programId,
+                        PersonAliasId = aliasId.Value,
+                        EnrolledDateTime = RockDateTime.Now,
+                        IsActive = true,
+                        Source = "ProfileBlock",
+                        EnrolledByPersonAliasId = CurrentPersonAliasId
+                    } );
+                }
+                else if ( !existing.IsActive )
+                {
+                    existing.IsActive = true;
+                    existing.UnenrolledDateTime = null;
+                    existing.ModifiedDateTime = RockDateTime.Now;
+                }
+                rockContext.SaveChanges();
             }
 
-            lOutput.Text = sb.ToString();
+            Render();
+        }
+
+        // Lightweight bind row for the enroll-prompt repeater.
+        private class EnrollPrompt
+        {
+            public int ProgramId { get; set; }
+            public string ProgramName { get; set; }
         }
 
         private string RenderProgressBar( ProgramProgressResult progress )
