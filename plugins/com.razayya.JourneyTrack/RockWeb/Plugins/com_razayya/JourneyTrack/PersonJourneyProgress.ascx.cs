@@ -12,6 +12,8 @@ using com.razayya.JourneyTrack.Model;
 using Rock;
 using Rock.Attribute;
 using Rock.Data;
+using Rock.Model;
+using Rock.Web.Cache;
 using Rock.Web.UI;
 
 namespace RockWeb.Plugins.com_razayya.JourneyTrack
@@ -122,6 +124,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
                     var progress = service.GetProgramProgressForPerson( program.Id, Person.Id );
                     sb.Append( RenderProgressBar( progress ) );
+                    sb.Append( RenderStageDrawers( program.Id, progress, rockContext ) );
                     rendered++;
                 }
             }
@@ -196,6 +199,138 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
         {
             public int ProgramId { get; set; }
             public string ProgramName { get; set; }
+        }
+
+        /// <summary>
+        /// Per-stage expandable drawers listing every active calculation in the
+        /// Stage and the current value of its target Person Attribute for the
+        /// displayed person. Transient calcs (no sink) show "—". Drawers default
+        /// to closed except for the current Stage, which opens by default.
+        /// </summary>
+        private string RenderStageDrawers( int programId, ProgramProgressResult progress, RockContext rockContext )
+        {
+            if ( progress == null || progress.NotFound || progress.Stages.Count == 0 )
+            {
+                return string.Empty;
+            }
+
+            // Pull every active calc in the program in one round-trip, with PersonAttribute eager-loaded.
+            var calcs = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                .Include( c => c.PersonAttribute )
+                .Include( c => c.CalculationTypeEntityType )
+                .Where( c => c.Stage.JourneyProgramId == programId && c.IsActive )
+                .OrderBy( c => c.StageId )
+                .ThenBy( c => c.Order )
+                .ThenBy( c => c.Name )
+                .ToList();
+
+            // Pre-fetch existing AVs for every sink attribute used by these calcs, for this person, in one query.
+            var sinkAttrIds = calcs.Where( c => c.PersonAttributeId.HasValue )
+                .Select( c => c.PersonAttributeId.Value )
+                .Distinct().ToList();
+            var avLookup = new Dictionary<int, string>();
+            if ( sinkAttrIds.Count > 0 )
+            {
+                avLookup = new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                    .Where( av => sinkAttrIds.Contains( av.AttributeId )
+                        && av.EntityId == Person.Id )
+                    .Select( av => new { av.AttributeId, av.Value } )
+                    .ToList()
+                    .GroupBy( av => av.AttributeId )
+                    .ToDictionary( g => g.Key, g => g.First().Value );
+            }
+
+            var calcsByStage = calcs.GroupBy( c => c.StageId ).ToDictionary( g => g.Key, g => g.ToList() );
+
+            var sb = new StringBuilder();
+            sb.Append( "<div class='journey-stage-drawers' style='margin-top:1rem;'>" );
+            foreach ( var stage in progress.Stages )
+            {
+                if ( !calcsByStage.TryGetValue( stage.StageId, out var stageCalcs ) || stageCalcs.Count == 0 )
+                {
+                    continue;
+                }
+
+                string statusBadge;
+                if ( stage.Passed )
+                {
+                    statusBadge = "<span class='label' style='background:#16a34a;color:#fff;'>Passed</span>";
+                }
+                else if ( stage.IsCurrent )
+                {
+                    statusBadge = "<span class='label' style='background:#f59e0b;color:#fff;'>Current</span>";
+                }
+                else
+                {
+                    statusBadge = "<span class='label' style='background:#e5e7eb;color:#374151;'>Pending</span>";
+                }
+
+                var openAttr = stage.IsCurrent ? " open" : string.Empty;
+
+                sb.AppendFormat(
+                    "<details{0} style='margin-bottom:.5rem;border:1px solid #e5e7eb;border-radius:6px;'>" +
+                    "<summary style='padding:.6rem .85rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#f9fafb;border-radius:6px 6px 0 0;'>" +
+                    "<span><strong>{1}</strong></span>{2}</summary>" +
+                    "<div style='padding:.5rem .85rem;'>" +
+                    "<table class='table table-condensed' style='margin-bottom:0;'><thead><tr><th>Calculation</th><th>Type</th><th>Target Attribute</th><th>Current Value</th></tr></thead><tbody>",
+                    openAttr,
+                    System.Web.HttpUtility.HtmlEncode( stage.StageName ?? string.Empty ),
+                    statusBadge );
+
+                foreach ( var calc in stageCalcs )
+                {
+                    var calcTypeFriendly = SimplifyCalcTypeName( calc.CalculationTypeEntityType?.Name );
+                    var targetName = calc.PersonAttribute != null
+                        ? calc.PersonAttribute.Name
+                        : "<em class='text-muted'>(transient)</em>";
+
+                    string valueCell;
+                    if ( calc.PersonAttributeId.HasValue
+                        && avLookup.TryGetValue( calc.PersonAttributeId.Value, out var v )
+                        && !string.IsNullOrWhiteSpace( v ) )
+                    {
+                        // Use AttributeCache to reach the FieldType helper (calc.PersonAttribute
+                        // is the EF entity, which exposes the FieldType entity but not the IFieldType impl).
+                        var attrCache = AttributeCache.Get( calc.PersonAttributeId.Value );
+                        valueCell = attrCache != null
+                            ? attrCache.FieldType.Field.FormatValueAsHtml( null, attrCache.EntityTypeId, Person.Id, v, attrCache.QualifierValues, false )
+                            : System.Web.HttpUtility.HtmlEncode( v );
+                    }
+                    else if ( calc.PersonAttributeId.HasValue )
+                    {
+                        valueCell = "<span class='text-muted'>—</span>";
+                    }
+                    else
+                    {
+                        valueCell = "<span class='text-muted'>—</span>";
+                    }
+
+                    sb.AppendFormat(
+                        "<tr><td>{0}</td><td><span class='text-muted small'>{1}</span></td><td>{2}</td><td>{3}</td></tr>",
+                        System.Web.HttpUtility.HtmlEncode( calc.Name ?? string.Empty ),
+                        System.Web.HttpUtility.HtmlEncode( calcTypeFriendly ),
+                        targetName.StartsWith( "<" ) ? targetName : System.Web.HttpUtility.HtmlEncode( targetName ),
+                        valueCell );
+                }
+
+                sb.Append( "</tbody></table></div></details>" );
+            }
+            sb.Append( "</div>" );
+            return sb.ToString();
+        }
+
+        private static string SimplifyCalcTypeName( string fullName )
+        {
+            if ( string.IsNullOrWhiteSpace( fullName ) ) return string.Empty;
+            var lastDot = fullName.LastIndexOf( '.' );
+            var shortName = lastDot >= 0 ? fullName.Substring( lastDot + 1 ) : fullName;
+            // Strip trailing "Calculation"
+            if ( shortName.EndsWith( "Calculation", StringComparison.Ordinal ) )
+            {
+                shortName = shortName.Substring( 0, shortName.Length - "Calculation".Length );
+            }
+            // CamelCase → spaced
+            return System.Text.RegularExpressions.Regex.Replace( shortName, "(?<=[a-z])([A-Z])", " $1" );
         }
 
         private string RenderProgressBar( ProgramProgressResult progress )
