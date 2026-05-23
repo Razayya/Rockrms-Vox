@@ -20,6 +20,9 @@ using Rock.Web.UI;
 using Rock.Web.UI.Controls;
 
 using NoMatchBehavior = com.razayya.JourneyTrack.Model.NoMatchBehavior;
+// `Controls` resolves to `this.Controls` (ControlCollection) inside a RockBlock,
+// shadowing the namespace. Alias keeps the editor static-method calls clean.
+using JtControls = RockWeb.Plugins.com_razayya.JourneyTrack.Controls;
 
 namespace RockWeb.Plugins.com_razayya.JourneyTrack
 {
@@ -485,7 +488,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 {
                     excludeKeys.Add( "FilterConditions" );
                     var matchAll = calc.GetAttributeValue( "MatchAll" ).AsBoolean( true );
-                    var summary = Controls.FilterConditionsEditor.FormatSummaryHtml(
+                    var summary = JtControls.FilterConditionsEditor.FormatSummaryHtml(
                         calc.GetAttributeValue( "FilterConditions" ),
                         matchAll );
                     configHtml += string.Format( "<dt>Filter Conditions</dt><dd>{0}</dd>", summary );
@@ -493,7 +496,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 else if ( componentNameForView.EndsWith( ".CompletionCalculation" ) )
                 {
                     excludeKeys.Add( "CompletionCriteria" );
-                    var summary = Controls.CompletionCriteriaEditor.FormatSummaryHtml(
+                    var summary = JtControls.CompletionCriteriaEditor.FormatSummaryHtml(
                         calc.GetAttributeValue( "CompletionCriteria" ),
                         calc.StageId,
                         calc.Id );
