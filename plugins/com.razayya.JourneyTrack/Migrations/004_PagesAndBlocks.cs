@@ -59,12 +59,16 @@ namespace com.razayya.JourneyTrack.Migrations
             RockMigrationHelper.AddBlock( PAGE_JOURNEY_CALCULATION_DETAIL, null, BT_JOURNEY_CALCULATION_DETAIL, "Journey Calculation Detail", "Main", string.Empty, string.Empty, 0, "B1B2B3B4-0001-4000-8000-000000000006" );
             RockMigrationHelper.AddBlock( PAGE_JOURNEY_CALCULATION_DETAIL, null, BT_JOURNEY_PROGRAM_TREE_VIEW,  "Tree View",               "Sidebar1",string.Empty, string.Empty, 0, "B1B2B3B4-0001-4000-8000-000000000007" );
             RockMigrationHelper.AddBlock( PAGE_RUN_HISTORY,                null, BT_JOURNEY_CALCULATION_RUN_LIST, "Run History",          "Main",    string.Empty, string.Empty, 0, "B1B2B3B4-0001-4000-8000-000000000008" );
+            // Also host the list + tree on the top-level JourneyTrack page so the
+            // Installed Plugins landing page is immediately useful (instead of empty).
+            RockMigrationHelper.AddBlock( PAGE_JOURNEYTRACK,               null, BT_JOURNEY_PROGRAM_LIST,       "Journey Programs",        "Main",    string.Empty, string.Empty, 0, "B1B2B3B4-0001-4000-8000-000000000009" );
+            RockMigrationHelper.AddBlock( PAGE_JOURNEYTRACK,               null, BT_JOURNEY_PROGRAM_TREE_VIEW,  "Tree View",               "Sidebar1",string.Empty, string.Empty, 0, "B1B2B3B4-0001-4000-8000-000000000010" );
         }
 
         public override void Down()
         {
             // Delete blocks first, then pages, then block types.
-            for ( int i = 1; i <= 8; i++ )
+            for ( int i = 1; i <= 10; i++ )
             {
                 RockMigrationHelper.DeleteBlock( $"B1B2B3B4-0001-4000-8000-{i:D12}" );
             }
