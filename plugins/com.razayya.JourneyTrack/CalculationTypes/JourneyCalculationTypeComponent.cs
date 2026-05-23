@@ -74,6 +74,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 { typeof( GroupMembershipCalculation ).FullName, new Lazy<JourneyCalculationTypeComponent>( () => new GroupMembershipCalculation() ) },
                 { typeof( PersonFilterCalculation ).FullName, new Lazy<JourneyCalculationTypeComponent>( () => new PersonFilterCalculation() ) },
                 { typeof( StepCompletionCalculation ).FullName, new Lazy<JourneyCalculationTypeComponent>( () => new StepCompletionCalculation() ) },
+                { typeof( MediaWatchedCalculation ).FullName, new Lazy<JourneyCalculationTypeComponent>( () => new MediaWatchedCalculation() ) },
             };
 
         /// <summary>

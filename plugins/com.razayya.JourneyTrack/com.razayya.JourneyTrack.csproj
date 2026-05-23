@@ -71,6 +71,7 @@
     <Compile Include="CalculationTypes\GroupMembershipCalculation.cs" />
     <Compile Include="CalculationTypes\CompletionCalculation.cs" />
     <Compile Include="CalculationTypes\StepCompletionCalculation.cs" />
+    <Compile Include="CalculationTypes\MediaWatchedCalculation.cs" />
     <!-- Data / Services -->
     <Compile Include="Data\ImportExportService.cs" />
     <Compile Include="Data\JourneyTrackService.cs" />
@@ -92,6 +93,7 @@
     <Compile Include="Migrations\004_PagesAndBlocks.cs" />
     <Compile Include="Migrations\005_RegisterFieldTypeAndWorkflowAction.cs" />
     <Compile Include="Migrations\006_RegisterCalculationTypes.cs" />
+    <Compile Include="Migrations\007_RegisterMediaWatchedCalc.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
