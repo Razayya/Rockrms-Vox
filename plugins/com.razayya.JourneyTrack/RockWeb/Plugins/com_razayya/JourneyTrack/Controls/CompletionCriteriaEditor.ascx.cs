@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data.Entity;
 using System.Linq;
 using System.Web.UI;
 using System.Web.UI.WebControls;
@@ -293,5 +294,78 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             if ( string.IsNullOrEmpty( s ) ) return s;
             return System.Text.RegularExpressions.Regex.Replace( s, "(?<=[a-z])([A-Z])", " $1" );
         }
+
+        #region View-mode summary formatter
+
+        /// <summary>
+        /// Render the configured CompletionCriteria JSON as a friendly inline
+        /// summary in DataView-filter style:
+        ///   <strong>StepCompletion: Begin</strong> is not blank <strong>AND</strong>
+        ///   <strong>Choose Campus</strong> equal to <code>"True"</code>
+        /// Required criteria are AND-joined. Non-required criteria show "(optional)".
+        /// Stage Id is needed to resolve sibling calc names.
+        /// </summary>
+        public static string FormatSummaryHtml( string criteriaJson, int stageId, int excludeCalcId )
+        {
+            List<CompletionCriterion> list;
+            try
+            {
+                list = JsonConvert.DeserializeObject<List<CompletionCriterion>>( criteriaJson ?? "[]" )
+                    ?? new List<CompletionCriterion>();
+            }
+            catch
+            {
+                return "<em class='text-muted'>(invalid JSON)</em>";
+            }
+
+            if ( list.Count == 0 )
+            {
+                return "<em class='text-muted'>(no criteria configured — matches nobody)</em>";
+            }
+
+            Dictionary<int, string> calcNames;
+            using ( var rockContext = new RockContext() )
+            {
+                calcNames = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                    .Where( c => c.StageId == stageId && c.Id != excludeCalcId )
+                    .Select( c => new { c.Id, c.Name } )
+                    .ToDictionary( c => c.Id, c => c.Name );
+            }
+
+            var parts = list.Select( c => FormatCriterionHtml( c, calcNames ) ).ToList();
+            return string.Join( " <strong>AND</strong> ", parts );
+        }
+
+        private static string FormatCriterionHtml( CompletionCriterion c, Dictionary<int, string> calcNames )
+        {
+            var name = calcNames.TryGetValue( c.JourneyCalculationId, out var n ) ? n : ( "calc #" + c.JourneyCalculationId );
+            var keyLabel = System.Web.HttpUtility.HtmlEncode( name );
+            var optionalSuffix = c.IsRequired ? string.Empty : " <span class='label label-default'>optional</span>";
+
+            string cmpText;
+            switch ( c.Comparison )
+            {
+                case ComparisonType.EqualTo:               cmpText = "equal to"; break;
+                case ComparisonType.NotEqualTo:            cmpText = "not equal to"; break;
+                case ComparisonType.IsBlank:               cmpText = "is blank"; break;
+                case ComparisonType.IsNotBlank:            cmpText = "is not blank"; break;
+                case ComparisonType.Contains:              cmpText = "contains"; break;
+                case ComparisonType.GreaterThan:           cmpText = "greater than"; break;
+                case ComparisonType.LessThan:              cmpText = "less than"; break;
+                case ComparisonType.GreaterThanOrEqualTo:  cmpText = "&ge;"; break;
+                case ComparisonType.LessThanOrEqualTo:     cmpText = "&le;"; break;
+                default:                                   cmpText = SplitCamelCase( c.Comparison.ToString() ); break;
+            }
+
+            if ( c.Comparison == ComparisonType.IsBlank || c.Comparison == ComparisonType.IsNotBlank )
+            {
+                return "<strong>" + keyLabel + "</strong> " + cmpText + optionalSuffix;
+            }
+            return "<strong>" + keyLabel + "</strong> " + cmpText
+                + " <code>" + System.Web.HttpUtility.HtmlEncode( c.Value ?? string.Empty ) + "</code>"
+                + optionalSuffix;
+        }
+
+        #endregion
     }
 }

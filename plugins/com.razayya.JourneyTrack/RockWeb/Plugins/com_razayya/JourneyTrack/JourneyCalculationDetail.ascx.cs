@@ -469,12 +469,37 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
             lViewDetails.Text = details;
 
-            // Show component-specific attribute values in view mode
+            // Show component-specific attribute values in view mode. For known
+            // JSON-input attrs (FilterConditions / CompletionCriteria), substitute
+            // a friendly human-readable summary in DataView-filter style instead
+            // of the raw JSON. MatchAll is folded into the summary, so we exclude
+            // both keys from the generic rendering loop.
             using ( var rockContext = new RockContext() )
             {
                 calc.LoadAttributes( rockContext );
-                var excludeKeys = new HashSet<string>( StringComparer.OrdinalIgnoreCase ) { "Active", "Order" };
+                var excludeKeys = new HashSet<string>( StringComparer.OrdinalIgnoreCase ) { "Active", "Order", "MatchAll" };
                 string configHtml = string.Empty;
+
+                var componentNameForView = calc.CalculationTypeEntityType?.Name ?? string.Empty;
+                if ( componentNameForView.EndsWith( ".PersonFilterCalculation" ) )
+                {
+                    excludeKeys.Add( "FilterConditions" );
+                    var matchAll = calc.GetAttributeValue( "MatchAll" ).AsBoolean( true );
+                    var summary = Controls.FilterConditionsEditor.FormatSummaryHtml(
+                        calc.GetAttributeValue( "FilterConditions" ),
+                        matchAll );
+                    configHtml += string.Format( "<dt>Filter Conditions</dt><dd>{0}</dd>", summary );
+                }
+                else if ( componentNameForView.EndsWith( ".CompletionCalculation" ) )
+                {
+                    excludeKeys.Add( "CompletionCriteria" );
+                    var summary = Controls.CompletionCriteriaEditor.FormatSummaryHtml(
+                        calc.GetAttributeValue( "CompletionCriteria" ),
+                        calc.StageId,
+                        calc.Id );
+                    configHtml += string.Format( "<dt>Completion Criteria</dt><dd>{0}</dd>", summary );
+                }
+
                 foreach ( var attr in calc.Attributes )
                 {
                     if ( excludeKeys.Contains( attr.Key ) )

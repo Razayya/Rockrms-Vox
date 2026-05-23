@@ -567,13 +567,38 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         protected void ddlSource_SelectedIndexChanged( object sender, EventArgs e )
         {
             CaptureRowsToState();
+            SnapComparisonToShapeDefault( sender );  // Source flip resets Key to "" -> shape=None
             BindRepeater();
         }
 
         protected void ddlKey_SelectedIndexChanged( object sender, EventArgs e )
         {
             CaptureRowsToState();
+            SnapComparisonToShapeDefault( sender );  // new Key -> first allowed Comparison for that shape
             BindRepeater();
+        }
+
+        /// <summary>
+        /// Walks from a row-control event sender up to its RepeaterItem, then
+        /// rewrites the row's Comparison to the first allowed value for its
+        /// (now-current) shape. Called on Key / Source changes so the dropdown
+        /// snaps to the sensible default for the new attribute type, instead
+        /// of carrying over a stale (but still-allowed) comparison.
+        /// </summary>
+        private void SnapComparisonToShapeDefault( object sender )
+        {
+            var ctl = sender as System.Web.UI.Control;
+            if ( ctl == null ) return;
+            var item = ctl.NamingContainer as RepeaterItem;
+            if ( item == null || item.ItemIndex < 0 ) return;
+
+            var list = Conditions;
+            if ( item.ItemIndex >= list.Count ) return;
+            var allowed = GetAllowedComparisons( GetShape( list[item.ItemIndex] ) );
+            list[item.ItemIndex].Comparison = allowed[0];
+            // Drop any value the user typed under the old shape — usually meaningless under the new one.
+            list[item.ItemIndex].Value = string.Empty;
+            Conditions = list;
         }
 
         protected void ddlComparison_SelectedIndexChanged( object sender, EventArgs e )
@@ -649,6 +674,141 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         {
             if ( string.IsNullOrEmpty( s ) ) return s;
             return System.Text.RegularExpressions.Regex.Replace( s, "(?<=[a-z])([A-Z])", " $1" );
+        }
+
+        #endregion
+
+        #region View-mode summary formatter
+
+        /// <summary>
+        /// Render the configured FilterConditions JSON as a friendly inline
+        /// summary (DataView-filter style), e.g.:
+        ///   <strong>Email</strong> contains <code>"vox.org"</code> <strong>AND</strong>
+        ///   <strong>Primary Campus</strong> is not blank
+        /// </summary>
+        public static string FormatSummaryHtml( string filterConditionsJson, bool matchAll )
+        {
+            List<FilterCondition> conditions;
+            try
+            {
+                conditions = JsonConvert.DeserializeObject<List<FilterCondition>>( filterConditionsJson ?? "[]" )
+                    ?? new List<FilterCondition>();
+            }
+            catch
+            {
+                return "<em class='text-muted'>(invalid JSON)</em>";
+            }
+
+            if ( conditions.Count == 0 )
+            {
+                return "<em class='text-muted'>(no conditions configured — matches nobody)</em>";
+            }
+
+            var parts = conditions.Select( FormatConditionHtml ).ToList();
+            var joiner = matchAll ? " <strong>AND</strong> " : " <strong>OR</strong> ";
+            return string.Join( joiner, parts );
+        }
+
+        private static string FormatConditionHtml( FilterCondition c )
+        {
+            if ( string.IsNullOrWhiteSpace( c.Key ) )
+            {
+                return "<span class='text-danger'>(incomplete row)</span>";
+            }
+
+            var keyLabel = System.Web.HttpUtility.HtmlEncode( GetKeyLabel( c ) );
+            var cmpText = ComparisonText( c.Comparison );
+
+            if ( c.Comparison == ComparisonType.IsBlank || c.Comparison == ComparisonType.IsNotBlank )
+            {
+                return "<strong>" + keyLabel + "</strong> " + cmpText;
+            }
+
+            var resolved = ResolveValueForDisplay( c );
+            return "<strong>" + keyLabel + "</strong> " + cmpText
+                + " <code>" + System.Web.HttpUtility.HtmlEncode( resolved ?? string.Empty ) + "</code>";
+        }
+
+        private static string GetKeyLabel( FilterCondition c )
+        {
+            if ( c.Source == FilterSource.Property )
+            {
+                // Convert camel-case property names to spaced form.
+                return SplitCamelCase( c.Key );
+            }
+            var attr = GetPersonAttributes().FirstOrDefault( a => string.Equals( a.Key, c.Key, StringComparison.OrdinalIgnoreCase ) );
+            return attr != null ? attr.Name : c.Key;
+        }
+
+        private static string ComparisonText( ComparisonType cmp )
+        {
+            switch ( cmp )
+            {
+                case ComparisonType.EqualTo:               return "equal to";
+                case ComparisonType.NotEqualTo:            return "not equal to";
+                case ComparisonType.IsBlank:               return "is blank";
+                case ComparisonType.IsNotBlank:            return "is not blank";
+                case ComparisonType.Contains:              return "contains";
+                case ComparisonType.GreaterThan:           return "greater than";
+                case ComparisonType.LessThan:              return "less than";
+                case ComparisonType.GreaterThanOrEqualTo:  return "&ge;";
+                case ComparisonType.LessThanOrEqualTo:     return "&le;";
+                default:                                   return SplitCamelCase( cmp.ToString() );
+            }
+        }
+
+        // Translate raw stored values into something readable: DefinedValue Ids/Guids
+        // → DefinedValue.Value; Campus Id → Campus.Name; Date → short date; etc.
+        private static string ResolveValueForDisplay( FilterCondition c )
+        {
+            var raw = c.Value ?? string.Empty;
+            var shape = GetShape( c );
+
+            if ( shape == ValueShape.Picker )
+            {
+                if ( c.Source == FilterSource.Property )
+                {
+                    var info = GetPersonProperties().FirstOrDefault( p => string.Equals( p.Name, c.Key, StringComparison.OrdinalIgnoreCase ) );
+                    if ( info.DefinedTypeGuid.HasValue )
+                    {
+                        var dv = Rock.Web.Cache.DefinedValueCache.Get( raw.AsInteger() );
+                        if ( dv != null ) return dv.Value;
+                    }
+                    if ( string.Equals( info.Name, "PrimaryCampusId", StringComparison.OrdinalIgnoreCase ) )
+                    {
+                        var campus = Rock.Web.Cache.CampusCache.Get( raw.AsInteger() );
+                        if ( campus != null ) return campus.Name;
+                    }
+                }
+                else
+                {
+                    var attr = GetPersonAttributes().FirstOrDefault( a => string.Equals( a.Key, c.Key, StringComparison.OrdinalIgnoreCase ) );
+                    if ( attr != null )
+                    {
+                        var ft = attr.FieldType?.Class ?? string.Empty;
+                        if ( ft.EndsWith( ".DefinedValueFieldType" ) )
+                        {
+                            // Stored values can be Id (from our picker) or Guid (Rock's native AV storage).
+                            var dv = Rock.Web.Cache.DefinedValueCache.Get( raw.AsGuidOrNull() ?? Guid.Empty );
+                            if ( dv == null ) dv = Rock.Web.Cache.DefinedValueCache.Get( raw.AsInteger() );
+                            if ( dv != null ) return dv.Value;
+                        }
+                        else if ( ft.EndsWith( ".CampusFieldType" ) )
+                        {
+                            var campus = Rock.Web.Cache.CampusCache.Get( raw.AsGuidOrNull() ?? Guid.Empty );
+                            if ( campus == null ) campus = Rock.Web.Cache.CampusCache.Get( raw.AsInteger() );
+                            if ( campus != null ) return campus.Name;
+                        }
+                    }
+                }
+            }
+            else if ( shape == ValueShape.Date )
+            {
+                var dt = raw.AsDateTime();
+                if ( dt.HasValue ) return dt.Value.ToShortDateString();
+            }
+
+            return raw;
         }
 
         #endregion
