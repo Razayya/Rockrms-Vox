@@ -528,10 +528,25 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
+            var finalPassers = completionPassers ?? workingPopulation;
+
+            // Stage-level transition detection. A person newly entering this Stage's
+            // passer set (vs prior runs) triggers OnCompleteSystemCommunication if set.
+            // Dedup is handled by JourneyCommunicationLog (one row per Stage per person).
+            if ( subGroup.OnCompleteSystemCommunicationId.HasValue && finalPassers != null && finalPassers.Count > 0 )
+            {
+                QueueCommunicationLogs(
+                    CommunicationContextType.Stage,
+                    subGroup.Id,
+                    subGroup.OnCompleteSystemCommunicationId.Value,
+                    finalPassers,
+                    rockContext, result );
+            }
+
             return new SubGroupProcessResult
             {
                 Result = result,
-                Passers = completionPassers ?? workingPopulation
+                Passers = finalPassers
             };
         }
 
@@ -607,9 +622,19 @@ namespace com.razayya.JourneyTrack.Data
 
             // Sink-optional: when no target attribute is configured the calc is transient.
             // We still report matches (so Stage / Program rollups consume them) but skip
-            // the read/diff/write cycle entirely.
+            // the read/diff/write cycle entirely. Transition detection here uses
+            // JourneyCommunicationLog as the dedup key since there's no AV to diff against.
             if ( !calc.PersonAttributeId.HasValue )
             {
+                if ( calc.OnMatchSystemCommunicationId.HasValue && matchedResults.Count > 0 )
+                {
+                    QueueCommunicationLogs(
+                        CommunicationContextType.Calculation,
+                        calc.Id,
+                        calc.OnMatchSystemCommunicationId.Value,
+                        matchedResults.Keys,
+                        rockContext, result );
+                }
                 RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, matchedResults.Count, result );
                 return result;
             }
@@ -678,6 +703,25 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
+            // Track which persons newly transitioned blank/no-match → matched, so we can
+            // queue comm log rows after the writes commit. The set is built from the same
+            // pendingWrites list we're about to execute.
+            HashSet<int> newlyMatchedPersonIds = null;
+            if ( calc.OnMatchSystemCommunicationId.HasValue )
+            {
+                newlyMatchedPersonIds = new HashSet<int>();
+                foreach ( var write in pendingWrites )
+                {
+                    if ( !matchedResults.ContainsKey( write.PersonId ) ) continue;
+                    existingValues.TryGetValue( write.PersonId, out var prior );
+                    if ( string.IsNullOrEmpty( prior ) )
+                    {
+                        // Blank prior → person is newly matched. Queue.
+                        newlyMatchedPersonIds.Add( write.PersonId );
+                    }
+                }
+            }
+
             // Execute writes in batches. On partial failure, record progress and continue
             // with remaining batches so a single bad row doesn't block the entire population.
             const int batchSize = 200;
@@ -719,9 +763,92 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
+            // Queue comm log rows for the newly-matched persons (transition: blank → match).
+            // Dedup vs prior logs is handled inside QueueCommunicationLogs.
+            if ( newlyMatchedPersonIds != null && newlyMatchedPersonIds.Count > 0 )
+            {
+                QueueCommunicationLogs(
+                    CommunicationContextType.Calculation,
+                    calc.Id,
+                    calc.OnMatchSystemCommunicationId.Value,
+                    newlyMatchedPersonIds,
+                    rockContext, result );
+            }
+
             RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, matchedResults.Count, result );
 
             return result;
+        }
+
+        /// <summary>
+        /// Insert JourneyCommunicationLog rows for the given (context, system communication, persons)
+        /// — but only for personIds that don't already have an existing log row for the same
+        /// (ContextType, ContextId, PersonAliasId). Dedupe is done in a single round-trip read
+        /// before bulk-inserting. Map PersonId → primary PersonAliasId via one cached lookup.
+        /// </summary>
+        private void QueueCommunicationLogs(
+            CommunicationContextType contextType,
+            int contextId,
+            int systemCommunicationId,
+            IEnumerable<int> candidatePersonIds,
+            RockContext rockContext,
+            SyncResult result )
+        {
+            var candidateSet = candidatePersonIds as ICollection<int> ?? candidatePersonIds.ToList();
+            if ( candidateSet.Count == 0 ) return;
+
+            // Look up persons who ALREADY have a log row for this trigger key — these are
+            // the "already-notified" set we'll exclude. JourneyCommunicationLog dedup keys
+            // off (ContextType, ContextId, PersonAliasId) so a given trigger fires once
+            // per person even across multiple sync passes.
+            var ctxTypeInt = ( int ) contextType;
+            var alreadyLoggedPersonIds = new JourneyCommunicationLogService( rockContext ).Queryable().AsNoTracking()
+                .Where( l => l.ContextType == contextType
+                    && l.ContextId == contextId
+                    && candidateSet.Contains( l.PersonAlias.PersonId ) )
+                .Select( l => l.PersonAlias.PersonId )
+                .ToList();
+
+            var toQueue = candidateSet.Except( alreadyLoggedPersonIds ).ToList();
+            if ( toQueue.Count == 0 ) return;
+
+            // Map PersonId → primary PersonAliasId (one query)
+            var aliasMap = new PersonAliasService( rockContext ).Queryable().AsNoTracking()
+                .Where( pa => toQueue.Contains( pa.PersonId )
+                    && pa.AliasPersonId.HasValue
+                    && pa.AliasPersonId == pa.PersonId )
+                .Select( pa => new { pa.PersonId, AliasId = pa.Id } )
+                .ToDictionary( x => x.PersonId, x => x.AliasId );
+
+            var nowUtc = RockDateTime.Now;
+            var rows = new List<JourneyCommunicationLog>( toQueue.Count );
+            foreach ( var personId in toQueue )
+            {
+                if ( !aliasMap.TryGetValue( personId, out var aliasId ) ) continue;
+                rows.Add( new JourneyCommunicationLog
+                {
+                    ContextType = contextType,
+                    ContextId = contextId,
+                    PersonAliasId = aliasId,
+                    SystemCommunicationId = systemCommunicationId,
+                    QueuedDateTime = nowUtc,
+                    Guid = System.Guid.NewGuid(),
+                    CreatedDateTime = nowUtc,
+                    ModifiedDateTime = nowUtc
+                } );
+            }
+            if ( rows.Count == 0 ) return;
+
+            try
+            {
+                rockContext.BulkInsert( rows );
+                result.Log.Add( $"      queued {rows.Count} {contextType} comm log row(s) (template Id {systemCommunicationId})" );
+            }
+            catch ( Exception ex )
+            {
+                result.Errors.Add( $"Failed to queue {contextType} comm logs (template {systemCommunicationId}): {ex.Message}" );
+                ExceptionLogService.LogException( ex );
+            }
         }
 
         private HashSet<int> BuildBasePopulation( JourneyProgram group, RockContext rockContext )
@@ -1114,6 +1241,11 @@ namespace com.razayya.JourneyTrack.Data
             }
 
             int written = 0;
+            // Track persons transitioning to complete this run (existing != True, new = True)
+            // so we can queue rollup-level communications after the write.
+            var newlyCompletedPersonIds = program.OnCompleteSystemCommunicationId.HasValue
+                ? new HashSet<int>()
+                : null;
             using ( var writeContext = new RockContext() )
             {
                 foreach ( var personId in basePopulation )
@@ -1124,6 +1256,12 @@ namespace com.razayya.JourneyTrack.Data
                     if ( string.Equals( oldValue, newValue, StringComparison.OrdinalIgnoreCase ) )
                     {
                         continue;
+                    }
+                    if ( newlyCompletedPersonIds != null
+                        && newValue.Equals( "True", StringComparison.OrdinalIgnoreCase )
+                        && !oldValue.Equals( "True", StringComparison.OrdinalIgnoreCase ) )
+                    {
+                        newlyCompletedPersonIds.Add( personId );
                     }
 
                     var isUpdate = existing.ContainsKey( personId );
@@ -1153,6 +1291,17 @@ namespace com.razayya.JourneyTrack.Data
 
             result.Updated += written;
             result.Log.Add( $"  Program rollup '{program.Name}': {completed.Count}/{basePopulation.Count} complete, {written} attribute values written." );
+
+            // Program-level transition detection: rollup went False/blank → True this run
+            if ( newlyCompletedPersonIds != null && newlyCompletedPersonIds.Count > 0 )
+            {
+                QueueCommunicationLogs(
+                    CommunicationContextType.JourneyProgram,
+                    program.Id,
+                    program.OnCompleteSystemCommunicationId.Value,
+                    newlyCompletedPersonIds,
+                    rockContext, result );
+            }
         }
 
         /// <summary>

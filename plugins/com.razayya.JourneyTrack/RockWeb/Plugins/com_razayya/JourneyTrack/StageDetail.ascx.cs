@@ -114,6 +114,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 subGroup.IsActive = cbIsActive.Checked;
                 subGroup.PrerequisiteStageIds = string.Join( ",", cblPrerequisites.SelectedValues );
                 subGroup.AdditionalDataViewId = dvpAdditionalDataView.SelectedValueAsInt();
+                subGroup.OnCompleteSystemCommunicationId = ddlOnCompleteCommunication.SelectedValueAsInt();
 
                 if ( !subGroup.IsValid )
                 {
@@ -294,6 +295,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             tbDescription.Text = subGroup.Description;
             cbIsActive.Checked = subGroup.IsActive;
             dvpAdditionalDataView.SetValue( subGroup.AdditionalDataViewId );
+            JourneyCalculationDetail.PopulateSystemCommunicationPicker( ddlOnCompleteCommunication, subGroup.OnCompleteSystemCommunicationId );
 
             // Populate prerequisite picker with sibling sub-groups (excluding self)
             cblPrerequisites.Items.Clear();

@@ -111,6 +111,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 group.ConnectionStatusValueId = dvpConnectionStatus.SelectedValueAsInt();
                 group.CampusId = cpCampus.SelectedValueAsInt();
                 group.DataViewId = dvpDataView.SelectedValueAsInt();
+                group.OnCompleteSystemCommunicationId = ddlOnCompleteCommunication.SelectedValueAsInt();
 
                 if ( !group.IsValid )
                 {
@@ -421,6 +422,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
             cpCampus.SetValue( group.CampusId );
             dvpDataView.SetValue( group.DataViewId );
+            JourneyCalculationDetail.PopulateSystemCommunicationPicker( ddlOnCompleteCommunication, group.OnCompleteSystemCommunicationId );
 
             // Configure the category picker for Person Attribute categories
             var attributeEntityTypeId = EntityTypeCache.Get( typeof( Rock.Model.Attribute ) ).Id;

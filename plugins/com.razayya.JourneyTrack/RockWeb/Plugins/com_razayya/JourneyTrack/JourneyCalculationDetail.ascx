@@ -147,6 +147,9 @@
                             </asp:Panel>
                             <Rock:RockCheckBox ID="cbSkipIfTargetHasValue" runat="server" Label="Skip If Target Has Value"
                                 Help="When enabled, the engine skips this calculation entirely for any person whose target Person Attribute already has a non-blank value. 'Write once, then leave alone' semantics. Big perf win when most people are already done." />
+                            <Rock:RockDropDownList ID="ddlOnMatchCommunication" runat="server" Label="On Match Communication"
+                                EnhanceForLongLists="true"
+                                Help="Optional. When a person transitions from no-match to match for this calculation, queue this SystemCommunication. The Send Journey Communications job dispatches queued rows via Rock's standard delivery (one row per (calc, person), so a given person is notified at most once per calc)." />
                         </div>
                     </div>
 

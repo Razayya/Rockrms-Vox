@@ -93,6 +93,13 @@
                                 Help="Optional. Further narrows the population beyond the parent group's filters and any prerequisite scoping." />
                         </div>
                     </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <Rock:RockDropDownList ID="ddlOnCompleteCommunication" runat="server" Label="On Complete Communication"
+                                EnhanceForLongLists="true"
+                                Help="Optional. When a person newly satisfies this Stage's Completion gate, queue this SystemCommunication. Each person is notified at most once per Stage." />
+                        </div>
+                    </div>
 
                     <div class="actions">
                         <asp:LinkButton ID="btnSave" runat="server" Text="Save" CssClass="btn btn-primary" OnClick="btnSave_Click" />

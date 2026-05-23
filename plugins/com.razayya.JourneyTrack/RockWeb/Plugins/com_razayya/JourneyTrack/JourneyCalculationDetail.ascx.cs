@@ -129,6 +129,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     : NoMatchBehavior.LeaveUnchanged;
                 calc.NoMatchLavaTemplate = ceNoMatchLava.Text;
                 calc.SkipIfTargetHasValue = cbSkipIfTargetHasValue.Checked;
+                calc.OnMatchSystemCommunicationId = ddlOnMatchCommunication.SelectedValueAsInt();
 
                 if ( calc.NoMatchBehavior == NoMatchBehavior.WriteLava && string.IsNullOrWhiteSpace( calc.NoMatchLavaTemplate ) )
                 {
@@ -317,6 +318,33 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
         #endregion
 
         #region Methods
+
+        /// <summary>
+        /// Shared helper: load all active SystemCommunication templates into a
+        /// dropdown (alphabetical), preserve a "(none)" empty option, and select
+        /// the current Id if one is configured.
+        /// </summary>
+        internal static void PopulateSystemCommunicationPicker( Rock.Web.UI.Controls.RockDropDownList ddl, int? selectedId )
+        {
+            ddl.Items.Clear();
+            ddl.Items.Add( new System.Web.UI.WebControls.ListItem( "(none)", string.Empty ) );
+            using ( var rockContext = new RockContext() )
+            {
+                var comms = new SystemCommunicationService( rockContext ).Queryable().AsNoTracking()
+                    .Where( c => c.IsActive == true )
+                    .OrderBy( c => c.Title )
+                    .Select( c => new { c.Id, c.Title } )
+                    .ToList();
+                foreach ( var c in comms )
+                {
+                    ddl.Items.Add( new System.Web.UI.WebControls.ListItem( c.Title, c.Id.ToString() ) );
+                }
+            }
+            if ( selectedId.HasValue && selectedId.Value > 0 )
+            {
+                ddl.SetValue( selectedId.Value );
+            }
+        }
 
         private void PopulateDropDowns()
         {
@@ -556,6 +584,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             pnlNoMatchLava.Visible = calc.NoMatchBehavior == NoMatchBehavior.WriteLava;
             ceNoMatchLava.Text = calc.NoMatchLavaTemplate;
             cbSkipIfTargetHasValue.Checked = calc.SkipIfTargetHasValue;
+            PopulateSystemCommunicationPicker( ddlOnMatchCommunication, calc.OnMatchSystemCommunicationId );
 
             // Load component attributes
             LoadComponentAttributes( calc, rockContext );

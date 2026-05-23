@@ -136,6 +136,14 @@
                         </div>
                     </div>
 
+                    <div class="row">
+                        <div class="col-md-6">
+                            <Rock:RockDropDownList ID="ddlOnCompleteCommunication" runat="server" Label="On Complete Communication"
+                                EnhanceForLongLists="true"
+                                Help="Optional. When a person's rollup attribute transitions to True (completing every Stage), queue this SystemCommunication. Each person is notified at most once per program." />
+                        </div>
+                    </div>
+
                     <h4>Target Attribute Categories</h4>
                     <p class="text-muted">Restrict which Person Attribute categories are available as targets for calculations in this group. Leave blank to allow all.</p>
                     <div class="row">
