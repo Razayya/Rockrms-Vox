@@ -15,24 +15,24 @@ using Rock.Web.UI;
 
 namespace RockWeb.Plugins.com_razayya.JourneyTrack
 {
-    [DisplayName( "JourneyCalculation Tree View" )]
+    [DisplayName( "Calculation Tree View" )]
     [Category( "Razayya > JourneyTrack" )]
-    [Description( "Displays a navigable tree of a Journey Program's hierarchy." )]
+    [Description( "Displays a navigable tree of a Program's hierarchy." )]
 
-    [LinkedPage( "Group Detail Page",
-        Description = "Page that shows the Journey Program detail.",
+    [LinkedPage( "Program Detail Page",
+        Description = "Page that shows the Program detail.",
         IsRequired = true,
         Order = 0,
         Key = "GroupDetailPage" )]
 
-    [LinkedPage( "Sub Group Detail Page",
-        Description = "Page that shows the JourneyStage detail.",
+    [LinkedPage( "Stage Detail Page",
+        Description = "Page that shows the Stage detail.",
         IsRequired = true,
         Order = 1,
         Key = "SubGroupDetailPage" )]
 
-    [LinkedPage( "JourneyCalculation Detail Page",
-        Description = "Page that shows the JourneyCalculation detail.",
+    [LinkedPage( "Calculation Detail Page",
+        Description = "Page that shows the Calculation detail.",
         IsRequired = true,
         Order = 2,
         Key = "JourneyCalculationDetailPage" )]

@@ -14,7 +14,7 @@
                 <Rock:NotificationBox ID="nbResult" runat="server" Visible="false" />
 
                 <div class="grid-filter">
-                    <Rock:RockDropDownList ID="ddlCalculation" runat="server" Label="JourneyCalculation"
+                    <Rock:RockDropDownList ID="ddlCalculation" runat="server" Label="Calculation"
                         EnhanceForLongLists="true" AutoPostBack="true" OnSelectedIndexChanged="ddlCalculation_SelectedIndexChanged" />
                     <Rock:SlidingDateRangePicker ID="drpDateRange" runat="server" Label="Date Range" />
                     <Rock:RockDropDownList ID="ddlStatus" runat="server" Label="Status">
@@ -29,7 +29,7 @@
                     <Rock:Grid ID="gRunHistory" runat="server" RowItemText="Run"
                         AllowSorting="true" AllowPaging="true" OnGridRebind="gRunHistory_GridRebind">
                         <Columns>
-                            <Rock:RockBoundField DataField="CalculationName" HeaderText="JourneyCalculation" SortExpression="CalculationName" />
+                            <Rock:RockBoundField DataField="CalculationName" HeaderText="Calculation" SortExpression="CalculationName" />
                             <Rock:DateTimeField DataField="RunDateTime" HeaderText="Started" SortExpression="RunDateTime" />
                             <Rock:DateTimeField DataField="CompletedDateTime" HeaderText="Completed" SortExpression="CompletedDateTime" />
                             <Rock:RockBoundField DataField="RunByPersonName" HeaderText="Run By" SortExpression="RunByPersonName" />
@@ -50,7 +50,7 @@
                                         CommandName="RetryRun" CommandArgument='<%# Eval("Id") %>'
                                         Visible='<%# !(bool)Eval("WasSuccessful") %>'
                                         OnClick="btnRetry_Click"
-                                        ToolTip="Reprocess this JourneyCalculation"
+                                        ToolTip="Reprocess this Calculation"
                                         CausesValidation="false">
                                         <i class="fa fa-redo"></i> Retry
                                     </asp:LinkButton>

@@ -48,7 +48,7 @@
                     <%-- Calculations List --%>
                     <h4>Calculations</h4>
                     <div class="grid grid-panel">
-                        <Rock:Grid ID="gCalculations" runat="server" RowItemText="JourneyCalculation" AllowSorting="false"
+                        <Rock:Grid ID="gCalculations" runat="server" RowItemText="Calculation" AllowSorting="false"
                             OnRowSelected="gCalculations_RowSelected" DisplayType="Light">
                             <Columns>
                                 <Rock:ReorderField />
@@ -84,8 +84,8 @@
 
                     <div class="row">
                         <div class="col-md-6">
-                            <Rock:RockCheckBoxList ID="cblPrerequisites" runat="server" Label="Prerequisite Sub Groups"
-                                Help="Select one or more sibling sub-groups whose Completion JourneyCalculation passers will be intersected to form this sub-group's working population. Leave empty to use the parent group's full base population."
+                            <Rock:RockCheckBoxList ID="cblPrerequisites" runat="server" Label="Prerequisite Stages"
+                                Help="Select one or more sibling Stages whose Completion Calculation passers will be intersected to form this Stage's working population. Leave empty to use the parent Program's full base population."
                                 RepeatDirection="Vertical" />
                         </div>
                         <div class="col-md-6">

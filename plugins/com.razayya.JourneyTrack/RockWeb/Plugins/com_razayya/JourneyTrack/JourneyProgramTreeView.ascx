@@ -17,13 +17,13 @@
                             </button>
                             <ul class="dropdown-menu dropdown-menu-right" role="menu">
                                 <li>
-                                    <asp:LinkButton ID="lbAddGroup" runat="server" Text="Add Group" OnClick="lbAddGroup_Click" />
+                                    <asp:LinkButton ID="lbAddGroup" runat="server" Text="Add Program" OnClick="lbAddGroup_Click" />
                                 </li>
                                 <li>
-                                    <asp:LinkButton ID="lbAddSubGroup" runat="server" Text="Add Sub Group to Selected" OnClick="lbAddSubGroup_Click" Enabled="false" />
+                                    <asp:LinkButton ID="lbAddSubGroup" runat="server" Text="Add Stage to Selected" OnClick="lbAddSubGroup_Click" Enabled="false" />
                                 </li>
                                 <li>
-                                    <asp:LinkButton ID="lbAddCalculation" runat="server" Text="Add JourneyCalculation to Selected" OnClick="lbAddCalculation_Click" Enabled="false" />
+                                    <asp:LinkButton ID="lbAddCalculation" runat="server" Text="Add Calculation to Selected" OnClick="lbAddCalculation_Click" Enabled="false" />
                                 </li>
                             </ul>
                         </div>

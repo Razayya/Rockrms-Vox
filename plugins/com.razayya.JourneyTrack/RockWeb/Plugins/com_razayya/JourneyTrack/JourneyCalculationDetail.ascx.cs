@@ -23,9 +23,9 @@ using NoMatchBehavior = com.razayya.JourneyTrack.Model.NoMatchBehavior;
 
 namespace RockWeb.Plugins.com_razayya.JourneyTrack
 {
-    [DisplayName( "JourneyCalculation Detail" )]
+    [DisplayName( "Calculation Detail" )]
     [Category( "Razayya > JourneyTrack" )]
-    [Description( "Displays details for a single JourneyCalculation with component-specific configuration." )]
+    [Description( "Displays details for a single Calculation with component-specific configuration." )]
 
     [LinkedPage( "Parent Page",
         Description = "Page to navigate back to the parent Sub Group.",
@@ -146,7 +146,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
                 if ( calc.CalculationTypeEntityTypeId == 0 )
                 {
-                    nbWarning.Text = "A JourneyCalculation Type is required.";
+                    nbWarning.Text = "A Calculation Type is required.";
                     nbWarning.Visible = true;
                     return;
                 }
@@ -216,6 +216,25 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
         protected void cpCalculationType_SelectedIndexChanged( object sender, EventArgs e )
         {
+            // Type changed — render the new type's settings panel from a fresh, synthetic
+            // calc. Without this, LoadComponentAttributes() re-loads the stored calc by Id,
+            // which still has the OLD CalculationTypeEntityTypeId, so AddEditControls keeps
+            // showing the previous type's settings. Visual JSON editors are reset too.
+            var componentEntityTypeGuid = cpCalculationType.SelectedValue.AsGuidOrNull();
+            if ( componentEntityTypeGuid.HasValue )
+            {
+                var entityType = EntityTypeCache.Get( componentEntityTypeGuid.Value );
+                if ( entityType != null )
+                {
+                    var freshCalc = new JourneyCalculation
+                    {
+                        CalculationTypeEntityTypeId = entityType.Id,
+                        StageId = ParentSubGroupId
+                    };
+                    LoadComponentAttributes( freshCalc );
+                    return;
+                }
+            }
             LoadComponentAttributes();
         }
 
@@ -371,7 +390,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 .Select( c => string.Format( "<li>{0}</li>", c.Name ) );
 
             lValidCategories.Text = string.Format(
-                "<p class='text-muted'>Target attributes are restricted to the following categories (configured on the parent Journey Program):</p><ul>{0}</ul>",
+                "<p class='text-muted'>Target attributes are restricted to the following categories (configured on the parent Program):</p><ul>{0}</ul>",
                 string.Join( "", categoryNames ) );
         }
 
@@ -397,7 +416,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             if ( calc == null )
             {
                 calc = new JourneyCalculation { IsActive = true, StageId = ParentSubGroupId };
-                lTitle.Text = ActionTitle.Add( "JourneyCalculation" ).FormatAsHtmlTitle();
+                lTitle.Text = ActionTitle.Add( "Calculation" ).FormatAsHtmlTitle();
                 using ( var rockContext = new RockContext() )
                 {
                     ShowEditDetails( calc, rockContext );

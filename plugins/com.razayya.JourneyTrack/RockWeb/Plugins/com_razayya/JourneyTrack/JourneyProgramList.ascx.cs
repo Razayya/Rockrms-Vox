@@ -16,12 +16,12 @@ using Rock.Web.UI.Controls;
 
 namespace RockWeb.Plugins.com_razayya.JourneyTrack
 {
-    [DisplayName( "Journey Program List" )]
+    [DisplayName( "Program List" )]
     [Category( "Razayya > JourneyTrack" )]
-    [Description( "Lists Journey Programs for the JourneyTrack." )]
+    [Description( "Lists Programs configured in JourneyTrack." )]
 
     [LinkedPage( "Detail Page",
-        Description = "Page to navigate to for Journey Program details.",
+        Description = "Page to navigate to for Program details.",
         IsRequired = true,
         Order = 0,
         Key = "DetailPage" )]
@@ -139,7 +139,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             if ( result.Warnings.Count > 0 )
             {
                 mdGridWarning.Show(
-                    string.Format( "Imported {0} group, {1} sub-group(s), {2} JourneyCalculation(s) with warnings:<br/>{3}",
+                    string.Format( "Imported {0} program, {1} stage(s), {2} calculation(s) with warnings:<br/>{3}",
                         result.GroupsCreated, result.SubGroupsCreated, result.CalculationsCreated,
                         string.Join( "<br/>", result.Warnings ) ),
                     ModalAlertType.Information );
@@ -147,7 +147,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             else
             {
                 mdGridWarning.Show(
-                    string.Format( "Successfully imported {0} group, {1} sub-group(s), {2} JourneyCalculation(s).",
+                    string.Format( "Successfully imported {0} program, {1} stage(s), {2} calculation(s).",
                         result.GroupsCreated, result.SubGroupsCreated, result.CalculationsCreated ),
                     ModalAlertType.Information );
             }

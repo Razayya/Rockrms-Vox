@@ -16,24 +16,24 @@ using Rock.Web.UI;
 
 namespace RockWeb.Plugins.com_razayya.JourneyTrack
 {
-    [DisplayName( "Journey Program Tree View" )]
+    [DisplayName( "Program Tree View" )]
     [Category( "Razayya > JourneyTrack" )]
-    [Description( "Displays a navigable tree of all Journey Programs with their Sub Groups and Calculations." )]
+    [Description( "Displays a navigable tree of all Programs with their Stages and Calculations." )]
 
-    [LinkedPage( "Group Detail Page",
-        Description = "Page that shows the Journey Program detail.",
+    [LinkedPage( "Program Detail Page",
+        Description = "Page that shows the Program detail.",
         IsRequired = true,
         Order = 0,
         Key = "GroupDetailPage" )]
 
-    [LinkedPage( "Sub Group Detail Page",
-        Description = "Page that shows the JourneyStage detail.",
+    [LinkedPage( "Stage Detail Page",
+        Description = "Page that shows the Stage detail.",
         IsRequired = true,
         Order = 1,
         Key = "SubGroupDetailPage" )]
 
-    [LinkedPage( "JourneyCalculation Detail Page",
-        Description = "Page that shows the JourneyCalculation detail.",
+    [LinkedPage( "Calculation Detail Page",
+        Description = "Page that shows the Calculation detail.",
         IsRequired = true,
         Order = 2,
         Key = "JourneyCalculationDetailPage" )]
@@ -186,7 +186,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
                 if ( !groups.Any() )
                 {
-                    lTreeHtml.Text = "<div class='padding-all-md text-muted'>No JourneyCalculation groups have been configured.</div>";
+                    lTreeHtml.Text = "<div class='padding-all-md text-muted'>No Programs have been configured.</div>";
                     return;
                 }
 

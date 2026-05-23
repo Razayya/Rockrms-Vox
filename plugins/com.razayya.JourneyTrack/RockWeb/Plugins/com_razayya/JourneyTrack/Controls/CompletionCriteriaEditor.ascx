@@ -3,7 +3,7 @@
 
 <asp:Panel ID="pnlEditor" runat="server" CssClass="jt-completion-criteria-editor">
     <Rock:NotificationBox ID="nbNoSiblings" runat="server" NotificationBoxType="Info" Visible="false"
-        Text="No sibling Journey Calculations are available in this Stage yet. Add other calculations to the same Stage to reference them here." />
+        Text="No sibling Calculations are available in this Stage yet. Add other calculations to the same Stage to reference them here." />
 
     <asp:Panel ID="pnlRows" runat="server">
         <asp:PlaceHolder ID="phNoRows" runat="server" Visible="false">
@@ -18,7 +18,7 @@
                     <div class="panel-body padding-all-sm">
                         <div class="row">
                             <div class="col-md-4">
-                                <Rock:RockDropDownList ID="ddlCalc" runat="server" Label="Journey Calculation"
+                                <Rock:RockDropDownList ID="ddlCalc" runat="server" Label="Calculation"
                                     EnhanceForLongLists="true" Required="true" />
                             </div>
                             <div class="col-md-2">

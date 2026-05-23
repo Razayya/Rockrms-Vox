@@ -50,10 +50,10 @@
 
                     <hr />
 
-                    <%-- SubGroup List --%>
-                    <h4>JourneyStages</h4>
+                    <%-- Stage List --%>
+                    <h4>Stages</h4>
                     <div class="grid grid-panel">
-                        <Rock:Grid ID="gSubGroups" runat="server" RowItemText="Sub Group" AllowSorting="false"
+                        <Rock:Grid ID="gSubGroups" runat="server" RowItemText="Stage" AllowSorting="false"
                             OnRowSelected="gSubGroups_RowSelected" DisplayType="Light">
                             <Columns>
                                 <Rock:ReorderField />

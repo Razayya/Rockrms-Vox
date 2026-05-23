@@ -50,7 +50,7 @@
                             CssClass="btn btn-default" OnClick="btnPlay_Click" CausesValidation="false" />
                         <asp:LinkButton ID="btnCopy" runat="server" Text="Copy" CssClass="btn btn-default btn-sm"
                             OnClick="btnCopy_Click" CausesValidation="false"
-                            ToolTip="Create a copy of this JourneyCalculation." />
+                            ToolTip="Create a copy of this Calculation." />
                         <asp:LinkButton ID="btnBack" runat="server" Text="Back" CssClass="btn btn-link"
                             OnClick="btnBack_Click" CausesValidation="false" />
                     </div>
@@ -77,17 +77,17 @@
                         PropertyName="Description" />
 
                     <hr />
-                    <h4>JourneyCalculation Configuration</h4>
+                    <h4>Calculation Configuration</h4>
 
                     <div class="row">
                         <div class="col-md-6">
-                            <Rock:RockDropDownList ID="cpCalculationType" runat="server" Label="JourneyCalculation Type"
+                            <Rock:RockDropDownList ID="cpCalculationType" runat="server" Label="Calculation Type"
                                 Required="true" AutoPostBack="true" OnSelectedIndexChanged="cpCalculationType_SelectedIndexChanged" />
                         </div>
                         <div class="col-md-6">
                             <Rock:RockDropDownList ID="apTargetAttribute" runat="server" Label="Target Person Attribute"
                                 Required="true" EnhanceForLongLists="true"
-                                Help="The Person Attribute that this JourneyCalculation will write its result to." />
+                                Help="The Person Attribute that this Calculation will write its result to." />
                         </div>
                     </div>
 
@@ -134,12 +134,12 @@
                         <div class="col-md-6">
                             <Rock:CodeEditor ID="ceResultLava" runat="server" Label="Result Lava Template"
                                 EditorMode="Lava" EditorTheme="Rock" EditorHeight="120"
-                                Help="Lava template to produce the value written to the target attribute when the person matches. Available merge fields depend on the JourneyCalculation Type." />
+                                Help="Lava template to produce the value written to the target attribute when the person matches. Available merge fields depend on the Calculation Type." />
                         </div>
                         <div class="col-md-6">
                             <Rock:RockDropDownList ID="ddlNoMatchBehavior" runat="server" Label="No Match Behavior"
                                 AutoPostBack="true" OnSelectedIndexChanged="ddlNoMatchBehavior_SelectedIndexChanged"
-                                Help="What happens when a person does not match the JourneyCalculation criteria." />
+                                Help="What happens when a person does not match the Calculation criteria." />
                             <asp:Panel ID="pnlNoMatchLava" runat="server" Visible="false">
                                 <Rock:CodeEditor ID="ceNoMatchLava" runat="server" Label="No Match Lava Template"
                                     EditorMode="Lava" EditorTheme="Rock" EditorHeight="80"
@@ -183,13 +183,13 @@
 
                 <%-- Preview/Play Panel --%>
                 <asp:Panel ID="pnlPreview" runat="server" Visible="false">
-                    <h4><i class="fa fa-play"></i> JourneyCalculation Preview</h4>
+                    <h4><i class="fa fa-play"></i> Calculation Preview</h4>
 
                     <div class="well well-sm">
                         <div class="row">
                             <div class="col-md-6">
                                 <Rock:PersonPicker ID="ppSinglePerson" runat="server" Label="Test Single Person"
-                                    Help="Optional. Select a person to preview/execute this JourneyCalculation for just that individual." />
+                                    Help="Optional. Select a person to preview/execute this Calculation for just that individual." />
                             </div>
                             <div class="col-md-6" style="padding-top: 24px;">
                                 <asp:LinkButton ID="btnPreviewSinglePerson" runat="server" Text="<i class='fa fa-search'></i> Preview for Person"
