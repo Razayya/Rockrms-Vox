@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 
 using Rock;
 using Rock.Attribute;
+using Rock.Data;
 using Rock.Jobs;
 using Rock.Logging;
 
@@ -51,6 +52,25 @@ namespace com.razayya.JourneyTrack.Jobs
             }
 
             Result += $"Completed. {result.Updated} attribute(s) updated. {result.Skipped} skipped. {result.Errors.Count} error(s).";
+
+            // Optimization O9: Run-history retention. Drop JourneyCalculationRun rows older
+            // than 90 days so the table doesn't grow unbounded.
+            try
+            {
+                using ( var rockContext = new RockContext() )
+                {
+                    var retentionRowsDeleted = rockContext.Database.ExecuteSqlCommand(
+                        "DELETE FROM [_com_razayya_JourneyTrack_JourneyCalculationRun] WHERE [RunDateTime] < DATEADD(day, -90, GETDATE())" );
+                    if ( retentionRowsDeleted > 0 )
+                    {
+                        Result += $"\nRetention: removed {retentionRowsDeleted} run history row(s) older than 90 days.";
+                    }
+                }
+            }
+            catch ( System.Exception ex )
+            {
+                Logger.LogError( ex, "JourneyTrack retention sweep failed" );
+            }
         }
     }
 }

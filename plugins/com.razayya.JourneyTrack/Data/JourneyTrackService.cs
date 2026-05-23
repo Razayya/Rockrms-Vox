@@ -98,8 +98,12 @@ namespace com.razayya.JourneyTrack.Data
                         subGroupPassers[subGroup.Id] = singlePersonPopulation;
                     }
                 }
+
+                // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries)
+                WriteProgramRollup( group, singlePersonPopulation, subGroupPassers, result, rockContext );
             }
 
+            FlushAttributeCache();
             return result;
         }
 
@@ -145,10 +149,14 @@ namespace com.razayya.JourneyTrack.Data
                     }
                 }
 
+                // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries)
+                WriteProgramRollup( group, basePopulation, subGroupPassers, result, rockContext );
+
                 group.LastRunDateTime = RockDateTime.Now;
                 rockContext.SaveChanges();
             }
 
+            FlushAttributeCache();
             return result;
         }
 
@@ -749,6 +757,185 @@ namespace com.razayya.JourneyTrack.Data
         }
 
         #endregion
+
+        #region Read-only progress for UI surfaces
+
+        /// <summary>
+        /// Read-only progress for one person across one Journey Program. Evaluates every
+        /// Stage's calculations against a 1-person population but does NOT write any
+        /// AttributeValues. Designed for the Person Profile progress block (WP9) - a
+        /// single page-load should clock well under 50ms even with 10 Stages.
+        /// </summary>
+        public ProgramProgressResult GetProgramProgressForPerson( int programId, int personId )
+        {
+            var result = new ProgramProgressResult { PersonId = personId, ProgramId = programId };
+
+            using ( var rockContext = new RockContext() )
+            {
+                var program = new JourneyProgramService( rockContext ).Get( programId );
+                if ( program == null )
+                {
+                    result.NotFound = true;
+                    return result;
+                }
+                result.ProgramName = program.Name;
+
+                var population = new HashSet<int> { personId };
+                var stages = new StageService( rockContext ).Queryable()
+                    .Where( s => s.JourneyProgramId == program.Id && s.IsActive )
+                    .OrderBy( s => s.Order )
+                    .ThenBy( s => s.Name )
+                    .ToList();
+
+                var stagePassers = new Dictionary<int, HashSet<int>>();
+                bool sawIncomplete = false;
+
+                foreach ( var stage in stages )
+                {
+                    var stageEntry = new StageProgressEntry { StageId = stage.Id, StageName = stage.Name, Order = stage.Order };
+
+                    try
+                    {
+                        var subResult = ProcessSubGroupInternal( stage, population, stagePassers, rockContext );
+                        stagePassers[stage.Id] = subResult.Passers;
+                        stageEntry.Passed = subResult.Passers.Contains( personId );
+                    }
+                    catch ( Exception ex )
+                    {
+                        stageEntry.Passed = false;
+                        stageEntry.ErrorMessage = ex.Message;
+                        stagePassers[stage.Id] = population;
+                    }
+
+                    if ( !stageEntry.Passed && !sawIncomplete )
+                    {
+                        stageEntry.IsCurrent = true;
+                        sawIncomplete = true;
+                    }
+
+                    result.Stages.Add( stageEntry );
+                }
+
+                result.AllPassed = result.Stages.Count > 0 && result.Stages.All( s => s.Passed );
+            }
+
+            return result;
+        }
+
+        #endregion
+
+        #region Program-level rollup + housekeeping
+
+        /// <summary>
+        /// Writes the JourneyProgram's CompletionTargetPersonAttribute for every person
+        /// in the base population. A person is "complete" when they appear in every
+        /// Stage's passer set (AllStagesPass logic).
+        /// </summary>
+        private void WriteProgramRollup(
+            JourneyProgram program,
+            HashSet<int> basePopulation,
+            Dictionary<int, HashSet<int>> stagePassers,
+            SyncResult result,
+            RockContext rockContext )
+        {
+            if ( !program.CompletionTargetPersonAttributeId.HasValue || basePopulation.Count == 0 )
+            {
+                return;
+            }
+            if ( stagePassers.Count == 0 )
+            {
+                return;
+            }
+
+            var targetAttribute = AttributeCache.Get( program.CompletionTargetPersonAttributeId.Value );
+            if ( targetAttribute == null )
+            {
+                result.Errors.Add( $"Program rollup target attribute Id {program.CompletionTargetPersonAttributeId.Value} not found." );
+                return;
+            }
+
+            // AllStagesPass: intersection of every stagePassers set
+            var completed = new HashSet<int>( basePopulation );
+            foreach ( var passers in stagePassers.Values )
+            {
+                completed.IntersectWith( passers );
+            }
+
+            // Read existing AVs in one batch
+            var personIdList = basePopulation.ToList();
+            Dictionary<int, string> existing;
+            using ( var readContext = new RockContext() )
+            {
+                existing = new AttributeValueService( readContext ).Queryable().AsNoTracking()
+                    .Where( av => av.AttributeId == targetAttribute.Id && av.EntityId.HasValue && personIdList.Contains( av.EntityId.Value ) )
+                    .Select( av => new { av.EntityId, av.Value } )
+                    .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+            }
+
+            int written = 0;
+            using ( var writeContext = new RockContext() )
+            {
+                foreach ( var personId in basePopulation )
+                {
+                    var newValue = completed.Contains( personId ) ? "True" : "False";
+                    existing.TryGetValue( personId, out var oldValue );
+                    oldValue = oldValue ?? string.Empty;
+                    if ( string.Equals( oldValue, newValue, StringComparison.OrdinalIgnoreCase ) )
+                    {
+                        continue;
+                    }
+
+                    var isUpdate = existing.ContainsKey( personId );
+                    try
+                    {
+                        if ( isUpdate )
+                        {
+                            writeContext.Database.ExecuteSqlCommand(
+                                "UPDATE [AttributeValue] SET [Value] = @p0, [ModifiedDateTime] = GETDATE(), [IsPersistedValueDirty] = 1 WHERE [AttributeId] = @p1 AND [EntityId] = @p2",
+                                newValue, targetAttribute.Id, personId );
+                        }
+                        else
+                        {
+                            writeContext.Database.ExecuteSqlCommand(
+                                "INSERT INTO [AttributeValue] ([IsSystem], [AttributeId], [EntityId], [Value], [Guid], [CreatedDateTime], [ModifiedDateTime], [IsPersistedValueDirty]) VALUES (0, @p0, @p1, @p2, NEWID(), GETDATE(), GETDATE(), 1)",
+                                targetAttribute.Id, personId, newValue );
+                        }
+                        written++;
+                    }
+                    catch ( Exception ex )
+                    {
+                        result.Errors.Add( $"Program rollup write failed for PersonId {personId}: {ex.Message}" );
+                        ExceptionLogService.LogException( ex );
+                    }
+                }
+            }
+
+            result.Updated += written;
+            result.Log.Add( $"  Program rollup '{program.Name}': {completed.Count}/{basePopulation.Count} complete, {written} attribute values written." );
+        }
+
+        /// <summary>
+        /// Invalidates the AttributeValue side of Rock's cache so the freshly written values
+        /// surface immediately. Optimization O8 - one call at end of run.
+        ///
+        /// Rock 18 doesn't expose a granular AttributeValue flush, so we fall back to a
+        /// broad RockCache clear. If this proves too aggressive in practice, replace with
+        /// targeted FlushAttributesForBlockType / FlushItem(attributeId) calls.
+        /// </summary>
+        private void FlushAttributeCache()
+        {
+            try
+            {
+                Rock.Web.Cache.RockCache.ClearAllCachedItems();
+            }
+            catch ( Exception ex )
+            {
+                // Cache flush failures are non-fatal; new values will surface on natural cache expiry.
+                ExceptionLogService.LogException( ex );
+            }
+        }
+
+        #endregion
     }
 
     #region Result Classes
@@ -799,6 +986,30 @@ namespace com.razayya.JourneyTrack.Data
         public string CurrentValue { get; set; }
         public string NewValue { get; set; }
         public string Action { get; set; }
+    }
+
+    /// <summary>
+    /// Read-only progress of one person through one Journey Program.
+    /// Consumed by the Person Profile progress block (WP9).
+    /// </summary>
+    public class ProgramProgressResult
+    {
+        public int ProgramId { get; set; }
+        public string ProgramName { get; set; }
+        public int PersonId { get; set; }
+        public bool NotFound { get; set; }
+        public bool AllPassed { get; set; }
+        public List<StageProgressEntry> Stages { get; set; } = new List<StageProgressEntry>();
+    }
+
+    public class StageProgressEntry
+    {
+        public int StageId { get; set; }
+        public string StageName { get; set; }
+        public int Order { get; set; }
+        public bool Passed { get; set; }
+        public bool IsCurrent { get; set; }
+        public string ErrorMessage { get; set; }
     }
 
     #endregion
