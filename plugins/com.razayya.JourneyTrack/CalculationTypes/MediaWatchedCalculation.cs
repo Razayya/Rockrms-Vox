@@ -37,6 +37,75 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// <inheritdoc/>
         public override string IconCssClass => "fa fa-video";
 
+        // Per-MediaElement decoded-union cache. Keyed by MediaElement.Id, valued by
+        // (timestamp, dict of personId -> {union bits, maxSession%, sessionCount}).
+        // Critical perf win: within a single sync, 5 calcs that share a MediaElement
+        // only hit the Interaction firehose once. TTL is short (30s) so a fresh sync
+        // a minute later re-queries.
+        private struct PersonWatchAggregate
+        {
+            public int[] UnionBits;
+            public double MaxSingleSession;
+            public int SessionCount;
+        }
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, (System.DateTime CachedAt, Dictionary<int, PersonWatchAggregate> Map)> _watchCache
+            = new System.Collections.Concurrent.ConcurrentDictionary<int, (System.DateTime, Dictionary<int, PersonWatchAggregate>)>();
+        private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
+
+        private static Dictionary<int, PersonWatchAggregate> GetWatchAggregates( int mediaElementId, RockContext rockContext )
+        {
+            if ( _watchCache.TryGetValue( mediaElementId, out var cached )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
+            {
+                return cached.Map;
+            }
+
+            var rows = new InteractionService( rockContext ).Queryable().AsNoTracking()
+                .Where( i =>
+                    i.InteractionComponent.EntityId == mediaElementId
+                    && i.PersonAliasId.HasValue
+                    && i.InteractionData != null )
+                .Select( i => new { PersonId = i.PersonAlias.PersonId, i.InteractionData } )
+                .ToList();
+
+            var map = new Dictionary<int, PersonWatchAggregate>();
+            foreach ( var personGroup in rows.GroupBy( r => r.PersonId ) )
+            {
+                int[] union = null;
+                double maxSingleSession = 0;
+                int sessionCount = 0;
+
+                foreach ( var row in personGroup )
+                {
+                    MediaWatchedInteractionData data;
+                    try { data = JsonConvert.DeserializeObject<MediaWatchedInteractionData>( row.InteractionData ); }
+                    catch { continue; }
+                    if ( data == null ) continue;
+
+                    if ( data.WatchedPercentage > maxSingleSession ) maxSingleSession = data.WatchedPercentage;
+
+                    var bits = RleToArray( data.WatchMap );
+                    if ( bits == null || bits.Length == 0 ) continue;
+
+                    sessionCount++;
+                    union = ( union == null ) ? bits : MergeMaps( union, bits );
+                }
+
+                if ( union != null )
+                {
+                    map[personGroup.Key] = new PersonWatchAggregate
+                    {
+                        UnionBits = union,
+                        MaxSingleSession = maxSingleSession,
+                        SessionCount = sessionCount
+                    };
+                }
+            }
+
+            _watchCache[mediaElementId] = ( System.DateTime.UtcNow, map );
+            return map;
+        }
+
         /// <inheritdoc/>
         public override Dictionary<int, Dictionary<string, object>> Evaluate(
             RockContext rockContext,
@@ -48,103 +117,35 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var mediaGuid = calc.GetAttributeValue( "MediaElement" ).AsGuidOrNull();
             var minPercent = calc.GetAttributeValue( "MinWatchedPercent" ).AsIntegerOrNull() ?? 95;
 
-            if ( !mediaGuid.HasValue )
-            {
-                return results;
-            }
-            if ( populationPersonIds == null || populationPersonIds.Count == 0 )
-            {
-                return results;
-            }
+            if ( !mediaGuid.HasValue ) return results;
+            if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
 
             var mediaElement = new MediaElementService( rockContext ).Get( mediaGuid.Value );
-            if ( mediaElement == null )
+            if ( mediaElement == null ) return results;
+
+            var aggregates = GetWatchAggregates( mediaElement.Id, rockContext );
+            if ( aggregates.Count == 0 ) return results;
+
+            foreach ( var personId in populationPersonIds )
             {
-                return results;
-            }
+                if ( !aggregates.TryGetValue( personId, out var agg ) ) continue;
 
-            // Rock's MediaElement creates a dedicated InteractionComponent (EntityId = MediaElement.Id)
-            // under the "Media Events" channel. Pull every matching Interaction row for our population.
-            var rows = new InteractionService( rockContext ).Queryable().AsNoTracking()
-                .Where( i =>
-                    i.InteractionComponent.EntityId == mediaElement.Id
-                    && i.PersonAliasId.HasValue
-                    && populationPersonIds.Contains( i.PersonAlias.PersonId )
-                    && i.InteractionData != null )
-                .Select( i => new { PersonId = i.PersonAlias.PersonId, i.InteractionData } )
-                .ToList();
+                int watchedSeconds = agg.UnionBits.Count( v => v > 0 );
+                double percent = agg.UnionBits.Length > 0 ? ( watchedSeconds * 100.0 / agg.UnionBits.Length ) : 0;
+                if ( percent < minPercent ) continue;
 
-            if ( rows.Count == 0 )
-            {
-                return results;
-            }
-
-            // Group by person, union WatchMaps within each group.
-            foreach ( var personGroup in rows.GroupBy( r => r.PersonId ) )
-            {
-                int[] union = null;
-                double maxSingleSession = 0;
-
-                foreach ( var row in personGroup )
+                results[personId] = new Dictionary<string, object>
                 {
-                    MediaWatchedInteractionData data;
-                    try
-                    {
-                        data = JsonConvert.DeserializeObject<MediaWatchedInteractionData>( row.InteractionData );
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-                    if ( data == null )
-                    {
-                        continue;
-                    }
-
-                    if ( data.WatchedPercentage > maxSingleSession )
-                    {
-                        maxSingleSession = data.WatchedPercentage;
-                    }
-
-                    var bits = RleToArray( data.WatchMap );
-                    if ( bits == null || bits.Length == 0 )
-                    {
-                        continue;
-                    }
-
-                    if ( union == null )
-                    {
-                        union = bits;
-                    }
-                    else
-                    {
-                        union = MergeMaps( union, bits );
-                    }
-                }
-
-                if ( union == null )
-                {
-                    continue;
-                }
-
-                int watchedSeconds = union.Count( v => v > 0 );
-                double percent = union.Length > 0 ? ( watchedSeconds * 100.0 / union.Length ) : 0;
-
-                bool matched = percent >= minPercent;
-                results[personGroup.Key] = new Dictionary<string, object>
-                {
-                    { "Matched", matched },
+                    { "Matched", true },
                     { "WatchedPercentage", Math.Round( percent, 2 ) },
-                    { "MaxSingleSessionPercentage", Math.Round( maxSingleSession, 2 ) },
+                    { "MaxSingleSessionPercentage", Math.Round( agg.MaxSingleSession, 2 ) },
                     { "WatchedSeconds", watchedSeconds },
-                    { "MapLength", union.Length },
-                    { "SessionCount", personGroup.Count() }
+                    { "MapLength", agg.UnionBits.Length },
+                    { "SessionCount", agg.SessionCount }
                 };
             }
 
-            // Strip non-matches to keep the contract of "MatchedPersonIds = keys".
-            return results.Where( kvp => kvp.Value.ContainsKey( "Matched" ) && ( bool ) kvp.Value["Matched"] )
-                .ToDictionary( kvp => kvp.Key, kvp => kvp.Value );
+            return results;
         }
 
         /// <inheritdoc/>

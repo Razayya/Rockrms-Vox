@@ -55,6 +55,73 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// <inheritdoc/>
         public override string IconCssClass => "fa fa-user-check";
 
+        // Per-(group, includeChildren, role, activeOnly) cache of all matching memberships.
+        // Cache is keyed by config, value is all qualifying GroupMember rows grouped by PersonId.
+        private struct MembershipRow
+        {
+            public System.DateTime? CreatedDateTime;
+            public string GroupRoleName;
+            public string GroupName;
+        }
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (System.DateTime CachedAt, Dictionary<int, List<MembershipRow>> Map)> _gmCache
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, (System.DateTime, Dictionary<int, List<MembershipRow>>)>();
+        private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
+
+        private static Dictionary<int, List<MembershipRow>> GetMembershipMap(
+            System.Guid groupGuid, bool includeChildren, System.Guid? roleGuid, bool activeOnly, RockContext rockContext )
+        {
+            var key = $"{groupGuid}|{includeChildren}|{roleGuid}|{activeOnly}";
+            if ( _gmCache.TryGetValue( key, out var cached )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
+            {
+                return cached.Map;
+            }
+
+            var groupService = new GroupService( rockContext );
+            var selectedGroup = groupService.Get( groupGuid );
+            if ( selectedGroup == null )
+            {
+                var empty = new Dictionary<int, List<MembershipRow>>();
+                _gmCache[key] = ( System.DateTime.UtcNow, empty );
+                return empty;
+            }
+
+            var groupIds = new HashSet<int> { selectedGroup.Id };
+            if ( includeChildren )
+            {
+                foreach ( var id in groupService.GetAllDescendentGroupIds( selectedGroup.Id, false ) )
+                {
+                    groupIds.Add( id );
+                }
+            }
+
+            var query = new GroupMemberService( rockContext ).Queryable().AsNoTracking()
+                .Where( gm => groupIds.Contains( gm.GroupId ) );
+            if ( activeOnly )
+                query = query.Where( gm => gm.GroupMemberStatus == GroupMemberStatus.Active );
+            if ( roleGuid.HasValue )
+                query = query.Where( gm => gm.GroupRole.Guid == roleGuid.Value );
+
+            var rows = query.Select( gm => new
+            {
+                gm.PersonId,
+                gm.CreatedDateTime,
+                GroupRoleName = gm.GroupRole.Name,
+                GroupName = gm.Group.Name
+            } ).ToList();
+
+            var map = rows
+                .GroupBy( r => r.PersonId )
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.OrderBy( r => r.CreatedDateTime )
+                          .Select( r => new MembershipRow { CreatedDateTime = r.CreatedDateTime, GroupRoleName = r.GroupRoleName, GroupName = r.GroupName } )
+                          .ToList() );
+
+            _gmCache[key] = ( System.DateTime.UtcNow, map );
+            return map;
+        }
+
         /// <inheritdoc/>
         public override Dictionary<int, Dictionary<string, object>> Evaluate(
             RockContext rockContext,
@@ -68,83 +135,32 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var groupRoleGuid = calc.GetAttributeValue( AttributeKey.GroupRole_GroupMembership ).AsGuidOrNull();
             var activeMembersOnly = calc.GetAttributeValue( AttributeKey.ActiveMembersOnly_GroupMembership ).AsBoolean();
 
-            if ( !groupGuid.HasValue )
-            {
-                return results;
-            }
+            if ( !groupGuid.HasValue ) return results;
+            if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
 
-            var groupService = new GroupService( rockContext );
-            var selectedGroup = groupService.Get( groupGuid.Value );
-            if ( selectedGroup == null )
-            {
-                return results;
-            }
+            var membershipMap = GetMembershipMap( groupGuid.Value, includeChildGroups, groupRoleGuid, activeMembersOnly, rockContext );
+            if ( membershipMap.Count == 0 ) return results;
 
-            // Build the set of group IDs to query.
-            var groupIds = new HashSet<int> { selectedGroup.Id };
-            if ( includeChildGroups )
+            foreach ( var personId in populationPersonIds )
             {
-                var descendantIds = groupService.GetAllDescendentGroupIds( selectedGroup.Id, false );
-                foreach ( var id in descendantIds )
+                if ( !membershipMap.TryGetValue( personId, out var memberships ) || memberships.Count == 0 ) continue;
+
+                var memList = memberships.Select( r => new Dictionary<string, object>
                 {
-                    groupIds.Add( id );
-                }
-            }
+                    { "GroupName", r.GroupName },
+                    { "GroupRole", r.GroupRoleName },
+                    { "JoinDate", r.CreatedDateTime }
+                } ).ToList();
+                var earliest = memList.First();
 
-            var memberService = new GroupMemberService( rockContext );
-            var query = memberService.Queryable().AsNoTracking()
-                .Where( gm => groupIds.Contains( gm.GroupId ) );
-
-            if ( activeMembersOnly )
-            {
-                query = query.Where( gm => gm.GroupMemberStatus == GroupMemberStatus.Active );
-            }
-
-            if ( groupRoleGuid.HasValue )
-            {
-                query = query.Where( gm => gm.GroupRole.Guid == groupRoleGuid.Value );
-            }
-
-            if ( populationPersonIds != null && populationPersonIds.Count > 0 )
-            {
-                query = query.Where( gm => populationPersonIds.Contains( gm.PersonId ) );
-            }
-
-            var memberRows = query
-                .Select( gm => new
-                {
-                    gm.PersonId,
-                    gm.CreatedDateTime,
-                    GroupRoleName = gm.GroupRole.Name,
-                    GroupName = gm.Group.Name
-                } )
-                .ToList();
-
-            var grouped = memberRows
-                .GroupBy( r => r.PersonId );
-
-            foreach ( var personGroup in grouped )
-            {
-                var memberships = personGroup
-                    .OrderBy( r => r.CreatedDateTime )
-                    .Select( r => new Dictionary<string, object>
-                    {
-                        { "GroupName", r.GroupName },
-                        { "GroupRole", r.GroupRoleName },
-                        { "JoinDate", r.CreatedDateTime }
-                    } )
-                    .ToList();
-
-                var earliest = memberships.First();
-
-                results[personGroup.Key] = new Dictionary<string, object>
+                results[personId] = new Dictionary<string, object>
                 {
                     { "Matched", true },
                     { "GroupName", earliest["GroupName"] },
                     { "GroupRole", earliest["GroupRole"] },
                     { "JoinDate", earliest["JoinDate"] },
-                    { "Groups", memberships },
-                    { "GroupCount", memberships.Count }
+                    { "Groups", memList },
+                    { "GroupCount", memList.Count }
                 };
             }
 

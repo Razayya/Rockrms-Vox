@@ -49,6 +49,54 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// <inheritdoc/>
         public override string IconCssClass => "fa fa-users";
 
+        // Per-(groupTypes set, role, activeOnly) cache.
+        private struct GtmRow
+        {
+            public System.DateTime? CreatedDateTime;
+            public string GroupRoleName;
+            public string GroupName;
+        }
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (System.DateTime CachedAt, Dictionary<int, List<GtmRow>> Map)> _gtmCache
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, (System.DateTime, Dictionary<int, List<GtmRow>>)>();
+        private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
+
+        private static Dictionary<int, List<GtmRow>> GetMembershipMap(
+            List<System.Guid> groupTypeGuids, System.Guid? roleGuid, bool activeOnly, RockContext rockContext )
+        {
+            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + roleGuid + "|" + activeOnly;
+            if ( _gtmCache.TryGetValue( key, out var cached )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
+            {
+                return cached.Map;
+            }
+
+            var query = new GroupMemberService( rockContext ).Queryable().AsNoTracking()
+                .Where( gm => groupTypeGuids.Contains( gm.Group.GroupType.Guid ) );
+            if ( activeOnly )
+                query = query.Where( gm => gm.GroupMemberStatus == GroupMemberStatus.Active );
+            if ( roleGuid.HasValue )
+                query = query.Where( gm => gm.GroupRole.Guid == roleGuid.Value );
+
+            var rows = query.Select( gm => new
+            {
+                gm.PersonId,
+                gm.CreatedDateTime,
+                GroupRoleName = gm.GroupRole.Name,
+                GroupName = gm.Group.Name
+            } ).ToList();
+
+            var map = rows
+                .GroupBy( r => r.PersonId )
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.OrderBy( r => r.CreatedDateTime )
+                          .Select( r => new GtmRow { CreatedDateTime = r.CreatedDateTime, GroupRoleName = r.GroupRoleName, GroupName = r.GroupName } )
+                          .ToList() );
+
+            _gtmCache[key] = ( System.DateTime.UtcNow, map );
+            return map;
+        }
+
         /// <inheritdoc/>
         public override Dictionary<int, Dictionary<string, object>> Evaluate(
             RockContext rockContext,
@@ -63,66 +111,32 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var groupRoleGuid = calc.GetAttributeValue( AttributeKey.GroupRole ).AsGuidOrNull();
             var activeMembersOnly = calc.GetAttributeValue( AttributeKey.ActiveMembersOnly ).AsBoolean();
 
-            if ( !groupTypeGuids.Any() )
+            if ( !groupTypeGuids.Any() ) return results;
+            if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
+
+            var membershipMap = GetMembershipMap( groupTypeGuids, groupRoleGuid, activeMembersOnly, rockContext );
+            if ( membershipMap.Count == 0 ) return results;
+
+            foreach ( var personId in populationPersonIds )
             {
-                return results;
-            }
+                if ( !membershipMap.TryGetValue( personId, out var memberships ) || memberships.Count == 0 ) continue;
 
-            var memberService = new GroupMemberService( rockContext );
-            var query = memberService.Queryable().AsNoTracking()
-                .Where( gm => groupTypeGuids.Contains( gm.Group.GroupType.Guid ) );
-
-            if ( activeMembersOnly )
-            {
-                query = query.Where( gm => gm.GroupMemberStatus == GroupMemberStatus.Active );
-            }
-
-            if ( groupRoleGuid.HasValue )
-            {
-                query = query.Where( gm => gm.GroupRole.Guid == groupRoleGuid.Value );
-            }
-
-            if ( populationPersonIds != null && populationPersonIds.Count > 0 )
-            {
-                query = query.Where( gm => populationPersonIds.Contains( gm.PersonId ) );
-            }
-
-            // Project flat columns that EF6 can safely translate, then group in memory.
-            var memberRows = query
-                .Select( gm => new
+                var memList = memberships.Select( r => new Dictionary<string, object>
                 {
-                    gm.PersonId,
-                    gm.CreatedDateTime,
-                    GroupRoleName = gm.GroupRole.Name,
-                    GroupName = gm.Group.Name
-                } )
-                .ToList();
+                    { "GroupName", r.GroupName },
+                    { "GroupRole", r.GroupRoleName },
+                    { "JoinDate", r.CreatedDateTime }
+                } ).ToList();
+                var earliest = memList.First();
 
-            var grouped = memberRows
-                .GroupBy( r => r.PersonId );
-
-            foreach ( var personGroup in grouped )
-            {
-                var memberships = personGroup
-                    .OrderBy( r => r.CreatedDateTime )
-                    .Select( r => new Dictionary<string, object>
-                    {
-                        { "GroupName", r.GroupName },
-                        { "GroupRole", r.GroupRoleName },
-                        { "JoinDate", r.CreatedDateTime }
-                    } )
-                    .ToList();
-
-                var earliest = memberships.First();
-
-                results[personGroup.Key] = new Dictionary<string, object>
+                results[personId] = new Dictionary<string, object>
                 {
                     { "Matched", true },
                     { "GroupName", earliest["GroupName"] },
                     { "GroupRole", earliest["GroupRole"] },
                     { "JoinDate", earliest["JoinDate"] },
-                    { "Groups", memberships },
-                    { "GroupCount", memberships.Count }
+                    { "Groups", memList },
+                    { "GroupCount", memList.Count }
                 };
             }
 

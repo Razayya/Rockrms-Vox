@@ -49,6 +49,51 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         public override string IconCssClass => "fa fa-calendar-check";
 
         /// <inheritdoc/>
+        // Per-(groupTypeGuids set, withinDays) cache. Stores all candidate persons +
+        // their attendance counts; the per-calc MinimumCount filter is applied at lookup.
+        private struct AttendanceSummary
+        {
+            public int AttendanceCount;
+            public System.DateTime LastAttendanceDate;
+        }
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (System.DateTime CachedAt, Dictionary<int, AttendanceSummary> Map)> _attCache
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, (System.DateTime, Dictionary<int, AttendanceSummary>)>();
+        private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
+
+        private static Dictionary<int, AttendanceSummary> GetAttendanceSummaries( List<System.Guid> groupTypeGuids, int withinDays, RockContext rockContext )
+        {
+            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + withinDays;
+            if ( _attCache.TryGetValue( key, out var cached )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
+            {
+                return cached.Map;
+            }
+
+            var sinceDate = RockDateTime.Today.AddDays( -withinDays );
+            var rows = new AttendanceService( rockContext ).Queryable().AsNoTracking()
+                .Where( a =>
+                    a.DidAttend == true &&
+                    a.StartDateTime >= sinceDate &&
+                    a.Occurrence.Group != null &&
+                    groupTypeGuids.Contains( a.Occurrence.Group.GroupType.Guid ) &&
+                    a.PersonAlias != null )
+                .GroupBy( a => a.PersonAlias.PersonId )
+                .Select( g => new
+                {
+                    PersonId = g.Key,
+                    AttendanceCount = g.Count(),
+                    LastAttendanceDate = g.Max( a => a.StartDateTime )
+                } )
+                .ToList();
+
+            var map = rows.ToDictionary(
+                r => r.PersonId,
+                r => new AttendanceSummary { AttendanceCount = r.AttendanceCount, LastAttendanceDate = r.LastAttendanceDate } );
+
+            _attCache[key] = ( System.DateTime.UtcNow, map );
+            return map;
+        }
+
         public override Dictionary<int, Dictionary<string, object>> Evaluate(
             RockContext rockContext,
             JourneyCalculation calc,
@@ -62,42 +107,18 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var minimumCount = calc.GetAttributeValue( AttributeKey.MinimumCount ).AsIntegerOrNull() ?? 1;
             var withinDays = calc.GetAttributeValue( AttributeKey.WithinDays ).AsIntegerOrNull() ?? 90;
 
-            if ( !groupTypeGuids.Any() )
+            if ( !groupTypeGuids.Any() ) return results;
+            if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
+
+            var attMap = GetAttendanceSummaries( groupTypeGuids, withinDays, rockContext );
+            if ( attMap.Count == 0 ) return results;
+
+            foreach ( var personId in populationPersonIds )
             {
-                return results;
-            }
+                if ( !attMap.TryGetValue( personId, out var summary ) ) continue;
+                if ( summary.AttendanceCount < minimumCount ) continue;
 
-            var sinceDate = RockDateTime.Today.AddDays( -withinDays );
-
-            var attendanceService = new AttendanceService( rockContext );
-            var attendanceQuery = attendanceService.Queryable().AsNoTracking()
-                .Where( a =>
-                    a.DidAttend == true &&
-                    a.StartDateTime >= sinceDate &&
-                    a.Occurrence.Group != null &&
-                    groupTypeGuids.Contains( a.Occurrence.Group.GroupType.Guid ) &&
-                    a.PersonAlias != null );
-
-            // Scope to population
-            if ( populationPersonIds != null && populationPersonIds.Count > 0 )
-            {
-                attendanceQuery = attendanceQuery.Where( a => populationPersonIds.Contains( a.PersonAlias.PersonId ) );
-            }
-
-            var attendanceSummary = attendanceQuery
-                .GroupBy( a => a.PersonAlias.PersonId )
-                .Select( g => new
-                {
-                    PersonId = g.Key,
-                    AttendanceCount = g.Count(),
-                    LastAttendanceDate = g.Max( a => a.StartDateTime )
-                } )
-                .Where( s => s.AttendanceCount >= minimumCount )
-                .ToList();
-
-            foreach ( var summary in attendanceSummary )
-            {
-                results[summary.PersonId] = new Dictionary<string, object>
+                results[personId] = new Dictionary<string, object>
                 {
                     { "Matched", true },
                     { "AttendanceCount", summary.AttendanceCount },

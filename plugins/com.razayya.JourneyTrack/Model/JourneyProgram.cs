@@ -97,6 +97,14 @@ namespace com.razayya.JourneyTrack.Model
         [DataMember]
         public int? OnCompleteSystemCommunicationId { get; set; }
 
+        /// <summary>
+        /// When true, only people with an active JourneyProgramEnrollment row are
+        /// considered in the base population. When false, the engine falls back to
+        /// the legacy demographic-filter behavior (RecordStatus / Campus / DataView).
+        /// </summary>
+        [DataMember]
+        public bool RequiresEnrollment { get; set; }
+
         #endregion
 
         #region Navigation Properties

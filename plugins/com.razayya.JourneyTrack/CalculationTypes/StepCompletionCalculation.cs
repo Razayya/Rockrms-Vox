@@ -42,48 +42,33 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// <inheritdoc/>
         public override string IconCssClass => "fa fa-flag-checkered";
 
-        /// <inheritdoc/>
-        public override Dictionary<int, Dictionary<string, object>> Evaluate(
-            RockContext rockContext,
-            JourneyCalculation calc,
-            HashSet<int> populationPersonIds )
+        // Per-(StepTypeId, RequireCompleted) global-Step cache. Within a sync, all 7 DP
+        // StepCompletion calcs (1 per stage) hit this once each, but across a 100-person
+        // batch the FIRST person warms the cache and the next 99 hit it. 30s TTL.
+        private struct StepInfo
         {
-            var results = new Dictionary<int, Dictionary<string, object>>();
+            public System.DateTime? CompletedDateTime;
+            public int? StepStatusId;
+            public string StepStatusName;
+        }
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int StepTypeId, bool RequireCompleted), (System.DateTime CachedAt, Dictionary<int, StepInfo> Map)> _stepCache
+            = new System.Collections.Concurrent.ConcurrentDictionary<(int, bool), (System.DateTime, Dictionary<int, StepInfo>)>();
+        private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
 
-            // StepProgramStepTypeField stores value as "ProgramGuid|StepTypeGuid".
-            var raw = calc.GetAttributeValue( AttributeKey.StepType );
-            if ( string.IsNullOrWhiteSpace( raw ) )
+        private static Dictionary<int, StepInfo> GetStepInfo( int stepTypeId, bool requireCompleted, RockContext rockContext )
+        {
+            var key = (stepTypeId, requireCompleted);
+            if ( _stepCache.TryGetValue( key, out var cached )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
             {
-                return results;
-            }
-            var parts = raw.Split( '|' );
-            var stepTypeGuid = parts.Length >= 2 ? parts[1].AsGuidOrNull() : raw.AsGuidOrNull();
-            if ( !stepTypeGuid.HasValue )
-            {
-                return results;
-            }
-
-            var stepType = new StepTypeService( rockContext ).Get( stepTypeGuid.Value );
-            if ( stepType == null )
-            {
-                return results;
+                return cached.Map;
             }
 
-            var requireCompleted = calc.GetAttributeValue( AttributeKey.RequireCompletedStatus ).AsBooleanOrNull() ?? true;
-
-            // Single batched query: Step JOIN PersonAlias JOIN StepStatus
-            // filtered by StepTypeId + populationPersonIds, grouped by PersonId.
             var query = new StepService( rockContext ).Queryable().AsNoTracking()
-                .Where( s => s.StepTypeId == stepType.Id );
-
+                .Where( s => s.StepTypeId == stepTypeId );
             if ( requireCompleted )
             {
                 query = query.Where( s => s.StepStatus != null && s.StepStatus.IsCompleteStatus );
-            }
-
-            if ( populationPersonIds != null && populationPersonIds.Count > 0 )
-            {
-                query = query.Where( s => populationPersonIds.Contains( s.PersonAlias.PersonId ) );
             }
 
             var rows = query
@@ -96,22 +81,61 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 } )
                 .ToList();
 
-            var stepNumber = stepType.Order + 1;
-
+            var map = new Dictionary<int, StepInfo>();
             foreach ( var personGroup in rows.GroupBy( r => r.PersonId ) )
             {
-                // Pick the earliest completed Step row for stable merge fields.
                 var first = personGroup
                     .OrderBy( r => r.CompletedDateTime ?? System.DateTime.MaxValue )
                     .ThenBy( r => r.StepStatusId )
                     .First();
 
-                results[personGroup.Key] = new Dictionary<string, object>
+                map[personGroup.Key] = new StepInfo
+                {
+                    CompletedDateTime = first.CompletedDateTime,
+                    StepStatusId = first.StepStatusId,
+                    StepStatusName = first.StepStatusName
+                };
+            }
+
+            _stepCache[key] = ( System.DateTime.UtcNow, map );
+            return map;
+        }
+
+        /// <inheritdoc/>
+        public override Dictionary<int, Dictionary<string, object>> Evaluate(
+            RockContext rockContext,
+            JourneyCalculation calc,
+            HashSet<int> populationPersonIds )
+        {
+            var results = new Dictionary<int, Dictionary<string, object>>();
+
+            // StepProgramStepTypeField stores value as "ProgramGuid|StepTypeGuid".
+            var raw = calc.GetAttributeValue( AttributeKey.StepType );
+            if ( string.IsNullOrWhiteSpace( raw ) ) return results;
+            var parts = raw.Split( '|' );
+            var stepTypeGuid = parts.Length >= 2 ? parts[1].AsGuidOrNull() : raw.AsGuidOrNull();
+            if ( !stepTypeGuid.HasValue ) return results;
+
+            var stepType = new StepTypeService( rockContext ).Get( stepTypeGuid.Value );
+            if ( stepType == null ) return results;
+
+            var requireCompleted = calc.GetAttributeValue( AttributeKey.RequireCompletedStatus ).AsBooleanOrNull() ?? true;
+
+            var stepInfoMap = GetStepInfo( stepType.Id, requireCompleted, rockContext );
+            if ( stepInfoMap.Count == 0 ) return results;
+
+            var stepNumber = stepType.Order + 1;
+
+            foreach ( var personId in populationPersonIds )
+            {
+                if ( !stepInfoMap.TryGetValue( personId, out var info ) ) continue;
+
+                results[personId] = new Dictionary<string, object>
                 {
                     { "Matched", true },
-                    { "CompletedDateTime", first.CompletedDateTime },
-                    { "StepStatusName", first.StepStatusName },
-                    { "StepStatusId", first.StepStatusId },
+                    { "CompletedDateTime", info.CompletedDateTime },
+                    { "StepStatusName", info.StepStatusName },
+                    { "StepStatusId", info.StepStatusId },
                     { "StepTypeId", stepType.Id },
                     { "StepNumber", stepNumber }
                 };

@@ -47,6 +47,7 @@ namespace com.razayya.JourneyTrack.Constants
         public const string JourneyCalculation = "_com_razayya_JourneyTrack_JourneyCalculation";
         public const string JourneyCalculationRun = "_com_razayya_JourneyTrack_JourneyCalculationRun";
         public const string JourneyCommunicationLog = "_com_razayya_JourneyTrack_JourneyCommunicationLog";
+        public const string JourneyProgramEnrollment = "_com_razayya_JourneyTrack_JourneyProgramEnrollment";
     }
 
     public static class CRON

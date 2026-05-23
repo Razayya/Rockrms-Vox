@@ -33,6 +33,46 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// <inheritdoc/>
         public override string IconCssClass => "fa fa-filter";
 
+        // Per-DataView cache. DataViews can be expensive to evaluate (multi-second), so
+        // a 30s TTL is a meaningful win when several calcs reuse the same DataView in
+        // a sync or batch.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<System.Guid, (System.DateTime CachedAt, HashSet<int> PersonIds)> _dvCache
+            = new System.Collections.Concurrent.ConcurrentDictionary<System.Guid, (System.DateTime, HashSet<int>)>();
+        private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
+
+        private static HashSet<int> GetDataViewPersonIds( System.Guid dvGuid, RockContext rockContext )
+        {
+            if ( _dvCache.TryGetValue( dvGuid, out var cached )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
+            {
+                return cached.PersonIds;
+            }
+
+            var dataView = new DataViewService( rockContext ).Get( dvGuid );
+            if ( dataView == null )
+            {
+                var empty = new HashSet<int>();
+                _dvCache[dvGuid] = ( System.DateTime.UtcNow, empty );
+                return empty;
+            }
+
+            HashSet<int> ids;
+            try
+            {
+                ids = new HashSet<int>(
+                    dataView.GetQuery( new DataViewGetQueryArgs { DbContext = rockContext, DatabaseTimeoutSeconds = 180 } )
+                        .Select( e => e.Id ).ToList() );
+            }
+            catch ( Exception ex )
+            {
+                ExceptionLogService.LogException( ex );
+                ids = new HashSet<int>();
+            }
+
+            _dvCache[dvGuid] = ( System.DateTime.UtcNow, ids );
+            return ids;
+        }
+
         /// <inheritdoc/>
         public override Dictionary<int, Dictionary<string, object>> Evaluate(
             RockContext rockContext,
@@ -42,38 +82,15 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var results = new Dictionary<int, Dictionary<string, object>>();
 
             var dataViewGuid = calc.GetAttributeValue( AttributeKey.DataView ).AsGuidOrNull();
-            if ( !dataViewGuid.HasValue )
-            {
-                return results;
-            }
+            if ( !dataViewGuid.HasValue ) return results;
+            if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
 
-            var dataViewService = new DataViewService( rockContext );
-            var dataView = dataViewService.Get( dataViewGuid.Value );
-            if ( dataView == null )
-            {
-                return results;
-            }
+            var dvIds = GetDataViewPersonIds( dataViewGuid.Value, rockContext );
+            if ( dvIds.Count == 0 ) return results;
 
-            List<int> dataViewPersonIds;
-            try
+            foreach ( var personId in populationPersonIds )
             {
-                dataViewPersonIds = dataView.GetQuery( new DataViewGetQueryArgs { DbContext = rockContext, DatabaseTimeoutSeconds = 180 } )
-                    .Select( e => e.Id )
-                    .ToList();
-            }
-            catch ( Exception ex )
-            {
-                Rock.Model.ExceptionLogService.LogException( ex );
-                return results;
-            }
-
-            // Intersect with population
-            var matchedIds = populationPersonIds != null && populationPersonIds.Count > 0
-                ? dataViewPersonIds.Where( id => populationPersonIds.Contains( id ) )
-                : dataViewPersonIds;
-
-            foreach ( var personId in matchedIds )
-            {
+                if ( !dvIds.Contains( personId ) ) continue;
                 results[personId] = new Dictionary<string, object>
                 {
                     { "Matched", true },

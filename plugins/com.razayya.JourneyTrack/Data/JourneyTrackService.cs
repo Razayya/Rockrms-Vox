@@ -456,6 +456,19 @@ namespace com.razayya.JourneyTrack.Data
 
             result.Log.Add( $"  SubGroup '{subGroup.Name}': working population {workingPopulation.Count}" );
 
+            // Sequential early-exit: once the cascade drains the population, downstream calcs
+            // produce zero matches anyway. Skip the per-calc evaluation overhead, keep Passers
+            // empty, and let later Stages do the same.
+            if ( workingPopulation.Count == 0 )
+            {
+                result.Log.Add( $"    (skipping {subGroup.Name} calc evaluation — empty working population)" );
+                return new SubGroupProcessResult
+                {
+                    Result = result,
+                    Passers = new HashSet<int>()
+                };
+            }
+
             var calculations = new JourneyCalculationService( rockContext ).Queryable()
                 .Include( c => c.CalculationTypeEntityType )
                 .Where( c => c.StageId == subGroup.Id && c.IsActive )
@@ -661,24 +674,57 @@ namespace com.razayya.JourneyTrack.Data
 
         private HashSet<int> BuildBasePopulation( JourneyProgram group, RockContext rockContext )
         {
-            var query = new PersonService( rockContext ).Queryable().AsNoTracking();
+            HashSet<int> result;
 
-            if ( group.RecordStatusValueId.HasValue )
+            // Enrollment-driven base population — the program iterates only people who have
+            // an active JourneyProgramEnrollment row. Demographic filters still apply as an
+            // AND-intersect on top, in case a program wants e.g. "enrolled people on Main Campus".
+            if ( group.RequiresEnrollment )
             {
-                query = query.Where( p => p.RecordStatusValueId == group.RecordStatusValueId.Value );
-            }
+                var enrolledPersonIds = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                    .Where( e => e.JourneyProgramId == group.Id && e.IsActive )
+                    .Select( e => e.PersonAlias.PersonId )
+                    .Distinct()
+                    .ToList();
+                result = new HashSet<int>( enrolledPersonIds );
 
-            if ( group.ConnectionStatusValueId.HasValue )
+                if ( result.Count == 0 )
+                {
+                    return result;
+                }
+
+                // Apply demographic filters as an intersect via a single Person query
+                if ( group.RecordStatusValueId.HasValue
+                    || group.ConnectionStatusValueId.HasValue
+                    || group.CampusId.HasValue )
+                {
+                    var personQ = new PersonService( rockContext ).Queryable().AsNoTracking()
+                        .Where( p => result.Contains( p.Id ) );
+
+                    if ( group.RecordStatusValueId.HasValue )
+                        personQ = personQ.Where( p => p.RecordStatusValueId == group.RecordStatusValueId.Value );
+                    if ( group.ConnectionStatusValueId.HasValue )
+                        personQ = personQ.Where( p => p.ConnectionStatusValueId == group.ConnectionStatusValueId.Value );
+                    if ( group.CampusId.HasValue )
+                        personQ = personQ.Where( p => p.PrimaryCampusId == group.CampusId.Value );
+
+                    result.IntersectWith( personQ.Select( p => p.Id ).ToList() );
+                }
+            }
+            else
             {
-                query = query.Where( p => p.ConnectionStatusValueId == group.ConnectionStatusValueId.Value );
-            }
+                // Legacy: program iterates everyone matching its demographic filters
+                var query = new PersonService( rockContext ).Queryable().AsNoTracking();
 
-            if ( group.CampusId.HasValue )
-            {
-                query = query.Where( p => p.PrimaryCampusId == group.CampusId.Value );
-            }
+                if ( group.RecordStatusValueId.HasValue )
+                    query = query.Where( p => p.RecordStatusValueId == group.RecordStatusValueId.Value );
+                if ( group.ConnectionStatusValueId.HasValue )
+                    query = query.Where( p => p.ConnectionStatusValueId == group.ConnectionStatusValueId.Value );
+                if ( group.CampusId.HasValue )
+                    query = query.Where( p => p.PrimaryCampusId == group.CampusId.Value );
 
-            var result = new HashSet<int>( query.Select( p => p.Id ).ToList() );
+                result = new HashSet<int>( query.Select( p => p.Id ).ToList() );
+            }
 
             if ( group.DataViewId.HasValue )
             {
