@@ -464,6 +464,7 @@ namespace com.razayya.JourneyTrack.Data
                 .ToList();
 
             HashSet<int> completionPassers = null;
+            var nonCompletionMatched = new List<HashSet<int>>();
 
             foreach ( var calc in calculations )
             {
@@ -477,10 +478,28 @@ namespace com.razayya.JourneyTrack.Data
                     {
                         completionPassers = calcResult.MatchedPersonIds;
                     }
+                    else
+                    {
+                        nonCompletionMatched.Add( calcResult.MatchedPersonIds ?? new HashSet<int>() );
+                    }
                 }
                 catch ( Exception ex )
                 {
                     result.Errors.Add( $"JourneyCalculation '{calc.Name}': {ex.Message}" );
+                }
+            }
+
+            // Stage-gating fallback: when there's no Completion meta-calc, the Stage is
+            // "passed" by the intersection of every non-Completion calc's matched persons.
+            // This makes transient-only Stages (Shape A — e.g. a single StepCompletion calc
+            // with no Person Attr sink) actually gate prerequisites correctly. Previous
+            // behavior fail-opened to the full workingPopulation, which broke chained Stages.
+            if ( completionPassers == null && nonCompletionMatched.Count > 0 )
+            {
+                completionPassers = new HashSet<int>( nonCompletionMatched[0] );
+                for ( int i = 1; i < nonCompletionMatched.Count; i++ )
+                {
+                    completionPassers.IntersectWith( nonCompletionMatched[i] );
                 }
             }
 
