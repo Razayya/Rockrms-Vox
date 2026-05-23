@@ -128,6 +128,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     ? NoMatchBehavior.WriteLava
                     : NoMatchBehavior.LeaveUnchanged;
                 calc.NoMatchLavaTemplate = ceNoMatchLava.Text;
+                calc.SkipIfTargetHasValue = cbSkipIfTargetHasValue.Checked;
 
                 if ( calc.NoMatchBehavior == NoMatchBehavior.WriteLava && string.IsNullOrWhiteSpace( calc.NoMatchLavaTemplate ) )
                 {
@@ -554,6 +555,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             ddlNoMatchBehavior.SetValue( (int)calc.NoMatchBehavior );
             pnlNoMatchLava.Visible = calc.NoMatchBehavior == NoMatchBehavior.WriteLava;
             ceNoMatchLava.Text = calc.NoMatchLavaTemplate;
+            cbSkipIfTargetHasValue.Checked = calc.SkipIfTargetHasValue;
 
             // Load component attributes
             LoadComponentAttributes( calc, rockContext );

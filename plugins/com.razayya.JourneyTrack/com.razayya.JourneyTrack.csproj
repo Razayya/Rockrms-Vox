@@ -61,6 +61,8 @@
     <Compile Include="Model\JourneyCalculationRunService.cs" />
     <Compile Include="Model\JourneyCommunicationLog.cs" />
     <Compile Include="Model\JourneyCommunicationLogService.cs" />
+    <Compile Include="Model\JourneyProgramEnrollment.cs" />
+    <Compile Include="Model\JourneyProgramEnrollmentService.cs" />
     <!-- JourneyCalculation Types -->
     <Compile Include="CalculationTypes\JourneyCalculationTypeContainer.cs" />
     <Compile Include="CalculationTypes\JourneyCalculationTypeComponent.cs" />
@@ -79,6 +81,7 @@
     <Compile Include="Field\Types\JourneyProgramFieldType.cs" />
     <!-- Workflow Actions -->
     <Compile Include="Workflow\Action\RunPersonJourneySync.cs" />
+    <Compile Include="Workflow\Action\EnrollPersonInJourneyProgram.cs" />
     <!-- Jobs -->
     <Compile Include="Jobs\RunJourneyTrackEngine.cs" />
     <Compile Include="Jobs\SendJourneyCommunications.cs" />
@@ -94,6 +97,8 @@
     <Compile Include="Migrations\005_RegisterFieldTypeAndWorkflowAction.cs" />
     <Compile Include="Migrations\006_RegisterCalculationTypes.cs" />
     <Compile Include="Migrations\007_RegisterMediaWatchedCalc.cs" />
+    <Compile Include="Migrations\008_AddEnrollment.cs" />
+    <Compile Include="Migrations\009_AddSkipIfTargetHasValue.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

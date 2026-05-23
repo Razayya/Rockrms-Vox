@@ -105,6 +105,26 @@ namespace com.razayya.JourneyTrack.Model
         [DataMember]
         public bool RequiresEnrollment { get; set; }
 
+        /// <summary>
+        /// When true, the demographic Population filters (RecordStatusValueId,
+        /// ConnectionStatusValueId, CampusId, DataViewId) become the auto-enroll
+        /// specification. The nightly job (and an ad-hoc trigger) reconciles by
+        /// upserting matching persons into JourneyProgramEnrollment.
+        /// Only takes effect when RequiresEnrollment = true.
+        /// </summary>
+        [DataMember]
+        public bool AutoEnrollFromPopulation { get; set; }
+
+        /// <summary>
+        /// When true, reconciliation also marks enrollments inactive when the
+        /// person no longer matches the population spec (soft unenroll, keeps
+        /// the audit row). When false, auto-enroll only ADDS — people who change
+        /// campuses etc. keep their journey progress.
+        /// Only takes effect when AutoEnrollFromPopulation = true.
+        /// </summary>
+        [DataMember]
+        public bool AutoUnenrollOnPopulationLeave { get; set; }
+
         #endregion
 
         #region Navigation Properties

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data.Entity;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -93,6 +94,157 @@ namespace com.razayya.JourneyTrack.Rest
         {
             return new JourneyTrackService().GetProgramProgressForPerson( programId, personId );
         }
+
+        /// <summary>
+        /// Enroll a person in a Program. Idempotent — re-activates a prior inactive row
+        /// if present; no-op if already actively enrolled.
+        /// </summary>
+        [Authenticate, Secured]
+        [HttpPost]
+        [System.Web.Http.Route( "api/com_razayya_JourneyTrack/JourneyPrograms/Enroll/{programId}/{personId}" )]
+        [Rock.SystemGuid.RestActionGuid( "B0E1A2C3-D4E5-4F67-89AB-CDEF0123456A" )]
+        public EnrollmentSummary EnrollPerson( int programId, int personId, string source = "REST" )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var personAliasId = new PersonAliasService( rockContext ).Queryable()
+                    .Where( pa => pa.PersonId == personId && pa.AliasPersonId == personId )
+                    .Select( pa => ( int? ) pa.Id )
+                    .FirstOrDefault();
+                if ( !personAliasId.HasValue )
+                {
+                    return new EnrollmentSummary { PersonId = personId, ProgramId = programId,
+                        Status = "PersonAlias not found" };
+                }
+
+                var enrollmentService = new JourneyProgramEnrollmentService( rockContext );
+                var existing = enrollmentService.Queryable()
+                    .Where( e => e.JourneyProgramId == programId && e.PersonAlias.PersonId == personId )
+                    .OrderByDescending( e => e.Id )
+                    .FirstOrDefault();
+
+                var nowUtc = RockDateTime.Now;
+                var summary = new EnrollmentSummary { PersonId = personId, ProgramId = programId };
+                if ( existing == null )
+                {
+                    var row = new JourneyProgramEnrollment
+                    {
+                        JourneyProgramId = programId,
+                        PersonAliasId = personAliasId.Value,
+                        EnrolledDateTime = nowUtc,
+                        IsActive = true,
+                        Source = string.IsNullOrWhiteSpace( source ) ? "REST" : source
+                    };
+                    enrollmentService.Add( row );
+                    rockContext.SaveChanges();
+                    summary.EnrollmentId = row.Id;
+                    summary.Status = "Created";
+                }
+                else if ( !existing.IsActive )
+                {
+                    existing.IsActive = true;
+                    existing.UnenrolledDateTime = null;
+                    existing.ModifiedDateTime = nowUtc;
+                    rockContext.SaveChanges();
+                    summary.EnrollmentId = existing.Id;
+                    summary.Status = "Reactivated";
+                }
+                else
+                {
+                    summary.EnrollmentId = existing.Id;
+                    summary.Status = "AlreadyEnrolled";
+                }
+                return summary;
+            }
+        }
+
+        /// <summary>
+        /// Soft-unenroll a person from a Program. Keeps the row for audit;
+        /// sets IsActive=false + UnenrolledDateTime. No-op if not actively enrolled.
+        /// </summary>
+        [Authenticate, Secured]
+        [HttpPost]
+        [System.Web.Http.Route( "api/com_razayya_JourneyTrack/JourneyPrograms/Unenroll/{programId}/{personId}" )]
+        [Rock.SystemGuid.RestActionGuid( "B0E1A2C3-D4E5-4F67-89AB-CDEF0123456B" )]
+        public EnrollmentSummary UnenrollPerson( int programId, int personId )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var enrollmentService = new JourneyProgramEnrollmentService( rockContext );
+                var row = enrollmentService.Queryable()
+                    .Where( e => e.JourneyProgramId == programId && e.PersonAlias.PersonId == personId && e.IsActive )
+                    .OrderByDescending( e => e.Id )
+                    .FirstOrDefault();
+
+                var summary = new EnrollmentSummary { PersonId = personId, ProgramId = programId };
+                if ( row == null )
+                {
+                    summary.Status = "NotEnrolled";
+                    return summary;
+                }
+                row.IsActive = false;
+                row.UnenrolledDateTime = RockDateTime.Now;
+                row.ModifiedDateTime = row.UnenrolledDateTime;
+                rockContext.SaveChanges();
+                summary.EnrollmentId = row.Id;
+                summary.Status = "Unenrolled";
+                return summary;
+            }
+        }
+
+        /// <summary>
+        /// Reports the active enrollment status for a (program, person), if any.
+        /// </summary>
+        [Authenticate, Secured]
+        [HttpGet]
+        [System.Web.Http.Route( "api/com_razayya_JourneyTrack/JourneyPrograms/Enrollment/{programId}/{personId}" )]
+        [Rock.SystemGuid.RestActionGuid( "B0E1A2C3-D4E5-4F67-89AB-CDEF0123456C" )]
+        public EnrollmentSummary GetEnrollment( int programId, int personId )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var row = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                    .Where( e => e.JourneyProgramId == programId && e.PersonAlias.PersonId == personId )
+                    .OrderByDescending( e => e.Id )
+                    .Select( e => new EnrollmentSummary
+                    {
+                        EnrollmentId = e.Id,
+                        ProgramId = programId,
+                        PersonId = personId,
+                        IsActive = e.IsActive,
+                        EnrolledDateTime = e.EnrolledDateTime,
+                        UnenrolledDateTime = e.UnenrolledDateTime,
+                        Source = e.Source,
+                        Status = e.IsActive ? "Enrolled" : "Unenrolled"
+                    } )
+                    .FirstOrDefault();
+                return row ?? new EnrollmentSummary { ProgramId = programId, PersonId = personId, Status = "NotEnrolled" };
+            }
+        }
+
+        /// <summary>
+        /// Trigger an enrollment reconciliation pass against the Program's population spec.
+        /// </summary>
+        [Authenticate, Secured]
+        [HttpPost]
+        [System.Web.Http.Route( "api/com_razayya_JourneyTrack/JourneyPrograms/ReconcileEnrollments/{programId}" )]
+        [Rock.SystemGuid.RestActionGuid( "B0E1A2C3-D4E5-4F67-89AB-CDEF0123456D" )]
+        public ReconcileResult ReconcileEnrollments( int programId )
+        {
+            return new JourneyTrackService().ReconcileEnrollments( programId );
+        }
+    }
+
+    public class EnrollmentSummary
+    {
+        public int ProgramId { get; set; }
+        public int PersonId { get; set; }
+        public int EnrollmentId { get; set; }
+        public bool IsActive { get; set; }
+        public System.DateTime? EnrolledDateTime { get; set; }
+        public System.DateTime? UnenrolledDateTime { get; set; }
+        public string Source { get; set; }
+        public string Status { get; set; }
     }
 
     public class SyncSummary

@@ -96,6 +96,15 @@ namespace com.razayya.JourneyTrack.Model
         [DataMember]
         public string NoMatchLavaTemplate { get; set; }
 
+        /// <summary>
+        /// When true, the engine skips evaluating this calculation entirely for any
+        /// person who already has a non-blank value stored in the target Person
+        /// Attribute. "Write once, then leave alone" semantics. Has no effect for
+        /// transient (sink-optional) calculations — nothing to check against.
+        /// </summary>
+        [DataMember]
+        public bool SkipIfTargetHasValue { get; set; }
+
         #endregion
 
         #region Navigation Properties

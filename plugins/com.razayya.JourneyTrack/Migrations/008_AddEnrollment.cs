@@ -13,13 +13,27 @@ namespace com.razayya.JourneyTrack.Migrations
         {
             Sql( @"
 -- ============================================================
--- JourneyProgram: add RequiresEnrollment flag (opt-in)
+-- JourneyProgram: enrollment-related flags
 -- ============================================================
 IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE Name = N'RequiresEnrollment' AND Object_ID = Object_ID(N'_com_razayya_JourneyTrack_JourneyProgram'))
 BEGIN
     ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram]
         ADD [RequiresEnrollment] BIT NOT NULL
             CONSTRAINT [DF__JTrack_JP_ReqEnroll] DEFAULT(0);
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE Name = N'AutoEnrollFromPopulation' AND Object_ID = Object_ID(N'_com_razayya_JourneyTrack_JourneyProgram'))
+BEGIN
+    ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram]
+        ADD [AutoEnrollFromPopulation] BIT NOT NULL
+            CONSTRAINT [DF__JTrack_JP_AutoEnroll] DEFAULT(0);
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE Name = N'AutoUnenrollOnPopulationLeave' AND Object_ID = Object_ID(N'_com_razayya_JourneyTrack_JourneyProgram'))
+BEGIN
+    ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram]
+        ADD [AutoUnenrollOnPopulationLeave] BIT NOT NULL
+            CONSTRAINT [DF__JTrack_JP_AutoUnenroll] DEFAULT(0);
 END
 
 -- ============================================================
@@ -88,6 +102,16 @@ END
 IF EXISTS (SELECT 1 FROM sys.tables WHERE name = N'_com_razayya_JourneyTrack_JourneyProgramEnrollment')
     DROP TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgramEnrollment];
 
+IF EXISTS (SELECT 1 FROM sys.columns WHERE Name = N'AutoUnenrollOnPopulationLeave' AND Object_ID = Object_ID(N'_com_razayya_JourneyTrack_JourneyProgram'))
+BEGIN
+    ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] DROP CONSTRAINT [DF__JTrack_JP_AutoUnenroll];
+    ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] DROP COLUMN [AutoUnenrollOnPopulationLeave];
+END
+IF EXISTS (SELECT 1 FROM sys.columns WHERE Name = N'AutoEnrollFromPopulation' AND Object_ID = Object_ID(N'_com_razayya_JourneyTrack_JourneyProgram'))
+BEGIN
+    ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] DROP CONSTRAINT [DF__JTrack_JP_AutoEnroll];
+    ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] DROP COLUMN [AutoEnrollFromPopulation];
+END
 IF EXISTS (SELECT 1 FROM sys.columns WHERE Name = N'RequiresEnrollment' AND Object_ID = Object_ID(N'_com_razayya_JourneyTrack_JourneyProgram'))
 BEGIN
     ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] DROP CONSTRAINT [DF__JTrack_JP_ReqEnroll];

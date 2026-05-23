@@ -145,6 +145,8 @@
                                     EditorMode="Lava" EditorTheme="Rock" EditorHeight="80"
                                     Help="Lava template for the value written when the person does not match." />
                             </asp:Panel>
+                            <Rock:RockCheckBox ID="cbSkipIfTargetHasValue" runat="server" Label="Skip If Target Has Value"
+                                Help="When enabled, the engine skips this calculation entirely for any person whose target Person Attribute already has a non-blank value. 'Write once, then leave alone' semantics. Big perf win when most people are already done." />
                         </div>
                     </div>
 

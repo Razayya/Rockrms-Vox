@@ -44,6 +44,18 @@ namespace com.razayya.JourneyTrack.Data
                 {
                     try
                     {
+                        // Reconcile enrollments from the population spec BEFORE processing,
+                        // so the run iterates the freshly-materialized active set.
+                        if ( group.RequiresEnrollment && group.AutoEnrollFromPopulation )
+                        {
+                            var rec = ReconcileEnrollments( group.Id );
+                            if ( rec.Added > 0 || rec.Reactivated > 0 || rec.SoftUnenrolled > 0 )
+                            {
+                                result.Log.Add( $"Reconcile '{group.Name}': +{rec.Added} added, +{rec.Reactivated} reactivated, -{rec.SoftUnenrolled} soft-unenrolled (active now {rec.ActiveAfter})." );
+                            }
+                            result.Errors.AddRange( rec.Errors );
+                        }
+
                         var groupResult = ProcessGroup( group.Id );
                         result.Merge( groupResult );
                     }
@@ -548,10 +560,50 @@ namespace com.razayya.JourneyTrack.Data
             }
 
             calc.LoadAttributes( rockContext );
-            var matchedResults = component.Evaluate( rockContext, calc, workingPopulation );
+
+            // "Sticky" mode: if SkipIfTargetHasValue is set and the calc has a sink
+            // attribute, exclude people who already have a non-blank value. Big win
+            // for full-population syncs where most people are "done" with the step,
+            // and for single-person syncs where the person has already completed it.
+            var workingPopulationForEval = workingPopulation;
+            int skippedCount = 0;
+            if ( calc.SkipIfTargetHasValue && calc.PersonAttributeId.HasValue && workingPopulation.Count > 0 )
+            {
+                var skipPersonIds = new HashSet<int>( new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                    .Where( av => av.AttributeId == calc.PersonAttributeId.Value
+                        && av.EntityId.HasValue
+                        && workingPopulation.Contains( av.EntityId.Value )
+                        && av.Value != null
+                        && av.Value != string.Empty )
+                    .Select( av => av.EntityId.Value )
+                    .ToList() );
+                if ( skipPersonIds.Count > 0 )
+                {
+                    workingPopulationForEval = new HashSet<int>( workingPopulation );
+                    workingPopulationForEval.ExceptWith( skipPersonIds );
+                    skippedCount = skipPersonIds.Count;
+                }
+            }
+
+            // Short-circuit when sticky-skip drained the population entirely.
+            if ( workingPopulationForEval.Count == 0 && skippedCount > 0 )
+            {
+                result.Log.Add( $"    JourneyCalculation '{calc.Name}': 0/{workingPopulation.Count} evaluated (sticky-skipped {skippedCount} already-set)" );
+                RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, 0, result );
+                return result;
+            }
+
+            var matchedResults = component.Evaluate( rockContext, calc, workingPopulationForEval );
 
             result.MatchedPersonIds = new HashSet<int>( matchedResults.Keys );
-            result.Log.Add( $"    JourneyCalculation '{calc.Name}': {matchedResults.Count}/{workingPopulation.Count} matched" );
+            if ( skippedCount > 0 )
+            {
+                result.Log.Add( $"    JourneyCalculation '{calc.Name}': {matchedResults.Count}/{workingPopulationForEval.Count} matched (sticky-skipped {skippedCount} already-set)" );
+            }
+            else
+            {
+                result.Log.Add( $"    JourneyCalculation '{calc.Name}': {matchedResults.Count}/{workingPopulation.Count} matched" );
+            }
 
             // Sink-optional: when no target attribute is configured the calc is transient.
             // We still report matches (so Stage / Program rollups consume them) but skip
@@ -674,11 +726,10 @@ namespace com.razayya.JourneyTrack.Data
 
         private HashSet<int> BuildBasePopulation( JourneyProgram group, RockContext rockContext )
         {
-            HashSet<int> result;
-
-            // Enrollment-driven base population — the program iterates only people who have
-            // an active JourneyProgramEnrollment row. Demographic filters still apply as an
-            // AND-intersect on top, in case a program wants e.g. "enrolled people on Main Campus".
+            // RequiresEnrollment programs: the enrollment table IS the base population.
+            // Population filters on the program are the auto-enroll SPEC (used by
+            // ReconcileEnrollments), not a runtime filter — anyone who needed to be
+            // included was reconciled into the enrollment table already.
             if ( group.RequiresEnrollment )
             {
                 var enrolledPersonIds = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
@@ -686,45 +737,30 @@ namespace com.razayya.JourneyTrack.Data
                     .Select( e => e.PersonAlias.PersonId )
                     .Distinct()
                     .ToList();
-                result = new HashSet<int>( enrolledPersonIds );
-
-                if ( result.Count == 0 )
-                {
-                    return result;
-                }
-
-                // Apply demographic filters as an intersect via a single Person query
-                if ( group.RecordStatusValueId.HasValue
-                    || group.ConnectionStatusValueId.HasValue
-                    || group.CampusId.HasValue )
-                {
-                    var personQ = new PersonService( rockContext ).Queryable().AsNoTracking()
-                        .Where( p => result.Contains( p.Id ) );
-
-                    if ( group.RecordStatusValueId.HasValue )
-                        personQ = personQ.Where( p => p.RecordStatusValueId == group.RecordStatusValueId.Value );
-                    if ( group.ConnectionStatusValueId.HasValue )
-                        personQ = personQ.Where( p => p.ConnectionStatusValueId == group.ConnectionStatusValueId.Value );
-                    if ( group.CampusId.HasValue )
-                        personQ = personQ.Where( p => p.PrimaryCampusId == group.CampusId.Value );
-
-                    result.IntersectWith( personQ.Select( p => p.Id ).ToList() );
-                }
+                return new HashSet<int>( enrolledPersonIds );
             }
-            else
-            {
-                // Legacy: program iterates everyone matching its demographic filters
-                var query = new PersonService( rockContext ).Queryable().AsNoTracking();
 
-                if ( group.RecordStatusValueId.HasValue )
-                    query = query.Where( p => p.RecordStatusValueId == group.RecordStatusValueId.Value );
-                if ( group.ConnectionStatusValueId.HasValue )
-                    query = query.Where( p => p.ConnectionStatusValueId == group.ConnectionStatusValueId.Value );
-                if ( group.CampusId.HasValue )
-                    query = query.Where( p => p.PrimaryCampusId == group.CampusId.Value );
+            // Legacy: program iterates everyone matching its demographic filters.
+            return BuildCandidatePopulation( group, rockContext );
+        }
 
-                result = new HashSet<int>( query.Select( p => p.Id ).ToList() );
-            }
+        /// <summary>
+        /// Compute the set of Person Ids matching this program's demographic filters
+        /// (RecordStatus / Connection / Campus / DataView). Shared by legacy
+        /// BuildBasePopulation and by ReconcileEnrollments (auto-enroll spec).
+        /// </summary>
+        private HashSet<int> BuildCandidatePopulation( JourneyProgram group, RockContext rockContext )
+        {
+            var query = new PersonService( rockContext ).Queryable().AsNoTracking();
+
+            if ( group.RecordStatusValueId.HasValue )
+                query = query.Where( p => p.RecordStatusValueId == group.RecordStatusValueId.Value );
+            if ( group.ConnectionStatusValueId.HasValue )
+                query = query.Where( p => p.ConnectionStatusValueId == group.ConnectionStatusValueId.Value );
+            if ( group.CampusId.HasValue )
+                query = query.Where( p => p.PrimaryCampusId == group.CampusId.Value );
+
+            var result = new HashSet<int>( query.Select( p => p.Id ).ToList() );
 
             if ( group.DataViewId.HasValue )
             {
@@ -747,6 +783,146 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
+            return result;
+        }
+
+        /// <summary>
+        /// Reconcile the enrollment table for this program against its population
+        /// spec. Uses Rock's BulkInsert + chunked BulkUpdate so an initial
+        /// reconciliation of 30k+ candidates completes in seconds rather than
+        /// hanging EF for minutes.
+        /// </summary>
+        public ReconcileResult ReconcileEnrollments( int programId )
+        {
+            var result = new ReconcileResult();
+            using ( var rockContext = new RockContext() )
+            {
+                var group = new JourneyProgramService( rockContext ).Get( programId );
+                if ( group == null )
+                {
+                    result.Errors.Add( $"Journey Program Id {programId} not found." );
+                    return result;
+                }
+                if ( !group.RequiresEnrollment || !group.AutoEnrollFromPopulation )
+                {
+                    result.Log.Add( $"Program '{group.Name}' has AutoEnrollFromPopulation=false — nothing to reconcile." );
+                    return result;
+                }
+
+                var candidates = BuildCandidatePopulation( group, rockContext );
+                result.CandidatePopulation = candidates.Count;
+                result.Log.Add( $"Program '{group.Name}': candidate population {candidates.Count}" );
+
+                // Snapshot current enrollment state (active + inactive) in one round trip.
+                var existing = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                    .Where( e => e.JourneyProgramId == group.Id )
+                    .Select( e => new { e.Id, PersonId = e.PersonAlias.PersonId, e.IsActive } )
+                    .ToList();
+
+                var activeEnrolledPersonIds = new HashSet<int>(
+                    existing.Where( e => e.IsActive ).Select( e => e.PersonId ) );
+                var inactiveEnrolledRowsByPersonId = existing
+                    .Where( e => !e.IsActive )
+                    .GroupBy( e => e.PersonId )
+                    .ToDictionary( g => g.Key, g => g.OrderByDescending( x => x.Id ).First().Id );
+
+                // Partition candidates → new vs needs-reactivation
+                var personIdsToInsert = new List<int>();
+                var enrollmentIdsToReactivate = new List<int>();
+                foreach ( var personId in candidates )
+                {
+                    if ( activeEnrolledPersonIds.Contains( personId ) ) continue;
+
+                    if ( inactiveEnrolledRowsByPersonId.TryGetValue( personId, out var inactiveId ) )
+                    {
+                        enrollmentIdsToReactivate.Add( inactiveId );
+                    }
+                    else
+                    {
+                        personIdsToInsert.Add( personId );
+                    }
+                }
+
+                var nowUtc = RockDateTime.Now;
+
+                // BULK INSERT new rows. Load all primary aliases in one query
+                // (one-shot ~50k rows, far cheaper than 30k `Contains` calls).
+                if ( personIdsToInsert.Count > 0 )
+                {
+                    var primaryAliasMap = new PersonAliasService( rockContext ).Queryable().AsNoTracking()
+                        .Where( pa => pa.AliasPersonId.HasValue && pa.AliasPersonId == pa.PersonId )
+                        .Select( pa => new { pa.PersonId, AliasId = pa.Id } )
+                        .ToDictionary( x => x.PersonId, x => x.AliasId );
+
+                    var newRows = new List<JourneyProgramEnrollment>( personIdsToInsert.Count );
+                    foreach ( var personId in personIdsToInsert )
+                    {
+                        if ( !primaryAliasMap.TryGetValue( personId, out var aliasId ) ) continue;
+                        newRows.Add( new JourneyProgramEnrollment
+                        {
+                            JourneyProgramId = group.Id,
+                            PersonAliasId = aliasId,
+                            EnrolledDateTime = nowUtc,
+                            IsActive = true,
+                            Source = "AutoEnroll",
+                            Guid = System.Guid.NewGuid(),
+                            CreatedDateTime = nowUtc,
+                            ModifiedDateTime = nowUtc
+                        } );
+                    }
+                    if ( newRows.Count > 0 )
+                    {
+                        rockContext.BulkInsert( newRows );
+                        result.Added = newRows.Count;
+                    }
+                }
+
+                // BULK REACTIVATE inactive rows. Chunk by ~2000 to keep the
+                // generated IN-list tractable.
+                if ( enrollmentIdsToReactivate.Count > 0 )
+                {
+                    int batchSize = 2000;
+                    for ( int offset = 0; offset < enrollmentIdsToReactivate.Count; offset += batchSize )
+                    {
+                        var chunk = enrollmentIdsToReactivate.Skip( offset ).Take( batchSize ).ToList();
+                        var q = new JourneyProgramEnrollmentService( rockContext ).Queryable()
+                            .Where( e => chunk.Contains( e.Id ) );
+                        rockContext.BulkUpdate( q, e => new JourneyProgramEnrollment
+                        {
+                            IsActive = true,
+                            UnenrolledDateTime = null,
+                            ModifiedDateTime = nowUtc
+                        } );
+                        result.Reactivated += chunk.Count;
+                    }
+                }
+
+                // BULK SOFT-UNENROLL the no-longer-matching people, if configured.
+                if ( group.AutoUnenrollOnPopulationLeave )
+                {
+                    var staleIds = existing
+                        .Where( e => e.IsActive && !candidates.Contains( e.PersonId ) )
+                        .Select( e => e.Id )
+                        .ToList();
+                    int batchSize = 2000;
+                    for ( int offset = 0; offset < staleIds.Count; offset += batchSize )
+                    {
+                        var chunk = staleIds.Skip( offset ).Take( batchSize ).ToList();
+                        var q = new JourneyProgramEnrollmentService( rockContext ).Queryable()
+                            .Where( e => chunk.Contains( e.Id ) );
+                        rockContext.BulkUpdate( q, e => new JourneyProgramEnrollment
+                        {
+                            IsActive = false,
+                            UnenrolledDateTime = nowUtc,
+                            ModifiedDateTime = nowUtc
+                        } );
+                        result.SoftUnenrolled += chunk.Count;
+                    }
+                }
+
+                result.ActiveAfter = activeEnrolledPersonIds.Count + result.Added + result.Reactivated - result.SoftUnenrolled;
+                result.Log.Add( $"  Added {result.Added}, Reactivated {result.Reactivated}, Soft-Unenrolled {result.SoftUnenrolled}, ActiveAfter {result.ActiveAfter}" );
+            }
             return result;
         }
 
@@ -1004,6 +1180,20 @@ namespace com.razayya.JourneyTrack.Data
     }
 
     #region Result Classes
+
+    /// <summary>
+    /// Result of an enrollment reconciliation pass.
+    /// </summary>
+    public class ReconcileResult
+    {
+        public int CandidatePopulation { get; set; }
+        public int ActiveAfter { get; set; }
+        public int Added { get; set; }
+        public int Reactivated { get; set; }
+        public int SoftUnenrolled { get; set; }
+        public List<string> Errors { get; set; } = new List<string>();
+        public List<string> Log { get; set; } = new List<string>();
+    }
 
     /// <summary>
     /// Result of a sync engine execution.
