@@ -22,6 +22,7 @@ harness gives it an empty memory namespace and does not register these skills).
    | create a page / block / attribute | `rock-page-create/SKILL.md` |
    | build / deploy a workflow | `rock-workflow-deploy/SKILL.md` |
    | update Rock to a version | `rock-update/SKILL.md` |
+   | pipeline / BEMA pipeline / ProcessLogic / pipeline action or step | `bema-pipeline-skill/SKILL.md` |
 
 ## Conventions
 

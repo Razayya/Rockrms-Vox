@@ -52,6 +52,7 @@ Packages/*
 !.claude/skills/rock-update/
 !.claude/skills/rock-workflow-deploy/
 !.claude/skills/rock-page-create/
+!.claude/skills/bema-pipeline-skill/
 
 # thin-repo build output (clone of upstream Rock + plugin overlay)
 build/
