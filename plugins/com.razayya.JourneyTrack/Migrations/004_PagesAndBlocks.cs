@@ -30,7 +30,7 @@ namespace com.razayya.JourneyTrack.Migrations
             // ============================================================
             // Pages
             // ============================================================
-            RockMigrationHelper.AddPage( PARENT_INSTALLED_PLUGINS, LAYOUT_FULL_WIDTH, "JourneyTrack",          "Journey programs and calculations.", PAGE_JOURNEYTRACK );
+            RockMigrationHelper.AddPage( PARENT_INSTALLED_PLUGINS, LAYOUT_FULL_WIDTH, "JourneyTrack",          "Journey programs and calculations.", PAGE_JOURNEYTRACK, "fa fa-route" );
             RockMigrationHelper.AddPage( PAGE_JOURNEYTRACK,        LAYOUT_FULL_WIDTH, "Configuration",         "Configure journey programs, stages and calculations.", PAGE_CONFIGURATION );
             RockMigrationHelper.AddPage( PAGE_JOURNEYTRACK,        LAYOUT_FULL_WIDTH, "Run History",           "Historical runs of journey calculations.", PAGE_RUN_HISTORY );
             RockMigrationHelper.AddPage( PAGE_CONFIGURATION,       LAYOUT_FULL_WIDTH, "Journey Program",       "Detail page for a Journey Program.", PAGE_JOURNEY_PROGRAM_DETAIL );
