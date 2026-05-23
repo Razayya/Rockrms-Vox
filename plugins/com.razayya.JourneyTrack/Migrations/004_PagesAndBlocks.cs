@@ -24,18 +24,21 @@ namespace com.razayya.JourneyTrack.Migrations
         // Installed Plugins page Guid (Rock built-in)
         private const string PARENT_INSTALLED_PLUGINS = "5b6dbc42-8b03-4d15-8d92-aafa28fd8616";
         private const string LAYOUT_FULL_WIDTH        = "d65f783d-87a9-4cc9-8110-e83466a0eadb";
+        private const string LAYOUT_LEFT_SIDEBAR      = "0cb60906-6b74-44fd-ab25-026050ef70eb";
 
         public override void Up()
         {
             // ============================================================
             // Pages
             // ============================================================
-            RockMigrationHelper.AddPage( PARENT_INSTALLED_PLUGINS, LAYOUT_FULL_WIDTH, "JourneyTrack",          "Journey programs and calculations.", PAGE_JOURNEYTRACK, "fa fa-map-signs" );
-            RockMigrationHelper.AddPage( PAGE_JOURNEYTRACK,        LAYOUT_FULL_WIDTH, "Configuration",         "Configure journey programs, stages and calculations.", PAGE_CONFIGURATION );
-            RockMigrationHelper.AddPage( PAGE_JOURNEYTRACK,        LAYOUT_FULL_WIDTH, "Run History",           "Historical runs of journey calculations.", PAGE_RUN_HISTORY );
-            RockMigrationHelper.AddPage( PAGE_CONFIGURATION,       LAYOUT_FULL_WIDTH, "Journey Program",       "Detail page for a Journey Program.", PAGE_JOURNEY_PROGRAM_DETAIL );
-            RockMigrationHelper.AddPage( PAGE_JOURNEY_PROGRAM_DETAIL, LAYOUT_FULL_WIDTH, "Stage",                "Detail page for a Stage.", PAGE_STAGE_DETAIL );
-            RockMigrationHelper.AddPage( PAGE_STAGE_DETAIL,        LAYOUT_FULL_WIDTH, "Journey Calculation",   "Detail page for a Journey Calculation.", PAGE_JOURNEY_CALCULATION_DETAIL );
+            // Top-level + detail pages host a sidebar tree-view block alongside Main; use Left Sidebar layout.
+            // Configuration + Run History are Main-only — Full Width is correct.
+            RockMigrationHelper.AddPage( PARENT_INSTALLED_PLUGINS, LAYOUT_LEFT_SIDEBAR, "JourneyTrack",          "Journey programs and calculations.", PAGE_JOURNEYTRACK, "fa fa-map-signs" );
+            RockMigrationHelper.AddPage( PAGE_JOURNEYTRACK,        LAYOUT_FULL_WIDTH,   "Configuration",         "Configure journey programs, stages and calculations.", PAGE_CONFIGURATION );
+            RockMigrationHelper.AddPage( PAGE_JOURNEYTRACK,        LAYOUT_FULL_WIDTH,   "Run History",           "Historical runs of journey calculations.", PAGE_RUN_HISTORY );
+            RockMigrationHelper.AddPage( PAGE_CONFIGURATION,       LAYOUT_LEFT_SIDEBAR, "Journey Program",       "Detail page for a Journey Program.", PAGE_JOURNEY_PROGRAM_DETAIL );
+            RockMigrationHelper.AddPage( PAGE_JOURNEY_PROGRAM_DETAIL, LAYOUT_LEFT_SIDEBAR, "Stage",              "Detail page for a Stage.", PAGE_STAGE_DETAIL );
+            RockMigrationHelper.AddPage( PAGE_STAGE_DETAIL,        LAYOUT_LEFT_SIDEBAR, "Journey Calculation",   "Detail page for a Journey Calculation.", PAGE_JOURNEY_CALCULATION_DETAIL );
 
             // ============================================================
             // Block Types
