@@ -131,10 +131,12 @@ When an action should fire only when a workflow attribute holds a particular val
 UPDATE WorkflowActionType
 SET CriteriaAttributeGuid           = '<workflow-attribute-guid>',
     CriteriaValue                   = N'true',     -- or 'false', or any string to compare
-    CriteriaComparisonType          = 1,           -- 1=EqualTo, 2=NotEqualTo, 4=Contains, 8=StartsWith, 16=EndsWith, 32=GreaterThan, 64=LessThan, 128=GreaterThanOrEqualTo, 256=LessThanOrEqualTo
+    CriteriaComparisonType          = 1,           -- see ComparisonType values below
     IsActionCompletedIfCriteriaUnmet = 0           -- 0 = skip when criteria fails (downstream still runs); 1 = "complete" the action without running
 WHERE Id = <actionTypeId>;
 ```
+
+`CriteriaComparisonType` is the `Rock.Model.ComparisonType` flags enum (verified against 17.5.2 source): `1` EqualTo · `2` NotEqualTo · `4` StartsWith · `8` Contains · `16` DoesNotContain · `32` IsBlank · `64` IsNotBlank · `128` GreaterThan · `256` GreaterThanOrEqualTo · `512` LessThan · `1024` LessThanOrEqualTo · `2048` EndsWith · `4096` Between · `8192` RegularExpression. **To gate on "attribute is empty / not empty", use `IsBlank` (32) / `IsNotBlank` (64)** — they take no `CriteriaValue`; don't hack it with `EqualTo ''`.
 
 At runtime Rock evaluates `Criteria*` first — if the criteria fails, the action skips entirely, regardless of what `Active` says. The `Active` config-AV approach (setting `Value` to a workflow-attribute Guid so it resolves to True/False at runtime) does also work as a gate, but:
 - Two gates fighting over the same intent invite drift when one is touched and the other isn't.
@@ -188,6 +190,65 @@ A second option — assign-flag pattern — works when many independent flags fe
 ```
 
 Prefer `elseif` chains for Lava that drives a workflow attribute (cleaner single-token output); use the assign-flag pattern only when the conditions are genuinely independent rather than alternative branches.
+
+### 11. Copy WorkflowType shares the AttributeMatrix with the source — fix it
+
+Rock's "Copy WorkflowType" UI translates workflow-attribute Guid refs in action config (the `EntityIdGuid` config AV that points at the workflow's `ConnectionRequest` attr, the `CriteriaAttributeGuid` on the action row, etc.) but **does NOT translate the `Matrix` config AV on `Set Entity Attributes` (BEMA matrix) actions**. After a copy, both the source action and the copy's clone reference the same `AttributeMatrix` row plus its items. Editing the matrix on the copy mutates production runtime behavior on the source.
+
+Additionally, the source matrix's items have `Value` column = source workflow-attribute Guid. Even though the copy created its own workflow attrs with the same Keys, the items still point at the source's attrs — so when the copy runs against those items, the lookups resolve to the wrong workflow's attrs (or null).
+
+Verified instance: WorkflowType 500 (copy of 435), action 6063 had:
+```
+Active        False
+EntityType    36b0d0c7-…       (translated correctly)
+EntityIdGuid  e9d59d95-…       (translated to type-500's ConnReq attr)
+Matrix        ad0b6926-…       (UNCHANGED -- still points at prod matrix 29220)
+```
+
+**Fix recipe** — for each matrix-using action on the copy:
+
+1. Confirm the bug premise: action's `Matrix` config AV equals the source matrix's Guid (if it doesn't, someone already fixed it — bail).
+2. Confirm every source matrix item's source-wf-attr Key has a counterpart on the copy's workflow (by Key). Abort with a translation-gap report if any are missing.
+3. Create a new `AttributeMatrix` row tied to the same `AttributeMatrixTemplateId`.
+4. Clone each source `AttributeMatrixItem` into the new matrix — new Item Guid, same `[Order]`, same `AttributeMatrixTemplateId`. Track source→new id pairs (an `OUTPUT INTO` table-var, or a temp-table MERGE).
+5. For each new item, copy the 2 `AttributeValue` config rows:
+   - **AttributeKey** column (literal CR-attr key): copy verbatim.
+   - **Value** column (wf-attr Guid): translate via `JOIN Attribute src_attr ON Guid = src_av.Value` → `JOIN Attribute tgt_attr ON tgt_attr.Key = src_attr.Key AND tgt_attr.<scoped to target workflow>`.
+6. UPDATE the matrix-action's `Matrix` config AV (`Attribute.Key = 'Matrix'` qualified by the BEMA action's EntityType 635) to the new matrix's Guid.
+
+Reference implementation: `claudefiles/rock/projects/6250/03-fix-copied-workflow-500-matrix.sql`. Uses `MERGE … OUTPUT INTO` to clone the items + capture the id-map in one statement, then two `INSERT…SELECT` for the AttributeValue copies (one verbatim, one Guid-translated). Pre-flight gates on premise + translation completeness; post-flight verifies zero unresolved Guids.
+
+Affects: `com.bemaservices.WorkflowExtensions.Workflow.Action.SetEntityAttribute` (EntityTypeId 635). Core `Rock.Workflow.Action.SetEntityAttribute` (557) has no matrix ref and is not affected. See `memory/reference_rock_workflow_copy_matrix_bug.md`.
+
+### 12. Audit a workflow attribute before building on it — and flag dead ones
+
+An attribute existing on a WorkflowType says nothing about whether it's *populated* or *read*. Two questions — run both before you compute from / map / gate on an attribute, and run them proactively when reviewing or tightening an existing workflow.
+
+**Is it populated?** Workflow 414 carries both `TerminationDate` (Date) and `TerminationDateandTime` (Date Time). Building on `TerminationDate` looked right by name — but a completed-instance audit showed it populated in **0 of 19**; `TerminationDateandTime` was the live one (19/19). The dead attribute would have produced silent blanks.
+
+```sql
+SELECT COUNT(*) AS Instances,
+       SUM(CASE WHEN av.Value > '' THEN 1 ELSE 0 END) AS Populated
+FROM Workflow w
+LEFT JOIN AttributeValue av ON av.EntityId = w.Id AND av.AttributeId = <attrId>
+WHERE w.WorkflowTypeId = <wtId> AND w.CompletedDateTime IS NOT NULL;
+```
+
+**Is anything reading it?** A workflow attribute is consumed in four places — scan all four, by Key *and* by Guid:
+- **Form fields** — `WorkflowActionFormAttribute WHERE AttributeId = <id>`
+- **Action config** — its Guid stored in another action's config AV (`Attribute` / `To` / `CC` / `ResultAttribute`, etc.): `AttributeValue.Value LIKE '%<guid>%'`
+- **Lava** — `Attribute:'<Key>'` inside email bodies, form Pre/PostHtml, RunSQL / RunLava bodies
+- **Launch mappings** — the `<Key>` inside a `WorkflowAttributeKey` config AV (this workflow as target, or as source elsewhere)
+
+**Recommend, don't just avoid.** An attribute that is neither populated nor referenced anywhere is dead weight — surface it: *"`X` isn't set or read anywhere — drop it?"* That's a cheap, high-value cleanup lever when tightening previously-built workflows. Mirror the four-source cross-reference discipline from `rock-project-review`'s cleanup scan.
+
+Extends gotcha #8 — names lie about behavior; instance data and reference scans are the only proof of what an attribute actually does.
+
+### 13. A WorkflowActionForm is invisible until an action references it — build the form and its action together
+
+A `WorkflowActionForm` row is only a form *definition*. It does not appear in the workflow editor and never renders until a `WorkflowActionType` (a User Entry Form action) points at it via `WorkflowFormId`. A committed-but-unreferenced form is a dead orphan — split the form and its action across separate steps and you get a confusing intermediate state (clear cache, see nothing, assume the work failed).
+
+Build them in **one migration**: the `WorkflowActionForm` + its `WorkflowActionFormAttribute` field rows + the `WorkflowActionType` that carries `WorkflowFormId`. If a migration sequence must stage them separately, say so explicitly up front so the orphan window is expected, not alarming.
 
 ## Schema cheat sheet (Vox DB-specific IDs as of 2026-04-29; verify with a quick SELECT before relying on them)
 
