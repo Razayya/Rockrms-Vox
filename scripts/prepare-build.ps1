@@ -5,12 +5,14 @@
 .DESCRIPTION
   Reads overlay/instance-versions.json for the named instance, shallow-clones
   SparkDevNetwork/Rock at instances.<Instance>.tag into instances.<Instance>.clone_dir,
-  junctions every directory under plugins/ into the clone, then derives Project /
+  junctions every directory under plugins/ into the clone, recursively overlays
+  each plugin's RockWeb/ subtree (e.g. WebForms .ascx blocks under
+  Plugins/<vendor>/<plugin>/) onto the cloned RockWeb/, then derives Project /
   ProjectConfigurationPlatforms / RockWeb-ProjectReferences sln entries from each
   plugin's csproj <ProjectGuid> and injects them into the upstream Rock.sln.
 
   Junctions (not symlinks) avoid the Windows Developer Mode / admin requirement.
-  Edits in plugins/ are live in the cloned Rock tree.
+  Edits in plugins/ are live in the cloned Rock tree, including .ascx files.
 
 .PARAMETER Instance
   Instance name from overlay/instance-versions.json (e.g. prod, dev).
@@ -124,6 +126,61 @@ foreach ($p in $plugins) {
     Write-Host "  $($p.Name) -> {$guid}"
 }
 if ($pluginEntries.Count -eq 0) { throw "No plugin sln entries derived; check csproj files." }
+
+# ============================================================
+# 2.5 Overlay each plugin's RockWeb/ subtree onto <TargetDir>/RockWeb/
+# ============================================================
+# Convention: a plugin can ship RockWeb files (.ascx blocks, themes, content)
+# under plugins/<name>/RockWeb/<relative-path>/. Mirror the tree by junctioning
+# the deepest directory that contains files. Intermediate directories that
+# contain only subdirs get plain-mkdir'd so multiple plugins (or SparkDev's
+# own content) can coexist alongside each other under the same parent.
+#
+# This refuses to overlay a non-empty SparkDev-owned directory; if a plugin
+# needs to add files into a directory SparkDev already populates, do it
+# explicitly with a separate file-level copy step instead.
+function Overlay-RockWebDir {
+    param([string]$Src, [string]$Dst)
+    $files = @(Get-ChildItem -LiteralPath $Src -File -Force -ErrorAction SilentlyContinue)
+    $subdirs = @(Get-ChildItem -LiteralPath $Src -Directory -Force -ErrorAction SilentlyContinue)
+
+    if ($files.Count -gt 0 -or $subdirs.Count -eq 0) {
+        # This dir holds files (or is an intentional leaf) -> junction it.
+        if (Test-Path -LiteralPath $Dst) {
+            $item = Get-Item -LiteralPath $Dst -Force
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                [IO.Directory]::Delete($Dst, $false)
+            } else {
+                $existing = Get-ChildItem -LiteralPath $Dst -Force -ErrorAction SilentlyContinue
+                if ($existing.Count -eq 0) {
+                    Remove-Item -LiteralPath $Dst -Force
+                } else {
+                    throw "RockWeb overlay collision (non-junction, non-empty): $Dst. SparkDev owns this path; resolve manually."
+                }
+            }
+        }
+        $parent = Split-Path $Dst -Parent
+        if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+        New-Item -ItemType Junction -Path $Dst -Target $Src | Out-Null
+        Write-Host "  RockWeb overlay: $($Dst.Substring($TargetDir.Length+1)) -> $Src"
+    } else {
+        # Only subdirs -> mkdir locally and recurse so siblings can coexist.
+        if (-not (Test-Path -LiteralPath $Dst)) { New-Item -ItemType Directory -Path $Dst -Force | Out-Null }
+        foreach ($sub in $subdirs) {
+            Overlay-RockWebDir -Src $sub.FullName -Dst (Join-Path $Dst $sub.Name)
+        }
+    }
+}
+
+$targetRockWeb = Join-Path $TargetDir 'RockWeb'
+foreach ($p in $plugins) {
+    $rockWebSrc = Join-Path $p.FullName 'RockWeb'
+    if (-not (Test-Path -LiteralPath $rockWebSrc)) { continue }
+    Write-Host "Overlaying $($p.Name)/RockWeb/ ..."
+    foreach ($sub in Get-ChildItem -LiteralPath $rockWebSrc -Directory -Force) {
+        Overlay-RockWebDir -Src $sub.FullName -Dst (Join-Path $targetRockWeb $sub.Name)
+    }
+}
 
 # ============================================================
 # 3. Inject plugin entries into upstream Rock.sln
