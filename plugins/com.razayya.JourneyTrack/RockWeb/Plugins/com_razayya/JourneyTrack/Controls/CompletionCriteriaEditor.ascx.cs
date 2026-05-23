@@ -332,11 +332,19 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
                     .ToDictionary( c => c.Id, c => c.Name );
             }
 
-            var parts = list.Select( c => FormatCriterionHtml( c, calcNames ) ).ToList();
-            return string.Join( " <strong>AND</strong> ", parts );
+            var sb = new System.Text.StringBuilder();
+            for ( int i = 0; i < list.Count; i++ )
+            {
+                if ( i > 0 )
+                {
+                    sb.Append( "<div class='text-muted small'>AND</div>" );
+                }
+                sb.Append( "<div>" ).Append( FormatCriterionLine( list[i], calcNames ) ).Append( "</div>" );
+            }
+            return sb.ToString();
         }
 
-        private static string FormatCriterionHtml( CompletionCriterion c, Dictionary<int, string> calcNames )
+        private static string FormatCriterionLine( CompletionCriterion c, Dictionary<int, string> calcNames )
         {
             var name = calcNames.TryGetValue( c.JourneyCalculationId, out var n ) ? n : ( "calc #" + c.JourneyCalculationId );
             var keyLabel = System.Web.HttpUtility.HtmlEncode( name );
@@ -359,10 +367,11 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
             if ( c.Comparison == ComparisonType.IsBlank || c.Comparison == ComparisonType.IsNotBlank )
             {
-                return "<strong>" + keyLabel + "</strong> " + cmpText + optionalSuffix;
+                return "<strong>" + keyLabel + "</strong> <span class='text-muted'>" + cmpText + "</span>" + optionalSuffix;
             }
-            return "<strong>" + keyLabel + "</strong> " + cmpText
-                + " <code>" + System.Web.HttpUtility.HtmlEncode( c.Value ?? string.Empty ) + "</code>"
+            return "<strong>" + keyLabel + "</strong> "
+                + "<span class='text-muted'>" + cmpText + "</span> "
+                + System.Web.HttpUtility.HtmlEncode( c.Value ?? string.Empty )
                 + optionalSuffix;
         }
 

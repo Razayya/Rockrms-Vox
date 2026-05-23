@@ -681,10 +681,12 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         #region View-mode summary formatter
 
         /// <summary>
-        /// Render the configured FilterConditions JSON as a friendly inline
+        /// Render the configured FilterConditions JSON as a friendly vertical
         /// summary (DataView-filter style), e.g.:
-        ///   <strong>Email</strong> contains <code>"vox.org"</code> <strong>AND</strong>
-        ///   <strong>Primary Campus</strong> is not blank
+        ///   Match all of:
+        ///     Age            equal to     1
+        ///     Ability Level  equal to     Infant
+        ///     Marital Status equal to     Widowed
         /// </summary>
         public static string FormatSummaryHtml( string filterConditionsJson, bool matchAll )
         {
@@ -704,12 +706,20 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
                 return "<em class='text-muted'>(no conditions configured — matches nobody)</em>";
             }
 
-            var parts = conditions.Select( FormatConditionHtml ).ToList();
-            var joiner = matchAll ? " <strong>AND</strong> " : " <strong>OR</strong> ";
-            return string.Join( joiner, parts );
+            var sb = new System.Text.StringBuilder();
+            var joiner = matchAll ? "AND" : "OR";
+            for ( int i = 0; i < conditions.Count; i++ )
+            {
+                if ( i > 0 )
+                {
+                    sb.Append( "<div class='text-muted small'>" ).Append( joiner ).Append( "</div>" );
+                }
+                sb.Append( "<div>" ).Append( FormatConditionLine( conditions[i] ) ).Append( "</div>" );
+            }
+            return sb.ToString();
         }
 
-        private static string FormatConditionHtml( FilterCondition c )
+        private static string FormatConditionLine( FilterCondition c )
         {
             if ( string.IsNullOrWhiteSpace( c.Key ) )
             {
@@ -721,20 +731,28 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
             if ( c.Comparison == ComparisonType.IsBlank || c.Comparison == ComparisonType.IsNotBlank )
             {
-                return "<strong>" + keyLabel + "</strong> " + cmpText;
+                return "<strong>" + keyLabel + "</strong> <span class='text-muted'>" + cmpText + "</span>";
             }
 
             var resolved = ResolveValueForDisplay( c );
-            return "<strong>" + keyLabel + "</strong> " + cmpText
-                + " <code>" + System.Web.HttpUtility.HtmlEncode( resolved ?? string.Empty ) + "</code>";
+            return "<strong>" + keyLabel + "</strong> "
+                + "<span class='text-muted'>" + cmpText + "</span> "
+                + System.Web.HttpUtility.HtmlEncode( resolved ?? string.Empty );
         }
 
         private static string GetKeyLabel( FilterCondition c )
         {
             if ( c.Source == FilterSource.Property )
             {
-                // Convert camel-case property names to spaced form.
-                return SplitCamelCase( c.Key );
+                // Convert camel-case property names to spaced form, then trim the
+                // trailing "Value Id" / "Id" so e.g. "MaritalStatusValueId" reads
+                // as "Marital Status" — matches how Rock surfaces these elsewhere.
+                var split = SplitCamelCase( c.Key );
+                if ( split.EndsWith( " Value Id", StringComparison.Ordinal ) )
+                    return split.Substring( 0, split.Length - " Value Id".Length );
+                if ( split.EndsWith( " Id", StringComparison.Ordinal ) )
+                    return split.Substring( 0, split.Length - " Id".Length );
+                return split;
             }
             var attr = GetPersonAttributes().FirstOrDefault( a => string.Equals( a.Key, c.Key, StringComparison.OrdinalIgnoreCase ) );
             return attr != null ? attr.Name : c.Key;
