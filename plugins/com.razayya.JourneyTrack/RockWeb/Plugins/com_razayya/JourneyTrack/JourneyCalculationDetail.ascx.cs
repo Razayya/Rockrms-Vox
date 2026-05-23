@@ -151,6 +151,29 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     return;
                 }
 
+                // Visual-editor validation. Runs BEFORE SaveChanges so the calc row
+                // isn't persisted (new) or partially updated (existing) when its
+                // configuration is incomplete.
+                var componentTypeName = EntityTypeCache.Get( calc.CalculationTypeEntityTypeId )?.Name ?? string.Empty;
+                List<string> editorErrors = null;
+                if ( componentTypeName.EndsWith( ".PersonFilterCalculation" ) && fcEditor.Visible )
+                {
+                    editorErrors = fcEditor.GetValidationErrors();
+                }
+                else if ( componentTypeName.EndsWith( ".CompletionCalculation" ) && ccEditor.Visible )
+                {
+                    editorErrors = ccEditor.GetValidationErrors();
+                }
+                if ( editorErrors != null && editorErrors.Count > 0 )
+                {
+                    nbWarning.Text = "<strong>Please fix the following before saving:</strong><ul><li>"
+                        + string.Join( "</li><li>", editorErrors.Select( System.Web.HttpUtility.HtmlEncode ) )
+                        + "</li></ul>";
+                    nbWarning.NotificationBoxType = Rock.Web.UI.Controls.NotificationBoxType.Warning;
+                    nbWarning.Visible = true;
+                    return;
+                }
+
                 if ( !calc.IsValid )
                 {
                     return;
@@ -585,8 +608,15 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     excludeKeys.Add( "FilterConditions" );
                     excludeKeys.Add( "MatchAll" );
                     fcEditor.Visible = true;
-                    fcEditor.Value = calc.GetAttributeValue( "FilterConditions" );
-                    fcEditor.SetMatchAll( calc.GetAttributeValue( "MatchAll" ).AsBoolean( true ) );
+                    // Only seed the editor when it doesn't already hold in-session state.
+                    // This preserves the user's filter rows when they toggle calc type away
+                    // and back — without this, the editor would re-seed from the (synthetic
+                    // fresh) calc and wipe their rows.
+                    if ( !fcEditor.HasInSessionState )
+                    {
+                        fcEditor.Value = calc.GetAttributeValue( "FilterConditions" );
+                        fcEditor.SetMatchAll( calc.GetAttributeValue( "MatchAll" ).AsBoolean( true ) );
+                    }
                 }
                 else if ( componentName.EndsWith( ".CompletionCalculation" ) )
                 {
@@ -594,7 +624,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     ccEditor.Visible = true;
                     ccEditor.StageId = calc.StageId;
                     ccEditor.ExcludeCalculationId = calc.Id;
-                    ccEditor.Value = calc.GetAttributeValue( "CompletionCriteria" );
+                    if ( !ccEditor.HasInSessionState )
+                    {
+                        ccEditor.Value = calc.GetAttributeValue( "CompletionCriteria" );
+                    }
                 }
 
                 Rock.Attribute.Helper.AddEditControls( calc, phComponentAttributes, true, BlockValidationGroup, excludeKeys );

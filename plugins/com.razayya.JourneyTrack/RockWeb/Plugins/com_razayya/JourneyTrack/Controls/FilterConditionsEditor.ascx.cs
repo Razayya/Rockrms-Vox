@@ -137,6 +137,18 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         #region Public Get/Set JSON
 
+        /// <summary>
+        /// True once the editor has been seeded (or interacted with) at least once in
+        /// the current page lifetime. The detail block checks this before re-seeding
+        /// the editor on calc-type toggles, so switching away and back doesn't blow
+        /// away the user's in-session row state.
+        /// </summary>
+        public bool HasInSessionState
+        {
+            get { return ( ViewState["FCE_HasState"] as bool? ) ?? false; }
+            private set { ViewState["FCE_HasState"] = value; }
+        }
+
         private void SetJson( string json )
         {
             try
@@ -150,6 +162,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
                 Conditions = new List<FilterCondition>();
             }
 
+            HasInSessionState = true;
             BindRepeater();
         }
 
@@ -168,6 +181,36 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         public bool GetMatchAll()
         {
             return cbMatchAll.Checked;
+        }
+
+        /// <summary>
+        /// Returns user-facing validation errors. Empty list means the editor's
+        /// current configuration is OK to save. An empty FilterConditions list is
+        /// considered valid (placeholder semantics — calc just matches nobody).
+        /// </summary>
+        public List<string> GetValidationErrors()
+        {
+            CaptureRowsToState();
+            var errors = new List<string>();
+            var list = Conditions;
+            for ( int i = 0; i < list.Count; i++ )
+            {
+                var c = list[i];
+                var prefix = "Filter row " + ( i + 1 );
+
+                if ( string.IsNullOrWhiteSpace( c.Key ) )
+                {
+                    errors.Add( prefix + ": " + ( c.Source == FilterSource.Property ? "Person Property" : "Person Attribute" ) + " is required." );
+                }
+
+                bool needsValue = c.Comparison != ComparisonType.IsBlank
+                               && c.Comparison != ComparisonType.IsNotBlank;
+                if ( needsValue && string.IsNullOrEmpty( c.Value ) )
+                {
+                    errors.Add( prefix + ": Value is required for comparison '" + SplitCamelCase( c.Comparison.ToString() ) + "'." );
+                }
+            }
+            return errors;
         }
 
         #endregion
@@ -358,6 +401,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         private void CaptureRowsToState()
         {
+            HasInSessionState = true;
             var list = new List<FilterCondition>();
             foreach ( RepeaterItem item in rRows.Items )
             {

@@ -93,6 +93,17 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         #region Public Get/Set JSON
 
+        /// <summary>
+        /// True once this editor has been seeded (or interacted with) at least
+        /// once in the current page lifetime. The detail block uses this to
+        /// avoid re-seeding (and wiping) the editor on calc-type toggles.
+        /// </summary>
+        public bool HasInSessionState
+        {
+            get { return ( ViewState["CCE_HasState"] as bool? ) ?? false; }
+            private set { ViewState["CCE_HasState"] = value; }
+        }
+
         private void SetJson( string json )
         {
             try
@@ -105,6 +116,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             {
                 Criteria = new List<CompletionCriterion>();
             }
+            HasInSessionState = true;
             BindRepeater();
         }
 
@@ -112,6 +124,35 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         {
             CaptureRowsToState();
             return JsonConvert.SerializeObject( Criteria );
+        }
+
+        /// <summary>
+        /// Returns user-facing validation errors. Empty list means OK to save.
+        /// An empty Criteria list is considered valid (calc matches nobody).
+        /// </summary>
+        public List<string> GetValidationErrors()
+        {
+            CaptureRowsToState();
+            var errors = new List<string>();
+            var list = Criteria;
+            for ( int i = 0; i < list.Count; i++ )
+            {
+                var c = list[i];
+                var prefix = "Completion row " + ( i + 1 );
+
+                if ( c.JourneyCalculationId <= 0 )
+                {
+                    errors.Add( prefix + ": Calculation must be selected." );
+                }
+
+                bool needsValue = c.Comparison != ComparisonType.IsBlank
+                               && c.Comparison != ComparisonType.IsNotBlank;
+                if ( needsValue && string.IsNullOrEmpty( c.Value ) )
+                {
+                    errors.Add( prefix + ": Value is required for comparison '" + SplitCamelCase( c.Comparison.ToString() ) + "'." );
+                }
+            }
+            return errors;
         }
 
         #endregion
@@ -178,6 +219,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         private void CaptureRowsToState()
         {
+            HasInSessionState = true;
             var list = new List<CompletionCriterion>();
             foreach ( RepeaterItem item in rRows.Items )
             {
