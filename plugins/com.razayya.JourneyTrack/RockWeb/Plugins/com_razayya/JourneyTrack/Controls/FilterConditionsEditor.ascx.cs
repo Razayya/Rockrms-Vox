@@ -97,6 +97,107 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         #endregion
 
+        #region Value-shape → allowed comparisons
+
+        // A ValueShape collapses Source+Key+FieldType into a small alphabet that
+        // drives (a) which comparisons appear in the dropdown and (b) which Value
+        // control is rendered. Keeps the matrix maintainable in one place.
+        private enum ValueShape
+        {
+            None,        // no key chosen yet
+            BlankOnly,   // File, Image, Matrix, Encrypted, Lava, SSN — values are 1:1 / opaque
+            Boolean,
+            Text,
+            Numeric,
+            Date,
+            Picker       // DefinedValue, Campus, Person, Group, etc.
+        }
+
+        private static readonly ComparisonType[] _cmpBlankOnly = new[] { ComparisonType.IsBlank, ComparisonType.IsNotBlank };
+        private static readonly ComparisonType[] _cmpEqOnly    = new[] { ComparisonType.EqualTo, ComparisonType.NotEqualTo, ComparisonType.IsBlank, ComparisonType.IsNotBlank };
+        private static readonly ComparisonType[] _cmpText      = new[] { ComparisonType.EqualTo, ComparisonType.NotEqualTo, ComparisonType.IsBlank, ComparisonType.IsNotBlank, ComparisonType.Contains };
+        private static readonly ComparisonType[] _cmpNumeric   = new[] { ComparisonType.EqualTo, ComparisonType.NotEqualTo, ComparisonType.IsBlank, ComparisonType.IsNotBlank, ComparisonType.GreaterThan, ComparisonType.LessThan, ComparisonType.GreaterThanOrEqualTo, ComparisonType.LessThanOrEqualTo };
+
+        private static ComparisonType[] GetAllowedComparisons( ValueShape shape )
+        {
+            switch ( shape )
+            {
+                case ValueShape.BlankOnly: return _cmpBlankOnly;
+                case ValueShape.Boolean:   return _cmpEqOnly;
+                case ValueShape.Picker:    return _cmpEqOnly;
+                case ValueShape.Text:      return _cmpText;
+                case ValueShape.Numeric:   return _cmpNumeric;
+                case ValueShape.Date:      return _cmpNumeric;
+                case ValueShape.None:      return _cmpEqOnly;
+                default:                   return _cmpEqOnly;
+            }
+        }
+
+        private static ValueShape GetShape( FilterCondition c )
+        {
+            if ( string.IsNullOrWhiteSpace( c.Key ) ) return ValueShape.None;
+
+            if ( c.Source == FilterSource.Property )
+            {
+                var info = GetPersonProperties().FirstOrDefault( p => string.Equals( p.Name, c.Key, StringComparison.OrdinalIgnoreCase ) );
+                if ( string.IsNullOrEmpty( info.Name ) ) return ValueShape.Text;
+                if ( info.DefinedTypeGuid.HasValue ) return ValueShape.Picker;
+                if ( string.Equals( info.Name, "PrimaryCampusId", StringComparison.OrdinalIgnoreCase ) ) return ValueShape.Picker;
+                if ( info.Type == typeof( bool ) ) return ValueShape.Boolean;
+                if ( info.Type == typeof( DateTime ) ) return ValueShape.Date;
+                if ( info.Type == typeof( int ) || info.Type == typeof( long )
+                    || info.Type == typeof( decimal ) || info.Type == typeof( double ) || info.Type == typeof( float ) )
+                    return ValueShape.Numeric;
+                return ValueShape.Text;
+            }
+
+            // FilterSource.Attribute
+            var attr = GetPersonAttributes().FirstOrDefault( a => string.Equals( a.Key, c.Key, StringComparison.OrdinalIgnoreCase ) );
+            if ( attr == null ) return ValueShape.Text;
+            var ft = attr.FieldType?.Class ?? string.Empty;
+
+            // BlankOnly: types whose stored value is opaque/1:1 (File guid, matrix guid, encrypted blob, lava template).
+            if ( ft.EndsWith( ".FileFieldType" )
+                || ft.EndsWith( ".ImageFieldType" )
+                || ft.EndsWith( ".BinaryFileFieldType" )
+                || ft.EndsWith( ".BackgroundCheckFieldType" )
+                || ft.EndsWith( ".MatrixFieldType" )
+                || ft.EndsWith( ".AttributeMatrixFieldType" )
+                || ft.EndsWith( ".KeyValueListFieldType" )
+                || ft.EndsWith( ".EncryptedTextFieldType" )
+                || ft.EndsWith( ".SSNFieldType" )
+                || ft.EndsWith( ".LavaFieldType" )
+                || ft.EndsWith( ".LavaCommandsFieldType" )
+                || ft.EndsWith( ".CodeEditorFieldType" )
+                || ft.EndsWith( ".HtmlFieldType" )
+                || ft.EndsWith( ".MarkdownFieldType" ) )
+                return ValueShape.BlankOnly;
+
+            if ( ft.EndsWith( ".BooleanFieldType" ) ) return ValueShape.Boolean;
+            if ( ft.EndsWith( ".DateFieldType" ) || ft.EndsWith( ".DateTimeFieldType" ) || ft.EndsWith( ".DateRangeFieldType" ) || ft.EndsWith( ".TimeFieldType" ) )
+                return ValueShape.Date;
+            if ( ft.EndsWith( ".IntegerFieldType" ) || ft.EndsWith( ".DecimalFieldType" )
+                || ft.EndsWith( ".RangeSliderFieldType" ) || ft.EndsWith( ".DayOfWeekFieldType" )
+                || ft.EndsWith( ".MonthDayFieldType" ) )
+                return ValueShape.Numeric;
+            if ( ft.EndsWith( ".DefinedValueFieldType" ) || ft.EndsWith( ".DefinedValueRangeFieldType" )
+                || ft.EndsWith( ".CampusFieldType" ) || ft.EndsWith( ".CampusesFieldType" )
+                || ft.EndsWith( ".PersonFieldType" ) || ft.EndsWith( ".GroupFieldType" )
+                || ft.EndsWith( ".GroupTypeFieldType" ) || ft.EndsWith( ".GroupRoleFieldType" )
+                || ft.EndsWith( ".CategoryFieldType" ) || ft.EndsWith( ".LocationFieldType" )
+                || ft.EndsWith( ".ScheduleFieldType" ) || ft.EndsWith( ".StepProgramFieldType" )
+                || ft.EndsWith( ".StepTypeFieldType" ) || ft.EndsWith( ".StepProgramStepTypeFieldType" )
+                || ft.EndsWith( ".SingleSelectFieldType" ) || ft.EndsWith( ".MultiSelectFieldType" )
+                || ft.EndsWith( ".SelectSingleFieldType" ) || ft.EndsWith( ".SelectMultipleFieldType" )
+                || ft.EndsWith( ".ConnectionStatusFieldType" ) || ft.EndsWith( ".ConnectionStateFieldType" )
+                || ft.EndsWith( ".WorkflowTypeFieldType" ) || ft.EndsWith( ".PageReferenceFieldType" )
+                || ft.EndsWith( ".EntityTypeFieldType" ) || ft.EndsWith( ".MediaElementFieldType" ) )
+                return ValueShape.Picker;
+            return ValueShape.Text;
+        }
+
+        #endregion
+
         #region ViewState
 
         private List<FilterCondition> Conditions
@@ -287,16 +388,23 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             }
 
             // ===== Comparison =====
+            // Only surface comparisons that make sense for this row's Source+Key shape.
+            // E.g. File / Matrix / Encrypted attrs collapse to IsBlank/IsNotBlank only.
+            var shape = GetShape( condition );
+            var allowed = GetAllowedComparisons( shape );
             ddlComp.Items.Clear();
-            foreach ( var ct in Enum.GetValues( typeof( ComparisonType ) ).Cast<ComparisonType>() )
+            foreach ( var ct in allowed )
             {
                 ddlComp.Items.Add( new ListItem( SplitCamelCase( ct.ToString() ), ct.ToString() ) );
             }
-            ddlComp.SetValue( condition.Comparison.ToString() );
+            // If the stored Comparison isn't valid for the current shape, snap to the
+            // first allowed value (which is the sensible default for that shape).
+            var resolvedComparison = allowed.Contains( condition.Comparison ) ? condition.Comparison : allowed[0];
+            ddlComp.SetValue( resolvedComparison.ToString() );
 
             // ===== Value (hidden for IsBlank / IsNotBlank; smart-rendered otherwise) =====
-            bool needsValue = condition.Comparison != ComparisonType.IsBlank
-                           && condition.Comparison != ComparisonType.IsNotBlank;
+            bool needsValue = resolvedComparison != ComparisonType.IsBlank
+                           && resolvedComparison != ComparisonType.IsNotBlank;
 
             tbVal.Visible = cbVal.Visible = dpVal.Visible = cpVal.Visible = dvpVal.Visible = false;
             if ( needsValue )
@@ -440,7 +548,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             }
 
             var tbVal  = ( RockTextBox ) item.FindControl( "tbValueText" );
-            var cbVal  = ( RockCheckBox ) item.FindControl( "cbValueBool" );
+            var cbVal  = ( RockDropDownList ) item.FindControl( "ddlValueBool" );
             var dpVal  = ( DatePicker ) item.FindControl( "dpValueDate" );
             var cpVal  = ( CampusPicker ) item.FindControl( "cpValueCampus" );
             var dvpVal = ( DefinedValuePicker ) item.FindControl( "dvpValue" );
