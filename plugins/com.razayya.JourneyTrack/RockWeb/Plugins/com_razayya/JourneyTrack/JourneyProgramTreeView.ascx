@@ -29,14 +29,10 @@
                         </div>
                     </div>
                 </div>
-                <div class="panel-body">
-                    <div class="treeview-scroll scroll-container scroll-container-horizontal">
-                        <div class="viewport">
-                            <div class="overview">
-                                <div class="treeview-frame">
-                                    <asp:Literal ID="lTreeHtml" runat="server" />
-                                </div>
-                            </div>
+                <div class="panel-body" style="padding:0;">
+                    <div class="treeview-scroll" style="max-height:calc(100vh - 280px);min-height:240px;overflow-y:auto;overflow-x:auto;padding:8px 12px;">
+                        <div class="treeview-frame">
+                            <asp:Literal ID="lTreeHtml" runat="server" />
                         </div>
                     </div>
                 </div>
