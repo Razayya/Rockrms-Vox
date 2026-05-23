@@ -63,6 +63,68 @@ namespace com.razayya.JourneyTrack.Migrations
             // Installed Plugins landing page is immediately useful (instead of empty).
             RockMigrationHelper.AddBlock( PAGE_JOURNEYTRACK,               null, BT_JOURNEY_PROGRAM_LIST,       "Journey Programs",        "Main",    string.Empty, string.Empty, 0, "B1B2B3B4-0001-4000-8000-000000000009" );
             RockMigrationHelper.AddBlock( PAGE_JOURNEYTRACK,               null, BT_JOURNEY_PROGRAM_TREE_VIEW,  "Tree View",               "Sidebar1",string.Empty, string.Empty, 0, "B1B2B3B4-0001-4000-8000-000000000010" );
+
+            // ============================================================
+            // Block-level navigation AVs (so "click into" actually works).
+            // Looked up by (Block Guid, Attribute Key) since the per-BlockType
+            // Attribute Guids are randomly assigned by Rock's reflection at
+            // first load - hardcoding them would not match in a fresh prod.
+            // ============================================================
+            Sql( $@"
+DECLARE @BlockEntityTypeId INT = (SELECT Id FROM EntityType WHERE Name = N'Rock.Model.Block');
+
+DECLARE @navs TABLE (BlockGuid UNIQUEIDENTIFIER, BlockTypeGuid UNIQUEIDENTIFIER, AttrKey NVARCHAR(100), PageGuid UNIQUEIDENTIFIER);
+INSERT INTO @navs VALUES
+    -- JourneyProgramList instances -> Journey Program detail
+    ('B1B2B3B4-0001-4000-8000-000000000001', '{BT_JOURNEY_PROGRAM_LIST}',       N'DetailPage',                   '{PAGE_JOURNEY_PROGRAM_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000009', '{BT_JOURNEY_PROGRAM_LIST}',       N'DetailPage',                   '{PAGE_JOURNEY_PROGRAM_DETAIL}'),
+    -- Journey Program Detail -> Stage detail
+    ('B1B2B3B4-0001-4000-8000-000000000002', '{BT_JOURNEY_PROGRAM_DETAIL}',     N'SubGroupDetailPage',           '{PAGE_STAGE_DETAIL}'),
+    -- Every Journey Program Tree View instance needs all three drill-down pages
+    ('B1B2B3B4-0001-4000-8000-000000000003', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'GroupDetailPage',              '{PAGE_JOURNEY_PROGRAM_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000003', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'SubGroupDetailPage',           '{PAGE_STAGE_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000003', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'JourneyCalculationDetailPage', '{PAGE_JOURNEY_CALCULATION_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000005', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'GroupDetailPage',              '{PAGE_JOURNEY_PROGRAM_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000005', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'SubGroupDetailPage',           '{PAGE_STAGE_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000005', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'JourneyCalculationDetailPage', '{PAGE_JOURNEY_CALCULATION_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000007', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'GroupDetailPage',              '{PAGE_JOURNEY_PROGRAM_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000007', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'SubGroupDetailPage',           '{PAGE_STAGE_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000007', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'JourneyCalculationDetailPage', '{PAGE_JOURNEY_CALCULATION_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000010', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'GroupDetailPage',              '{PAGE_JOURNEY_PROGRAM_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000010', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'SubGroupDetailPage',           '{PAGE_STAGE_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000010', '{BT_JOURNEY_PROGRAM_TREE_VIEW}',  N'JourneyCalculationDetailPage', '{PAGE_JOURNEY_CALCULATION_DETAIL}'),
+    -- Stage Detail -> Journey Calc detail + breadcrumb
+    ('B1B2B3B4-0001-4000-8000-000000000004', '{BT_STAGE_DETAIL}',               N'JourneyCalculationDetailPage', '{PAGE_JOURNEY_CALCULATION_DETAIL}'),
+    ('B1B2B3B4-0001-4000-8000-000000000004', '{BT_STAGE_DETAIL}',               N'ParentPage',                   '{PAGE_JOURNEY_PROGRAM_DETAIL}'),
+    -- Journey Calculation Detail -> breadcrumb back to Stage
+    ('B1B2B3B4-0001-4000-8000-000000000006', '{BT_JOURNEY_CALCULATION_DETAIL}', N'ParentPage',                   '{PAGE_STAGE_DETAIL}');
+
+DECLARE @blockGuid UNIQUEIDENTIFIER, @btGuid UNIQUEIDENTIFIER, @key NVARCHAR(100), @pageGuid UNIQUEIDENTIFIER;
+DECLARE c CURSOR LOCAL FAST_FORWARD FOR SELECT BlockGuid, BlockTypeGuid, AttrKey, PageGuid FROM @navs;
+OPEN c;
+FETCH NEXT FROM c INTO @blockGuid, @btGuid, @key, @pageGuid;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    DECLARE @blockId INT = (SELECT Id FROM Block WHERE [Guid] = @blockGuid);
+    DECLARE @attrId INT = (SELECT TOP 1 a.Id FROM Attribute a
+                            INNER JOIN BlockType bt ON CAST(bt.Id AS NVARCHAR(10)) = a.EntityTypeQualifierValue
+                            WHERE bt.[Guid] = @btGuid AND a.[Key] = @key
+                              AND a.EntityTypeId = @BlockEntityTypeId
+                              AND a.EntityTypeQualifierColumn = 'BlockTypeId');
+    DECLARE @valStr NVARCHAR(50) = CONVERT(NVARCHAR(50), @pageGuid);
+    IF @blockId IS NOT NULL AND @attrId IS NOT NULL
+    BEGIN
+        IF EXISTS (SELECT 1 FROM AttributeValue WHERE AttributeId = @attrId AND EntityId = @blockId)
+            UPDATE AttributeValue SET Value = @valStr, ModifiedDateTime = GETDATE(), IsPersistedValueDirty = 1
+             WHERE AttributeId = @attrId AND EntityId = @blockId;
+        ELSE
+            INSERT INTO AttributeValue (IsSystem, AttributeId, EntityId, Value, [Guid], CreatedDateTime, ModifiedDateTime, IsPersistedValueDirty)
+            VALUES (0, @attrId, @blockId, @valStr, NEWID(), GETDATE(), GETDATE(), 1);
+    END;
+    FETCH NEXT FROM c INTO @blockGuid, @btGuid, @key, @pageGuid;
+END;
+CLOSE c; DEALLOCATE c;
+" );
         }
 
         public override void Down()
