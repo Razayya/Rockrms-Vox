@@ -223,7 +223,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             {
                 JourneyCalculationId = 0,
                 IsRequired = true,
-                ComparisonType = ComparisonType.IsNotBlank,
+                Comparison = ComparisonType.IsNotBlank,
                 Value = string.Empty
             } );
             Criteria = list;
