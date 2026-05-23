@@ -1,5 +1,9 @@
 <%@ Control Language="C#" AutoEventWireup="true" CodeFile="JourneyCalculationDetail.ascx.cs"
     Inherits="RockWeb.Plugins.com_razayya.JourneyTrack.JourneyCalculationDetail" %>
+<%@ Register TagPrefix="jt" TagName="FilterConditionsEditor"
+    Src="~/Plugins/com_razayya/JourneyTrack/Controls/FilterConditionsEditor.ascx" %>
+<%@ Register TagPrefix="jt" TagName="CompletionCriteriaEditor"
+    Src="~/Plugins/com_razayya/JourneyTrack/Controls/CompletionCriteriaEditor.ascx" %>
 
 <asp:UpdatePanel ID="upnlContent" runat="server">
     <ContentTemplate>
@@ -117,6 +121,10 @@
                     <asp:Panel ID="pnlComponentAttributes" runat="server" CssClass="well">
                         <h5><asp:Literal ID="lComponentName" runat="server" Text="Component Settings" /></h5>
                         <Rock:DynamicPlaceHolder ID="phComponentAttributes" runat="server" />
+
+                        <%-- Visual editors that replace the JSON textarea for known JSON-input attrs --%>
+                        <jt:FilterConditionsEditor   ID="fcEditor" runat="server" Visible="false" />
+                        <jt:CompletionCriteriaEditor ID="ccEditor" runat="server" Visible="false" />
                     </asp:Panel>
 
                     <hr />

@@ -161,6 +161,23 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 // Save component-specific attributes
                 calc.LoadAttributes( rockContext );
                 Rock.Attribute.Helper.GetEditValues( phComponentAttributes, calc );
+
+                // The visual editors are excluded from AddEditControls (so
+                // GetEditValues does not see them). Pull their values directly.
+                var componentName = calc.CalculationTypeEntityType?.Name
+                    ?? EntityTypeCache.Get( calc.CalculationTypeEntityTypeId )?.Name
+                    ?? string.Empty;
+
+                if ( componentName.EndsWith( ".PersonFilterCalculation" ) && fcEditor.Visible )
+                {
+                    calc.SetAttributeValue( "FilterConditions", fcEditor.Value );
+                    calc.SetAttributeValue( "MatchAll", fcEditor.GetMatchAll() ? "True" : "False" );
+                }
+                else if ( componentName.EndsWith( ".CompletionCalculation" ) && ccEditor.Visible )
+                {
+                    calc.SetAttributeValue( "CompletionCriteria", ccEditor.Value );
+                }
+
                 calc.SaveAttributeValues( rockContext );
 
                 JourneyCalculationId = calc.Id;
@@ -535,6 +552,32 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
                 calc.LoadAttributes( rockContext );
                 var excludeKeys = new List<string> { "Active", "Order" };
+
+                // Detect known JSON-input attrs and route them to the visual editors
+                // instead of the default CodeEditor textarea. The JSON attr key is excluded
+                // from AddEditControls so the textarea doesn't render; the visual editor
+                // becomes the source of truth on save.
+                var componentName = entityType.Name ?? string.Empty;
+                fcEditor.Visible = false;
+                ccEditor.Visible = false;
+
+                if ( componentName.EndsWith( ".PersonFilterCalculation" ) )
+                {
+                    excludeKeys.Add( "FilterConditions" );
+                    excludeKeys.Add( "MatchAll" );
+                    fcEditor.Visible = true;
+                    fcEditor.Value = calc.GetAttributeValue( "FilterConditions" );
+                    fcEditor.SetMatchAll( calc.GetAttributeValue( "MatchAll" ).AsBoolean( true ) );
+                }
+                else if ( componentName.EndsWith( ".CompletionCalculation" ) )
+                {
+                    excludeKeys.Add( "CompletionCriteria" );
+                    ccEditor.Visible = true;
+                    ccEditor.StageId = calc.StageId;
+                    ccEditor.ExcludeCalculationId = calc.Id;
+                    ccEditor.Value = calc.GetAttributeValue( "CompletionCriteria" );
+                }
+
                 Rock.Attribute.Helper.AddEditControls( calc, phComponentAttributes, true, BlockValidationGroup, excludeKeys );
             }
             finally
