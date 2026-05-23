@@ -45,7 +45,10 @@
                             </div>
                             <div class="col-md-3">
                                 <Rock:RockTextBox    ID="tbValueText"     runat="server" Label="Value" Visible="false" />
-                                <Rock:RockCheckBox   ID="cbValueBool"     runat="server" Label="Value" Visible="false" />
+                                <Rock:RockDropDownList ID="ddlValueBool"  runat="server" Label="Value" Visible="false">
+                                    <asp:ListItem Text="True"  Value="True" />
+                                    <asp:ListItem Text="False" Value="False" />
+                                </Rock:RockDropDownList>
                                 <Rock:DatePicker     ID="dpValueDate"     runat="server" Label="Value" Visible="false" />
                                 <Rock:CampusPicker   ID="cpValueCampus"   runat="server" Label="Value" Visible="false" />
                                 <Rock:DefinedValuePicker ID="dvpValue"    runat="server" Label="Value" Visible="false" />

@@ -249,7 +249,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             var ddlKeyAttr    = ( RockDropDownList ) item.FindControl( "ddlKeyAttribute" );
             var ddlComp       = ( RockDropDownList ) item.FindControl( "ddlComparison" );
             var tbVal         = ( RockTextBox ) item.FindControl( "tbValueText" );
-            var cbVal         = ( RockCheckBox ) item.FindControl( "cbValueBool" );
+            var cbVal         = ( RockDropDownList ) item.FindControl( "ddlValueBool" );
             var dpVal         = ( DatePicker ) item.FindControl( "dpValueDate" );
             var cpVal         = ( CampusPicker ) item.FindControl( "cpValueCampus" );
             var dvpVal        = ( DefinedValuePicker ) item.FindControl( "dvpValue" );
@@ -308,7 +308,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         private void RenderSmartValueControl(
             FilterCondition condition,
             RockTextBox tbVal,
-            RockCheckBox cbVal,
+            RockDropDownList cbVal,
             DatePicker dpVal,
             CampusPicker cpVal,
             DefinedValuePicker dvpVal )
@@ -340,7 +340,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
                     if ( info.Type == typeof( bool ) )
                     {
                         cbVal.Visible = true;
-                        cbVal.Checked = condition.Value.AsBoolean();
+                        cbVal.SetValue( condition.Value.AsBoolean() ? "True" : "False" );
                         return;
                     }
 
@@ -361,7 +361,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
                     if ( ftClass.EndsWith( ".BooleanFieldType" ) )
                     {
                         cbVal.Visible = true;
-                        cbVal.Checked = condition.Value.AsBoolean();
+                        cbVal.SetValue( condition.Value.AsBoolean() ? "True" : "False" );
                         return;
                     }
                     if ( ftClass.EndsWith( ".DateFieldType" ) || ftClass.EndsWith( ".DateTimeFieldType" ) )
@@ -445,7 +445,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             var cpVal  = ( CampusPicker ) item.FindControl( "cpValueCampus" );
             var dvpVal = ( DefinedValuePicker ) item.FindControl( "dvpValue" );
 
-            if ( cbVal.Visible )  return cbVal.Checked ? "True" : "False";
+            if ( cbVal.Visible )  return cbVal.SelectedValue ?? "False";
             if ( dpVal.Visible )  return dpVal.SelectedDate.HasValue ? dpVal.SelectedDate.Value.ToString( "yyyy-MM-dd" ) : string.Empty;
             if ( cpVal.Visible )  return cpVal.SelectedCampusId?.ToString() ?? string.Empty;
             if ( dvpVal.Visible ) return dvpVal.SelectedValue ?? string.Empty;
