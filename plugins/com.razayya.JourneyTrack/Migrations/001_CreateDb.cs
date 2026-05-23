@@ -36,14 +36,14 @@ CREATE TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] (
     CONSTRAINT [PK__JTrack_JP] PRIMARY KEY CLUSTERED ([Id] ASC),
     CONSTRAINT [UQ__JTrack_JP_Guid] UNIQUE NONCLUSTERED ([Guid])
 );
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_RecordStatus]    FOREIGN KEY ([RecordStatusValueId])                ON DELETE NO ACTION REFERENCES [dbo].[DefinedValue]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_ConnStatus]      FOREIGN KEY ([ConnectionStatusValueId])            ON DELETE NO ACTION REFERENCES [dbo].[DefinedValue]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_Campus]          FOREIGN KEY ([CampusId])                           ON DELETE NO ACTION REFERENCES [dbo].[Campus]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_DataView]        FOREIGN KEY ([DataViewId])                         ON DELETE NO ACTION REFERENCES [dbo].[DataView]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_CompTargetAttr]  FOREIGN KEY ([CompletionTargetPersonAttributeId]) ON DELETE NO ACTION REFERENCES [dbo].[Attribute]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_OnCompleteSC]    FOREIGN KEY ([OnCompleteSystemCommunicationId])   ON DELETE NO ACTION REFERENCES [dbo].[SystemCommunication]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_CreatedBy]       FOREIGN KEY ([CreatedByPersonAliasId])             ON DELETE NO ACTION REFERENCES [dbo].[PersonAlias]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_ModifiedBy]      FOREIGN KEY ([ModifiedByPersonAliasId])            ON DELETE NO ACTION REFERENCES [dbo].[PersonAlias]([Id]);
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_RecordStatus]    FOREIGN KEY ([RecordStatusValueId]) REFERENCES [dbo].[DefinedValue]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_ConnStatus]      FOREIGN KEY ([ConnectionStatusValueId]) REFERENCES [dbo].[DefinedValue]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_Campus]          FOREIGN KEY ([CampusId]) REFERENCES [dbo].[Campus]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_DataView]        FOREIGN KEY ([DataViewId]) REFERENCES [dbo].[DataView]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_CompTargetAttr]  FOREIGN KEY ([CompletionTargetPersonAttributeId]) REFERENCES [dbo].[Attribute]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_OnCompleteSC]    FOREIGN KEY ([OnCompleteSystemCommunicationId]) REFERENCES [dbo].[SystemCommunication]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_CreatedBy]       FOREIGN KEY ([CreatedByPersonAliasId]) REFERENCES [dbo].[PersonAlias]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyProgram] ADD CONSTRAINT [FK__JTrack_JP_ModifiedBy]      FOREIGN KEY ([ModifiedByPersonAliasId]) REFERENCES [dbo].[PersonAlias]([Id]) ON DELETE NO ACTION;
 
 -- ============================================================
 -- Stage
@@ -69,11 +69,11 @@ CREATE TABLE [dbo].[_com_razayya_JourneyTrack_Stage] (
     CONSTRAINT [PK__JTrack_St] PRIMARY KEY CLUSTERED ([Id] ASC),
     CONSTRAINT [UQ__JTrack_St_Guid] UNIQUE NONCLUSTERED ([Guid])
 );
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_Program]        FOREIGN KEY ([JourneyProgramId])                  ON DELETE CASCADE  REFERENCES [dbo].[_com_razayya_JourneyTrack_JourneyProgram]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_AdditionalDV]   FOREIGN KEY ([AdditionalDataViewId])              ON DELETE NO ACTION REFERENCES [dbo].[DataView]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_OnCompleteSC]   FOREIGN KEY ([OnCompleteSystemCommunicationId])   ON DELETE NO ACTION REFERENCES [dbo].[SystemCommunication]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_CreatedBy]      FOREIGN KEY ([CreatedByPersonAliasId])             ON DELETE NO ACTION REFERENCES [dbo].[PersonAlias]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_ModifiedBy]     FOREIGN KEY ([ModifiedByPersonAliasId])            ON DELETE NO ACTION REFERENCES [dbo].[PersonAlias]([Id]);
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_Program]        FOREIGN KEY ([JourneyProgramId]) REFERENCES [dbo].[_com_razayya_JourneyTrack_JourneyProgram]([Id]) ON DELETE CASCADE;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_AdditionalDV]   FOREIGN KEY ([AdditionalDataViewId]) REFERENCES [dbo].[DataView]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_OnCompleteSC]   FOREIGN KEY ([OnCompleteSystemCommunicationId]) REFERENCES [dbo].[SystemCommunication]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_CreatedBy]      FOREIGN KEY ([CreatedByPersonAliasId]) REFERENCES [dbo].[PersonAlias]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_Stage] ADD CONSTRAINT [FK__JTrack_St_ModifiedBy]     FOREIGN KEY ([ModifiedByPersonAliasId]) REFERENCES [dbo].[PersonAlias]([Id]) ON DELETE NO ACTION;
 
 -- ============================================================
 -- JourneyCalculation
@@ -102,12 +102,12 @@ CREATE TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] (
     CONSTRAINT [PK__JTrack_JC] PRIMARY KEY CLUSTERED ([Id] ASC),
     CONSTRAINT [UQ__JTrack_JC_Guid] UNIQUE NONCLUSTERED ([Guid])
 );
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_Stage]          FOREIGN KEY ([StageId])                       ON DELETE CASCADE  REFERENCES [dbo].[_com_razayya_JourneyTrack_Stage]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_PersonAttr]     FOREIGN KEY ([PersonAttributeId])             ON DELETE NO ACTION REFERENCES [dbo].[Attribute]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_CalcTypeET]     FOREIGN KEY ([CalculationTypeEntityTypeId])   ON DELETE NO ACTION REFERENCES [dbo].[EntityType]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_OnMatchSC]      FOREIGN KEY ([OnMatchSystemCommunicationId]) ON DELETE NO ACTION REFERENCES [dbo].[SystemCommunication]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_CreatedBy]      FOREIGN KEY ([CreatedByPersonAliasId])         ON DELETE NO ACTION REFERENCES [dbo].[PersonAlias]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_ModifiedBy]     FOREIGN KEY ([ModifiedByPersonAliasId])        ON DELETE NO ACTION REFERENCES [dbo].[PersonAlias]([Id]);
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_Stage]          FOREIGN KEY ([StageId]) REFERENCES [dbo].[_com_razayya_JourneyTrack_Stage]([Id]) ON DELETE CASCADE;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_PersonAttr]     FOREIGN KEY ([PersonAttributeId]) REFERENCES [dbo].[Attribute]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_CalcTypeET]     FOREIGN KEY ([CalculationTypeEntityTypeId]) REFERENCES [dbo].[EntityType]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_OnMatchSC]      FOREIGN KEY ([OnMatchSystemCommunicationId]) REFERENCES [dbo].[SystemCommunication]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_CreatedBy]      FOREIGN KEY ([CreatedByPersonAliasId]) REFERENCES [dbo].[PersonAlias]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculation] ADD CONSTRAINT [FK__JTrack_JC_ModifiedBy]     FOREIGN KEY ([ModifiedByPersonAliasId]) REFERENCES [dbo].[PersonAlias]([Id]) ON DELETE NO ACTION;
 
 -- ============================================================
 -- JourneyCalculationRun
@@ -136,8 +136,8 @@ CREATE TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculationRun] (
     CONSTRAINT [PK__JTrack_JCR] PRIMARY KEY CLUSTERED ([Id] ASC),
     CONSTRAINT [UQ__JTrack_JCR_Guid] UNIQUE NONCLUSTERED ([Guid])
 );
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculationRun] ADD CONSTRAINT [FK__JTrack_JCR_Calc]   FOREIGN KEY ([JourneyCalculationId]) ON DELETE CASCADE  REFERENCES [dbo].[_com_razayya_JourneyTrack_JourneyCalculation]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculationRun] ADD CONSTRAINT [FK__JTrack_JCR_RunBy]  FOREIGN KEY ([RunByPersonAliasId])    ON DELETE NO ACTION REFERENCES [dbo].[PersonAlias]([Id]);
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculationRun] ADD CONSTRAINT [FK__JTrack_JCR_Calc]   FOREIGN KEY ([JourneyCalculationId]) REFERENCES [dbo].[_com_razayya_JourneyTrack_JourneyCalculation]([Id]) ON DELETE CASCADE;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCalculationRun] ADD CONSTRAINT [FK__JTrack_JCR_RunBy]  FOREIGN KEY ([RunByPersonAliasId]) REFERENCES [dbo].[PersonAlias]([Id]) ON DELETE NO ACTION;
 CREATE NONCLUSTERED INDEX [IX__JTrack_JCR_RunDateTime] ON [dbo].[_com_razayya_JourneyTrack_JourneyCalculationRun] ([RunDateTime] DESC);
 
 -- ============================================================
@@ -162,8 +162,8 @@ CREATE TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCommunicationLog] (
     CONSTRAINT [PK__JTrack_JCL] PRIMARY KEY CLUSTERED ([Id] ASC),
     CONSTRAINT [UQ__JTrack_JCL_Guid] UNIQUE NONCLUSTERED ([Guid])
 );
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCommunicationLog] ADD CONSTRAINT [FK__JTrack_JCL_PersonAlias] FOREIGN KEY ([PersonAliasId])         ON DELETE NO ACTION REFERENCES [dbo].[PersonAlias]([Id]);
-ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCommunicationLog] ADD CONSTRAINT [FK__JTrack_JCL_SystemComm]  FOREIGN KEY ([SystemCommunicationId]) ON DELETE NO ACTION REFERENCES [dbo].[SystemCommunication]([Id]);
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCommunicationLog] ADD CONSTRAINT [FK__JTrack_JCL_PersonAlias] FOREIGN KEY ([PersonAliasId]) REFERENCES [dbo].[PersonAlias]([Id]) ON DELETE NO ACTION;
+ALTER TABLE [dbo].[_com_razayya_JourneyTrack_JourneyCommunicationLog] ADD CONSTRAINT [FK__JTrack_JCL_SystemComm]  FOREIGN KEY ([SystemCommunicationId]) REFERENCES [dbo].[SystemCommunication]([Id]) ON DELETE NO ACTION;
 -- Filtered index for fast pending-dispatch scan (Optimization O6)
 CREATE NONCLUSTERED INDEX [IX__JTrack_JCL_Pending] ON [dbo].[_com_razayya_JourneyTrack_JourneyCommunicationLog] ([QueuedDateTime] ASC) WHERE [SentDateTime] IS NULL;
 -- Dedupe-check composite
