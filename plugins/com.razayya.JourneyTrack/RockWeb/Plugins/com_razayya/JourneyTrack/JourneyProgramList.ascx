@@ -34,7 +34,9 @@
                             <Rock:RockBoundField DataField="Name" HeaderText="Name" />
                             <Rock:RockBoundField DataField="Description" HeaderText="Description"
                                 TruncateLength="80" />
-                            <Rock:RockBoundField DataField="SubGroupCount" HeaderText="Sub Groups"
+                            <Rock:RockBoundField DataField="SubGroupCount" HeaderText="Stages"
+                                ItemStyle-HorizontalAlign="Center" HeaderStyle-HorizontalAlign="Center" />
+                            <Rock:RockBoundField DataField="EnrolleeCount" HeaderText="Enrollees"
                                 ItemStyle-HorizontalAlign="Center" HeaderStyle-HorizontalAlign="Center" />
                             <Rock:DateTimeField DataField="LastRunDateTime" HeaderText="Last Run" />
                             <Rock:BoolField DataField="IsActive" HeaderText="Active" />

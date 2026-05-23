@@ -41,6 +41,10 @@
 
                     <div class="actions">
                         <asp:LinkButton ID="btnEdit" runat="server" Text="Edit" CssClass="btn btn-primary" OnClick="btnEdit_Click" CausesValidation="false" />
+                        <asp:LinkButton ID="btnEnrollees" runat="server" Text="Manage Enrollees" CssClass="btn btn-default btn-sm" OnClick="btnEnrollees_Click" CausesValidation="false"
+                            Visible="false" ToolTip="View / manage the people enrolled in this program." />
+                        <asp:LinkButton ID="btnReconcile" runat="server" Text="Reconcile Now" CssClass="btn btn-default btn-sm" OnClick="btnReconcile_Click" CausesValidation="false"
+                            Visible="false" ToolTip="Run an auto-enroll reconciliation pass against the configured population spec." />
                         <asp:LinkButton ID="btnCopy" runat="server" Text="Copy" CssClass="btn btn-default btn-sm" OnClick="btnCopy_Click" CausesValidation="false"
                             ToolTip="Create a deep copy of this group including all sub-groups and calculations." />
                         <asp:LinkButton ID="btnExport" runat="server" Text="Export" CssClass="btn btn-default btn-sm" OnClick="btnExport_Click" CausesValidation="false"
@@ -88,8 +92,31 @@
                         SourceTypeName="com.razayya.JourneyTrack.Model.JourneyProgram, com.razayya.JourneyTrack"
                         PropertyName="Description" />
 
-                    <h4>Population Filters</h4>
-                    <p class="text-muted">Define the base population of people this group will evaluate. Leave blank to include everyone.</p>
+                    <h4>Enrollment</h4>
+                    <p class="text-muted">Controls how people enter and leave this Program.</p>
+
+                    <div class="row">
+                        <div class="col-md-4">
+                            <Rock:RockCheckBox ID="cbRequiresEnrollment" runat="server" Label="Requires Enrollment"
+                                AutoPostBack="true" OnCheckedChanged="cbRequiresEnrollment_CheckedChanged"
+                                Help="When enabled, the engine evaluates only people in the Enrollment table for this Program (not the full Rock Person table). Population filters below become an auto-enroll spec rather than a runtime filter." />
+                        </div>
+                        <div class="col-md-4">
+                            <Rock:RockCheckBox ID="cbAutoEnroll" runat="server" Label="Auto-Enroll from Population"
+                                Help="When enabled (alongside Requires Enrollment), the nightly job + a manual 'Reconcile Now' button add anyone matching the Population filters below into the Enrollment table." />
+                        </div>
+                        <div class="col-md-4">
+                            <Rock:RockCheckBox ID="cbAutoUnenroll" runat="server" Label="Auto-Unenroll on Population Leave"
+                                Help="When enabled, reconciliation also soft-unenrolls people who no longer match the population spec (e.g., changed campus). When disabled, auto-enroll only adds." />
+                        </div>
+                    </div>
+
+                    <h4>
+                        <asp:Literal ID="lPopulationHeading" runat="server" Text="Population Filters" />
+                    </h4>
+                    <p class="text-muted">
+                        <asp:Literal ID="lPopulationHelp" runat="server" Text="Define the base population of people this group will evaluate. Leave blank to include everyone." />
+                    </p>
 
                     <div class="row">
                         <div class="col-md-4">
@@ -105,7 +132,7 @@
                     <div class="row">
                         <div class="col-md-6">
                             <Rock:DataViewItemPicker ID="dvpDataView" runat="server" Label="Data View"
-                                Help="Optional. Only people in this Data View will be included in the base population." />
+                                Help="Optional. Only people in this Data View are included." />
                         </div>
                     </div>
 

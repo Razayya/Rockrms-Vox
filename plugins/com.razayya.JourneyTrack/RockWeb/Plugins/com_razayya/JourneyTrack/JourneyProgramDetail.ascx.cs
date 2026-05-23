@@ -23,11 +23,17 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
     [Category( "Razayya > JourneyTrack" )]
     [Description( "Displays details for a Journey Program and its Sub Groups." )]
 
-    [LinkedPage( "Sub Group Detail Page",
-        Description = "Page to navigate to for Sub Group details.",
+    [LinkedPage( "Stage Detail Page",
+        Description = "Page to navigate to for Stage details.",
         IsRequired = true,
         Order = 0,
         Key = "SubGroupDetailPage" )]
+
+    [LinkedPage( "Enrollees Page",
+        Description = "Page that shows the active enrollees for this Program.",
+        IsRequired = false,
+        Order = 1,
+        Key = "EnrolleesPage" )]
 
     public partial class JourneyProgramDetail : RockBlock
     {
@@ -98,6 +104,9 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 group.Name = tbName.Text;
                 group.Description = tbDescription.Text;
                 group.IsActive = cbIsActive.Checked;
+                group.RequiresEnrollment = cbRequiresEnrollment.Checked;
+                group.AutoEnrollFromPopulation = cbAutoEnroll.Checked;
+                group.AutoUnenrollOnPopulationLeave = cbAutoUnenroll.Checked;
                 group.RecordStatusValueId = dvpRecordStatus.SelectedValueAsInt();
                 group.ConnectionStatusValueId = dvpConnectionStatus.SelectedValueAsInt();
                 group.CampusId = cpCampus.SelectedValueAsInt();
@@ -134,6 +143,55 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             else
             {
                 ShowDetail( JourneyProgramId );
+            }
+        }
+
+        protected void cbRequiresEnrollment_CheckedChanged( object sender, EventArgs e )
+        {
+            UpdatePopulationHeading();
+        }
+
+        private void UpdatePopulationHeading()
+        {
+            if ( cbRequiresEnrollment.Checked && cbAutoEnroll.Checked )
+            {
+                lPopulationHeading.Text = "Auto-Enroll Spec";
+                lPopulationHelp.Text = "Anyone matching these filters will be auto-enrolled by the nightly job (and the 'Reconcile Now' button). Leave blank to require manual enrollment only.";
+            }
+            else if ( cbRequiresEnrollment.Checked )
+            {
+                lPopulationHeading.Text = "Population Filters (not used at runtime)";
+                lPopulationHelp.Text = "Requires Enrollment is on — these filters become the auto-enroll spec only if Auto-Enroll from Population is also enabled. Otherwise the engine reads enrollments directly.";
+            }
+            else
+            {
+                lPopulationHeading.Text = "Population Filters";
+                lPopulationHelp.Text = "Define the base population of people this group will evaluate. Leave blank to include everyone.";
+            }
+        }
+
+        protected void btnEnrollees_Click( object sender, EventArgs e )
+        {
+            NavigateToLinkedPage( "EnrolleesPage", "JourneyProgramId", JourneyProgramId );
+        }
+
+        protected void btnReconcile_Click( object sender, EventArgs e )
+        {
+            try
+            {
+                var rec = new JourneyTrackService().ReconcileEnrollments( JourneyProgramId );
+                nbWarning.NotificationBoxType = NotificationBoxType.Success;
+                nbWarning.Text = string.Format(
+                    "Reconciliation complete: <strong>{0}</strong> added, <strong>{1}</strong> reactivated, <strong>{2}</strong> soft-unenrolled. <strong>{3}</strong> active enrollees.",
+                    rec.Added, rec.Reactivated, rec.SoftUnenrolled, rec.ActiveAfter );
+                nbWarning.Visible = true;
+                ShowDetail( JourneyProgramId );
+            }
+            catch ( Exception ex )
+            {
+                nbWarning.NotificationBoxType = NotificationBoxType.Danger;
+                nbWarning.Text = "Reconciliation failed: " + ex.Message;
+                nbWarning.Visible = true;
             }
         }
 
@@ -252,8 +310,31 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
             lDescription.Text = group.Description;
 
-            // Population summary
+            // Enrollment summary (visible when RequiresEnrollment is on)
             string populationHtml = string.Empty;
+            if ( group.RequiresEnrollment )
+            {
+                int activeEnrollees;
+                using ( var ctx = new RockContext() )
+                {
+                    activeEnrollees = new JourneyProgramEnrollmentService( ctx ).Queryable().AsNoTracking()
+                        .Count( e => e.JourneyProgramId == group.Id && e.IsActive );
+                }
+                populationHtml += string.Format( "<dt>Enrollees</dt><dd>{0} active</dd>", activeEnrollees );
+                var modeLabel = group.AutoEnrollFromPopulation
+                    ? ( group.AutoUnenrollOnPopulationLeave ? "Auto-Enroll &amp; Auto-Unenroll" : "Auto-Enroll" )
+                    : "Manual only";
+                populationHtml += string.Format( "<dt>Enrollment Mode</dt><dd>{0}</dd>", modeLabel );
+                btnEnrollees.Visible = true;
+                btnReconcile.Visible = group.AutoEnrollFromPopulation;
+            }
+            else
+            {
+                btnEnrollees.Visible = false;
+                btnReconcile.Visible = false;
+            }
+
+            // Population summary
             if ( group.RecordStatusValueId.HasValue )
             {
                 populationHtml += string.Format( "<dt>Record Status</dt><dd>{0}</dd>", DefinedValueCache.Get( group.RecordStatusValueId.Value )?.Value );
@@ -318,6 +399,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             tbName.Text = group.Name;
             tbDescription.Text = group.Description;
             cbIsActive.Checked = group.IsActive;
+            cbRequiresEnrollment.Checked = group.RequiresEnrollment;
+            cbAutoEnroll.Checked = group.AutoEnrollFromPopulation;
+            cbAutoUnenroll.Checked = group.AutoUnenrollOnPopulationLeave;
+            UpdatePopulationHeading();
 
             // Populate DefinedType pickers
             var recordStatusDefinedTypeId = DefinedTypeCache.Get( Rock.SystemGuid.DefinedType.PERSON_RECORD_STATUS.AsGuid() )?.Id;

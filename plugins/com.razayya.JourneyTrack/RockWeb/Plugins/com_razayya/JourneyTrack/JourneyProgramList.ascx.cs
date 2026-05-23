@@ -164,7 +164,16 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             using ( var rockContext = new RockContext() )
             {
                 var service = new JourneyProgramService( rockContext );
-                var query = service.Queryable().AsNoTracking()
+                // Two cheap queries + in-memory merge — keeps EF translation simple
+                // and lets us conditionally show enrollee counts only when the program
+                // is enrollment-driven.
+                var enrolleeCountByProgram = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                    .Where( e => e.IsActive )
+                    .GroupBy( e => e.JourneyProgramId )
+                    .Select( g => new { ProgramId = g.Key, Count = g.Count() } )
+                    .ToDictionary( x => x.ProgramId, x => x.Count );
+
+                var rows = service.Queryable().AsNoTracking()
                     .Select( g => new
                     {
                         g.Id,
@@ -173,12 +182,26 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                         g.IsActive,
                         g.Order,
                         g.LastRunDateTime,
+                        g.RequiresEnrollment,
                         SubGroupCount = g.Stages.Count()
                     } )
                     .OrderBy( g => g.Order )
-                    .ThenBy( g => g.Name );
+                    .ThenBy( g => g.Name )
+                    .ToList()
+                    .Select( g => new
+                    {
+                        g.Id,
+                        g.Name,
+                        g.Description,
+                        g.IsActive,
+                        g.Order,
+                        g.LastRunDateTime,
+                        g.SubGroupCount,
+                        EnrolleeCount = g.RequiresEnrollment && enrolleeCountByProgram.TryGetValue( g.Id, out var c ) ? c : 0
+                    } )
+                    .ToList();
 
-                gList.DataSource = query.ToList();
+                gList.DataSource = rows;
                 gList.DataBind();
             }
         }
