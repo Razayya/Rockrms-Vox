@@ -88,7 +88,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
                 return new List<AttributeCache>();
             }
 
-            return AttributeCache.GetByEntityType( personEt.Id )
+            return AttributeCache.AllForEntityType( personEt.Id )
                 .Where( a => a.IsActive
                     && string.IsNullOrEmpty( a.EntityTypeQualifierColumn ) )
                 .OrderBy( a => a.Name )
