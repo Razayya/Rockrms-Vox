@@ -1,5 +1,6 @@
 <%@ Control Language="C#" AutoEventWireup="true" CodeFile="StageDetail.ascx.cs"
     Inherits="RockWeb.Plugins.com_razayya.JourneyTrack.StageDetail" %>
+<%@ Register TagPrefix="jt" TagName="StageLogic" Src="~/Plugins/com_razayya/JourneyTrack/Controls/StageLogicEditor.ascx" %>
 
 <asp:UpdatePanel ID="upnlContent" runat="server">
     <ContentTemplate>
@@ -98,6 +99,18 @@
                             <Rock:RockDropDownList ID="ddlOnCompleteCommunication" runat="server" Label="On Complete Communication"
                                 EnhanceForLongLists="true"
                                 Help="Optional. When a person newly satisfies this Stage's Completion gate, queue this SystemCommunication. Each person is notified at most once per Stage." />
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-12">
+                            <label class="control-label">Stage Logic <span class="text-muted">(optional)</span></label>
+                            <p class="help-block">
+                                Define explicit ANY/ALL logic over this Stage's calculations &mdash; e.g. ANY of
+                                two ALL groups. Leave empty to use the default gate (a Completion calc if present,
+                                otherwise the intersection of all calculations).
+                            </p>
+                            <jt:StageLogic ID="seLogic" runat="server" />
                         </div>
                     </div>
 

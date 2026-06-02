@@ -116,6 +116,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 subGroup.PrerequisiteStageIds = string.Join( ",", cblPrerequisites.SelectedValues );
                 subGroup.AdditionalDataViewId = dvpAdditionalDataView.SelectedValueAsInt();
                 subGroup.OnCompleteSystemCommunicationId = ddlOnCompleteCommunication.SelectedValueAsInt();
+                subGroup.LogicTreeJson = seLogic.Value;
 
                 if ( !subGroup.IsValid )
                 {
@@ -321,6 +322,11 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 .Select( s => s.Trim() )
                 .ToList();
             cblPrerequisites.SetValues( selectedIds );
+
+            // Stage logic tree (leaves reference this Stage's calcs). StageId must be
+            // set before Value so the leaf dropdowns can resolve calc names.
+            seLogic.StageId = subGroup.Id;
+            seLogic.Value = subGroup.LogicTreeJson;
         }
 
         private void BindCalculationsGrid()
