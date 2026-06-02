@@ -6,6 +6,7 @@ using System.Linq;
 
 using com.razayya.JourneyTrack.Data;
 using com.razayya.JourneyTrack.Model;
+using com.razayya.JourneyTrack.UI;
 
 using Rock;
 using Rock.Attribute;
@@ -295,7 +296,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             tbDescription.Text = subGroup.Description;
             cbIsActive.Checked = subGroup.IsActive;
             dvpAdditionalDataView.SetValue( subGroup.AdditionalDataViewId );
-            JourneyCalculationDetail.PopulateSystemCommunicationPicker( ddlOnCompleteCommunication, subGroup.OnCompleteSystemCommunicationId );
+            JourneyTrackUiHelper.PopulateSystemCommunicationPicker( ddlOnCompleteCommunication, subGroup.OnCompleteSystemCommunicationId );
 
             // Populate prerequisite picker with sibling sub-groups (excluding self)
             cblPrerequisites.Items.Clear();

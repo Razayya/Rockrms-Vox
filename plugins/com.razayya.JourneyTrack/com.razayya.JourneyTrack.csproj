@@ -65,6 +65,8 @@
     <Compile Include="Model\JourneyProgramEnrollmentService.cs" />
     <!-- Logic (shared nested ANY/ALL tree) -->
     <Compile Include="Logic\LogicTree.cs" />
+    <!-- Shared UI helpers (DLL-side, callable from any block) -->
+    <Compile Include="UI\JourneyTrackUiHelper.cs" />
     <!-- JourneyCalculation Types -->
     <Compile Include="CalculationTypes\JourneyCalculationTypeContainer.cs" />
     <Compile Include="CalculationTypes\JourneyCalculationTypeComponent.cs" />

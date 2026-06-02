@@ -6,6 +6,7 @@ using System.Linq;
 
 using com.razayya.JourneyTrack.Data;
 using com.razayya.JourneyTrack.Model;
+using com.razayya.JourneyTrack.UI;
 
 using Rock;
 using Rock.Attribute;
@@ -422,7 +423,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
             cpCampus.SetValue( group.CampusId );
             dvpDataView.SetValue( group.DataViewId );
-            JourneyCalculationDetail.PopulateSystemCommunicationPicker( ddlOnCompleteCommunication, group.OnCompleteSystemCommunicationId );
+            JourneyTrackUiHelper.PopulateSystemCommunicationPicker( ddlOnCompleteCommunication, group.OnCompleteSystemCommunicationId );
 
             // Configure the category picker for Person Attribute categories
             var attributeEntityTypeId = EntityTypeCache.Get( typeof( Rock.Model.Attribute ) ).Id;
