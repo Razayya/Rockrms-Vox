@@ -6,9 +6,11 @@ using System.Web.UI;
 using System.Web.UI.WebControls;
 
 using com.razayya.JourneyTrack.CalculationTypes;
+using com.razayya.JourneyTrack.Logic;
 using ComparisonType = com.razayya.JourneyTrack.Model.ComparisonType;
 
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 using Rock;
 using Rock.Model;
@@ -17,6 +19,14 @@ using Rock.Web.UI.Controls;
 
 namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 {
+    /// <summary>
+    /// Visual editor for a PersonFilter calc's FilterConditions. Supports a
+    /// two-level ANY/ALL structure: a top-level combine (All/Any) over one or more
+    /// groups, each group combining its own condition rows with All/Any. Serializes
+    /// to the shared nested logic-tree JSON (<see cref="LogicTree"/>). Configs deeper
+    /// than two levels (groups within groups) fall back to a raw-JSON view so the
+    /// visual editor never silently flattens or clobbers them.
+    /// </summary>
     public partial class FilterConditionsEditor : UserControl
     {
         #region Public API
@@ -25,6 +35,16 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         {
             get { return GetJson(); }
             set { SetJson( value ); }
+        }
+
+        #endregion
+
+        #region Internal group model
+
+        private class EditGroup
+        {
+            public LogicGroupType Type { get; set; } = LogicGroupType.All;
+            public List<FilterCondition> Conditions { get; set; } = new List<FilterCondition>();
         }
 
         #endregion
@@ -39,7 +59,6 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         }
 
         // Hardcoded map of Person *ValueId properties to their DefinedType Guids.
-        // (Listed by Person property name → Rock.SystemGuid.DefinedType.* string Guid.)
         private static readonly Dictionary<string, Guid> _personDefinedTypeMap = new Dictionary<string, Guid>( StringComparer.OrdinalIgnoreCase )
         {
             { "ConnectionStatusValueId",        new Guid( "2E6540EA-63F0-40FE-BE50-F2A84735E600" ) }, // PERSON_CONNECTION_STATUS
@@ -99,18 +118,15 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         #region Value-shape → allowed comparisons
 
-        // A ValueShape collapses Source+Key+FieldType into a small alphabet that
-        // drives (a) which comparisons appear in the dropdown and (b) which Value
-        // control is rendered. Keeps the matrix maintainable in one place.
         private enum ValueShape
         {
-            None,        // no key chosen yet
-            BlankOnly,   // File, Image, Matrix, Encrypted, Lava, SSN — values are 1:1 / opaque
+            None,
+            BlankOnly,
             Boolean,
             Text,
             Numeric,
             Date,
-            Picker       // DefinedValue, Campus, Person, Group, etc.
+            Picker
         }
 
         private static readonly ComparisonType[] _cmpBlankOnly = new[] { ComparisonType.IsBlank, ComparisonType.IsNotBlank };
@@ -156,7 +172,6 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             if ( attr == null ) return ValueShape.Text;
             var ft = attr.FieldType?.Class ?? string.Empty;
 
-            // BlankOnly: types whose stored value is opaque/1:1 (File guid, matrix guid, encrypted blob, lava template).
             if ( ft.EndsWith( ".FileFieldType" )
                 || ft.EndsWith( ".ImageFieldType" )
                 || ft.EndsWith( ".BinaryFileFieldType" )
@@ -200,25 +215,39 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         #region ViewState
 
-        private List<FilterCondition> Conditions
+        private List<EditGroup> Groups
         {
             get
             {
-                var json = ViewState["Conditions"] as string;
+                var json = ViewState["Groups"] as string;
                 if ( string.IsNullOrEmpty( json ) )
                 {
-                    return new List<FilterCondition>();
+                    return new List<EditGroup>();
                 }
-                try { return JsonConvert.DeserializeObject<List<FilterCondition>>( json ) ?? new List<FilterCondition>(); }
-                catch { return new List<FilterCondition>(); }
+                try { return JsonConvert.DeserializeObject<List<EditGroup>>( json ) ?? new List<EditGroup>(); }
+                catch { return new List<EditGroup>(); }
             }
-            set { ViewState["Conditions"] = JsonConvert.SerializeObject( value ?? new List<FilterCondition>() ); }
+            set { ViewState["Groups"] = JsonConvert.SerializeObject( value ?? new List<EditGroup>() ); }
         }
 
-        private bool MatchAll
+        private LogicGroupType TopType
         {
-            get { return ( ViewState["MatchAll"] as bool? ) ?? true; }
-            set { ViewState["MatchAll"] = value; }
+            get { return ( ViewState["TopType"] as string ).ConvertToEnumOrNull<LogicGroupType>() ?? LogicGroupType.Any; }
+            set { ViewState["TopType"] = value.ToString(); }
+        }
+
+        /// <summary>When true, the config is deeper than 2 levels — only the raw-JSON view is shown.</summary>
+        private bool ForceRawOnly
+        {
+            get { return ( ViewState["ForceRawOnly"] as bool? ) ?? false; }
+            set { ViewState["ForceRawOnly"] = value; }
+        }
+
+        /// <summary>Set when the loaded config was a legacy flat array (so SetMatchAll may still set the group/top type).</summary>
+        private bool LoadedFromLegacyArray
+        {
+            get { return ( ViewState["LoadedLegacy"] as bool? ) ?? false; }
+            set { ViewState["LoadedLegacy"] = value; }
         }
 
         #endregion
@@ -230,7 +259,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             base.OnLoad( e );
             if ( !Page.IsPostBack )
             {
-                BindRepeater();
+                BindGroups();
             }
         }
 
@@ -238,12 +267,6 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         #region Public Get/Set JSON
 
-        /// <summary>
-        /// True once the editor has been seeded (or interacted with) at least once in
-        /// the current page lifetime. The detail block checks this before re-seeding
-        /// the editor on calc-type toggles, so switching away and back doesn't blow
-        /// away the user's in-session row state.
-        /// </summary>
         public bool HasInSessionState
         {
             get { return ( ViewState["FCE_HasState"] as bool? ) ?? false; }
@@ -252,63 +275,200 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         private void SetJson( string json )
         {
-            try
+            HasInSessionState = true;
+            ForceRawOnly = false;
+            LoadedFromLegacyArray = false;
+
+            JToken root = null;
+            if ( !string.IsNullOrWhiteSpace( json ) )
             {
-                var list = JsonConvert.DeserializeObject<List<FilterCondition>>( json ?? "[]" )
-                    ?? new List<FilterCondition>();
-                Conditions = list;
-            }
-            catch
-            {
-                Conditions = new List<FilterCondition>();
+                try { root = JToken.Parse( json ); } catch { root = null; }
             }
 
-            HasInSessionState = true;
-            BindRepeater();
+            if ( root == null )
+            {
+                // Blank/invalid → no groups. A subsequent SetMatchAll may seed a single group.
+                Groups = new List<EditGroup>();
+                TopType = LogicGroupType.Any;
+                LoadedFromLegacyArray = true;
+            }
+            else if ( root.Type == JTokenType.Array )
+            {
+                // Legacy flat array → one group holding all conditions. Group/top type
+                // is finalized by the SetMatchAll the host calls right after this.
+                var leaves = SafeLeaves( root );
+                Groups = new List<EditGroup> { new EditGroup { Type = LogicGroupType.All, Conditions = leaves } };
+                TopType = LogicGroupType.All;
+                LoadedFromLegacyArray = true;
+            }
+            else if ( TryCoerceToTwoLevel( root, out var top, out var groups ) )
+            {
+                TopType = top;
+                Groups = groups;
+            }
+            else
+            {
+                // Deeper than two levels (groups within groups) — fall back to raw JSON.
+                ForceRawOnly = true;
+                ViewState["RawJson"] = json;
+            }
+
+            if ( ForceRawOnly )
+            {
+                pnlRaw.Visible = true;
+                hfShowRaw.Value = "true";
+                lToggleRawText.Text = "Hide raw JSON";
+            }
+
+            BindGroups();
         }
 
         private string GetJson()
         {
-            CaptureRowsToState();
-            return JsonConvert.SerializeObject( Conditions );
+            if ( ForceRawOnly )
+            {
+                return ( ViewState["RawJson"] as string ) ?? ( ceRawJson.Text ?? "[]" );
+            }
+
+            CaptureToState();
+
+            var groups = Groups;
+            if ( groups.Count == 0 || groups.All( g => g.Conditions.Count == 0 ) )
+            {
+                // No real conditions → emit empty array (engine treats as "matches nobody").
+                return "[]";
+            }
+
+            var root = new LogicNode<FilterCondition>
+            {
+                Type = TopType,
+                Children = groups.Select( g => new LogicNode<FilterCondition>
+                {
+                    Type = g.Type,
+                    Children = g.Conditions.Select( c => new LogicNode<FilterCondition> { Leaf = c } ).ToList()
+                } ).ToList()
+            };
+            return LogicTree.ToJson( root );
+        }
+
+        private static List<FilterCondition> SafeLeaves( JToken arrayToken )
+        {
+            try { return arrayToken.ToObject<List<FilterCondition>>() ?? new List<FilterCondition>(); }
+            catch { return new List<FilterCondition>(); }
+        }
+
+        /// <summary>
+        /// Tries to map a parsed tree onto the two-level model the visual editor renders:
+        /// a top group whose children are EITHER all leaves (→ one implicit group) or all
+        /// groups-of-leaves. Returns false for anything deeper or mixed.
+        /// </summary>
+        private bool TryCoerceToTwoLevel( JToken root, out LogicGroupType topType, out List<EditGroup> groups )
+        {
+            topType = LogicGroupType.Any;
+            groups = new List<EditGroup>();
+
+            var node = LogicTree.Parse<FilterCondition>( root.ToString(), LogicGroupType.All );
+            if ( node == null )
+            {
+                return false;
+            }
+
+            // A bare leaf root → single group with that one condition.
+            if ( node.IsLeaf )
+            {
+                topType = LogicGroupType.All;
+                groups.Add( new EditGroup { Type = LogicGroupType.All, Conditions = node.Leaf != null ? new List<FilterCondition> { node.Leaf } : new List<FilterCondition>() } );
+                return true;
+            }
+
+            var children = node.Children ?? new List<LogicNode<FilterCondition>>();
+
+            // All children are leaves → one group.
+            if ( children.All( c => c.IsLeaf ) )
+            {
+                topType = node.Type.Value;
+                groups.Add( new EditGroup
+                {
+                    Type = node.Type.Value,
+                    Conditions = children.Where( c => c.Leaf != null ).Select( c => c.Leaf ).ToList()
+                } );
+                return true;
+            }
+
+            // All children are groups whose own children are all leaves → two-level.
+            if ( children.All( c => !c.IsLeaf && ( c.Children ?? new List<LogicNode<FilterCondition>>() ).All( gc => gc.IsLeaf ) ) )
+            {
+                topType = node.Type.Value;
+                foreach ( var groupNode in children )
+                {
+                    groups.Add( new EditGroup
+                    {
+                        Type = groupNode.Type.Value,
+                        Conditions = ( groupNode.Children ?? new List<LogicNode<FilterCondition>>() )
+                            .Where( c => c.Leaf != null ).Select( c => c.Leaf ).ToList()
+                    } );
+                }
+                return true;
+            }
+
+            return false;
         }
 
         public void SetMatchAll( bool matchAll )
         {
-            MatchAll = matchAll;
-            cbMatchAll.Checked = matchAll;
+            // Only meaningful for legacy/empty loads; nested configs carry their own
+            // top/group types parsed from JSON and must not be overwritten.
+            if ( !LoadedFromLegacyArray )
+            {
+                return;
+            }
+
+            var t = matchAll ? LogicGroupType.All : LogicGroupType.Any;
+            TopType = t;
+            var groups = Groups;
+            if ( groups.Count == 1 )
+            {
+                groups[0].Type = t;
+                Groups = groups;
+            }
+            BindGroups();
         }
 
         public bool GetMatchAll()
         {
-            return cbMatchAll.Checked;
+            // Best-effort back-compat signal for the host's MatchAll attribute value.
+            return TopType == LogicGroupType.All;
         }
 
-        /// <summary>
-        /// Returns user-facing validation errors. Empty list means the editor's
-        /// current configuration is OK to save. An empty FilterConditions list is
-        /// considered valid (placeholder semantics — calc just matches nobody).
-        /// </summary>
         public List<string> GetValidationErrors()
         {
-            CaptureRowsToState();
-            var errors = new List<string>();
-            var list = Conditions;
-            for ( int i = 0; i < list.Count; i++ )
+            if ( ForceRawOnly )
             {
-                var c = list[i];
-                var prefix = "Filter row " + ( i + 1 );
+                return new List<string>();
+            }
 
-                if ( string.IsNullOrWhiteSpace( c.Key ) )
+            CaptureToState();
+            var errors = new List<string>();
+            var groups = Groups;
+            for ( int g = 0; g < groups.Count; g++ )
+            {
+                var conditions = groups[g].Conditions;
+                for ( int i = 0; i < conditions.Count; i++ )
                 {
-                    errors.Add( prefix + ": " + ( c.Source == FilterSource.Property ? "Person Property" : "Person Attribute" ) + " is required." );
-                }
+                    var c = conditions[i];
+                    var prefix = ( groups.Count > 1 ? "Group " + ( g + 1 ) + ", filter row " : "Filter row " ) + ( i + 1 );
 
-                bool needsValue = c.Comparison != ComparisonType.IsBlank
-                               && c.Comparison != ComparisonType.IsNotBlank;
-                if ( needsValue && string.IsNullOrEmpty( c.Value ) )
-                {
-                    errors.Add( prefix + ": Value is required for comparison '" + SplitCamelCase( c.Comparison.ToString() ) + "'." );
+                    if ( string.IsNullOrWhiteSpace( c.Key ) )
+                    {
+                        errors.Add( prefix + ": " + ( c.Source == FilterSource.Property ? "Person Property" : "Person Attribute" ) + " is required." );
+                    }
+
+                    bool needsValue = c.Comparison != ComparisonType.IsBlank
+                                   && c.Comparison != ComparisonType.IsNotBlank;
+                    if ( needsValue && string.IsNullOrEmpty( c.Value ) )
+                    {
+                        errors.Add( prefix + ": Value is required for comparison '" + SplitCamelCase( c.Comparison.ToString() ) + "'." );
+                    }
                 }
             }
             return errors;
@@ -318,18 +478,74 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         #region Binding
 
-        private void BindRepeater()
+        private static void BindGroupTypeChoices( RockDropDownList ddl, LogicGroupType selected )
         {
-            cbMatchAll.Checked = MatchAll;
-            var list = Conditions;
-            phNoRows.Visible = list.Count == 0;
-            rRows.DataSource = list;
-            rRows.DataBind();
+            ddl.Items.Clear();
+            ddl.Items.Add( new ListItem( "All are true", LogicGroupType.All.ToString() ) );
+            ddl.Items.Add( new ListItem( "Any are true", LogicGroupType.Any.ToString() ) );
+            ddl.Items.Add( new ListItem( "None are true", LogicGroupType.AllFalse.ToString() ) );
+            ddl.Items.Add( new ListItem( "Not all are true", LogicGroupType.AnyFalse.ToString() ) );
+            ddl.SetValue( selected.ToString() );
+        }
+
+        private void BindGroups()
+        {
+            BindGroupTypeChoices( ddlTopType, TopType );
+
+            pnlGroups.Visible = !ForceRawOnly;
+            nbForceRaw.Visible = ForceRawOnly;
+
+            var groups = Groups;
+            phNoGroups.Visible = !ForceRawOnly && groups.Count == 0;
+            rGroups.DataSource = groups;
+            rGroups.DataBind();
 
             if ( pnlRaw.Visible )
             {
-                ceRawJson.Text = JsonConvert.SerializeObject( list, Formatting.Indented );
+                ceRawJson.Text = ForceRawOnly
+                    ? ( ( ViewState["RawJson"] as string ) ?? "[]" )
+                    : GetJsonForRawPreview();
             }
+        }
+
+        private string GetJsonForRawPreview()
+        {
+            // Pretty-print the current visual state for the raw panel without disturbing state.
+            var groups = Groups;
+            if ( groups.Count == 0 || groups.All( g => g.Conditions.Count == 0 ) )
+            {
+                return "[]";
+            }
+            var root = new LogicNode<FilterCondition>
+            {
+                Type = TopType,
+                Children = groups.Select( g => new LogicNode<FilterCondition>
+                {
+                    Type = g.Type,
+                    Children = g.Conditions.Select( c => new LogicNode<FilterCondition> { Leaf = c } ).ToList()
+                } ).ToList()
+            };
+            return JToken.Parse( LogicTree.ToJson( root ) ).ToString( Formatting.Indented );
+        }
+
+        protected void rGroups_ItemDataBound( object sender, RepeaterItemEventArgs e )
+        {
+            if ( e.Item.ItemType != ListItemType.Item && e.Item.ItemType != ListItemType.AlternatingItem )
+            {
+                return;
+            }
+
+            var group = ( EditGroup ) e.Item.DataItem;
+
+            var ddlGroupType = ( RockDropDownList ) e.Item.FindControl( "ddlGroupType" );
+            BindGroupTypeChoices( ddlGroupType, group.Type );
+
+            var phNoRows = ( PlaceHolder ) e.Item.FindControl( "phNoRows" );
+            phNoRows.Visible = group.Conditions.Count == 0;
+
+            var rRows = ( Repeater ) e.Item.FindControl( "rRows" );
+            rRows.DataSource = group.Conditions;
+            rRows.DataBind();
         }
 
         protected void rRows_ItemDataBound( object sender, RepeaterItemEventArgs e )
@@ -388,8 +604,6 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             }
 
             // ===== Comparison =====
-            // Only surface comparisons that make sense for this row's Source+Key shape.
-            // E.g. File / Matrix / Encrypted attrs collapse to IsBlank/IsNotBlank only.
             var shape = GetShape( condition );
             var allowed = GetAllowedComparisons( shape );
             ddlComp.Items.Clear();
@@ -397,12 +611,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             {
                 ddlComp.Items.Add( new ListItem( SplitCamelCase( ct.ToString() ), ct.ToString() ) );
             }
-            // If the stored Comparison isn't valid for the current shape, snap to the
-            // first allowed value (which is the sensible default for that shape).
             var resolvedComparison = allowed.Contains( condition.Comparison ) ? condition.Comparison : allowed[0];
             ddlComp.SetValue( resolvedComparison.ToString() );
 
-            // ===== Value (hidden for IsBlank / IsNotBlank; smart-rendered otherwise) =====
+            // ===== Value =====
             bool needsValue = resolvedComparison != ComparisonType.IsBlank
                            && resolvedComparison != ComparisonType.IsNotBlank;
 
@@ -502,42 +714,67 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
                 }
             }
 
-            // Default: free-text
             tbVal.Visible = true;
             tbVal.Text = condition.Value ?? string.Empty;
         }
 
-        private void CaptureRowsToState()
+        /// <summary>
+        /// Reads every group's All/Any selector and its condition rows back into the
+        /// Groups ViewState model. The single source of truth for postback handlers.
+        /// </summary>
+        private void CaptureToState()
         {
-            HasInSessionState = true;
-            var list = new List<FilterCondition>();
-            foreach ( RepeaterItem item in rRows.Items )
+            if ( ForceRawOnly )
             {
-                if ( item.ItemType != ListItemType.Item && item.ItemType != ListItemType.AlternatingItem )
+                return;
+            }
+
+            HasInSessionState = true;
+            var groups = new List<EditGroup>();
+
+            foreach ( RepeaterItem gItem in rGroups.Items )
+            {
+                if ( gItem.ItemType != ListItemType.Item && gItem.ItemType != ListItemType.AlternatingItem )
                 {
                     continue;
                 }
 
-                var ddlSource  = ( RockDropDownList ) item.FindControl( "ddlSource" );
-                var ddlKeyProp = ( RockDropDownList ) item.FindControl( "ddlKeyProperty" );
-                var ddlKeyAttr = ( RockDropDownList ) item.FindControl( "ddlKeyAttribute" );
-                var ddlComp    = ( RockDropDownList ) item.FindControl( "ddlComparison" );
+                var ddlGroupType = ( RockDropDownList ) gItem.FindControl( "ddlGroupType" );
+                var groupType = ddlGroupType.SelectedValue.ConvertToEnumOrNull<LogicGroupType>() ?? LogicGroupType.All;
 
-                var source = ddlSource.SelectedValue.ConvertToEnumOrNull<FilterSource>() ?? FilterSource.Property;
-                var key    = source == FilterSource.Property ? ddlKeyProp.SelectedValue : ddlKeyAttr.SelectedValue;
-                var comp   = ddlComp.SelectedValue.ConvertToEnumOrNull<ComparisonType>() ?? ComparisonType.EqualTo;
-                var value  = ExtractValueFromRow( item, source, key, comp );
-
-                list.Add( new FilterCondition
+                var conditions = new List<FilterCondition>();
+                var innerRep = ( Repeater ) gItem.FindControl( "rRows" );
+                foreach ( RepeaterItem rItem in innerRep.Items )
                 {
-                    Source = source,
-                    Key = key,
-                    Comparison = comp,
-                    Value = value
-                } );
+                    if ( rItem.ItemType != ListItemType.Item && rItem.ItemType != ListItemType.AlternatingItem )
+                    {
+                        continue;
+                    }
+
+                    var ddlSource  = ( RockDropDownList ) rItem.FindControl( "ddlSource" );
+                    var ddlKeyProp = ( RockDropDownList ) rItem.FindControl( "ddlKeyProperty" );
+                    var ddlKeyAttr = ( RockDropDownList ) rItem.FindControl( "ddlKeyAttribute" );
+                    var ddlComp    = ( RockDropDownList ) rItem.FindControl( "ddlComparison" );
+
+                    var source = ddlSource.SelectedValue.ConvertToEnumOrNull<FilterSource>() ?? FilterSource.Property;
+                    var key    = source == FilterSource.Property ? ddlKeyProp.SelectedValue : ddlKeyAttr.SelectedValue;
+                    var comp   = ddlComp.SelectedValue.ConvertToEnumOrNull<ComparisonType>() ?? ComparisonType.EqualTo;
+                    var value  = ExtractValueFromRow( rItem, source, key, comp );
+
+                    conditions.Add( new FilterCondition
+                    {
+                        Source = source,
+                        Key = key,
+                        Comparison = comp,
+                        Value = value
+                    } );
+                }
+
+                groups.Add( new EditGroup { Type = groupType, Conditions = conditions } );
             }
-            Conditions = list;
-            MatchAll = cbMatchAll.Checked;
+
+            Groups = groups;
+            TopType = ddlTopType.SelectedValue.ConvertToEnumOrNull<LogicGroupType>() ?? LogicGroupType.Any;
         }
 
         private static string ExtractValueFromRow( RepeaterItem item, FilterSource source, string key, ComparisonType comp )
@@ -564,62 +801,113 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         #region Postback Handlers
 
+        protected void ddlTopType_SelectedIndexChanged( object sender, EventArgs e )
+        {
+            CaptureToState();
+            BindGroups();
+        }
+
+        protected void ddlGroupType_SelectedIndexChanged( object sender, EventArgs e )
+        {
+            CaptureToState();
+            BindGroups();
+        }
+
         protected void ddlSource_SelectedIndexChanged( object sender, EventArgs e )
         {
-            CaptureRowsToState();
-            SnapComparisonToShapeDefault( sender );  // Source flip resets Key to "" -> shape=None
-            BindRepeater();
+            CaptureToState();
+            SnapComparisonToShapeDefault( sender );
+            BindGroups();
         }
 
         protected void ddlKey_SelectedIndexChanged( object sender, EventArgs e )
         {
-            CaptureRowsToState();
-            SnapComparisonToShapeDefault( sender );  // new Key -> first allowed Comparison for that shape
-            BindRepeater();
+            CaptureToState();
+            SnapComparisonToShapeDefault( sender );
+            BindGroups();
         }
 
         /// <summary>
-        /// Walks from a row-control event sender up to its RepeaterItem, then
-        /// rewrites the row's Comparison to the first allowed value for its
-        /// (now-current) shape. Called on Key / Source changes so the dropdown
-        /// snaps to the sensible default for the new attribute type, instead
-        /// of carrying over a stale (but still-allowed) comparison.
+        /// Walks from a row control up to its (group index, row index) and snaps that
+        /// row's Comparison to the first allowed value for its new shape.
         /// </summary>
         private void SnapComparisonToShapeDefault( object sender )
         {
-            var ctl = sender as System.Web.UI.Control;
-            if ( ctl == null ) return;
-            var item = ctl.NamingContainer as RepeaterItem;
-            if ( item == null || item.ItemIndex < 0 ) return;
+            var ctl = sender as Control;
+            var rowItem = ctl?.NamingContainer as RepeaterItem;
+            var groupItem = rowItem?.NamingContainer?.NamingContainer as RepeaterItem;
+            if ( rowItem == null || groupItem == null || rowItem.ItemIndex < 0 || groupItem.ItemIndex < 0 )
+            {
+                return;
+            }
 
-            var list = Conditions;
-            if ( item.ItemIndex >= list.Count ) return;
-            var allowed = GetAllowedComparisons( GetShape( list[item.ItemIndex] ) );
-            list[item.ItemIndex].Comparison = allowed[0];
-            // Drop any value the user typed under the old shape — usually meaningless under the new one.
-            list[item.ItemIndex].Value = string.Empty;
-            Conditions = list;
+            var groups = Groups;
+            if ( groupItem.ItemIndex >= groups.Count ) return;
+            var conditions = groups[groupItem.ItemIndex].Conditions;
+            if ( rowItem.ItemIndex >= conditions.Count ) return;
+
+            var allowed = GetAllowedComparisons( GetShape( conditions[rowItem.ItemIndex] ) );
+            conditions[rowItem.ItemIndex].Comparison = allowed[0];
+            conditions[rowItem.ItemIndex].Value = string.Empty;
+            Groups = groups;
         }
 
         protected void ddlComparison_SelectedIndexChanged( object sender, EventArgs e )
         {
-            CaptureRowsToState();
-            BindRepeater();
+            CaptureToState();
+            BindGroups();
         }
 
-        protected void lbAddRow_Click( object sender, EventArgs e )
+        protected void lbAddGroup_Click( object sender, EventArgs e )
         {
-            CaptureRowsToState();
-            var list = Conditions;
-            list.Add( new FilterCondition
+            CaptureToState();
+            var groups = Groups;
+            groups.Add( new EditGroup
             {
-                Source = FilterSource.Property,
-                Key = string.Empty,
-                Comparison = ComparisonType.EqualTo,
-                Value = string.Empty
+                Type = LogicGroupType.All,
+                Conditions = new List<FilterCondition>
+                {
+                    new FilterCondition { Source = FilterSource.Property, Key = string.Empty, Comparison = ComparisonType.EqualTo, Value = string.Empty }
+                }
             } );
-            Conditions = list;
-            BindRepeater();
+            Groups = groups;
+            BindGroups();
+        }
+
+        protected void rGroups_ItemCommand( object source, RepeaterCommandEventArgs e )
+        {
+            CaptureToState();
+            var groups = Groups;
+            var groupIndex = e.CommandArgument.ToString().AsInteger();
+
+            if ( e.CommandName == "AddCondition" )
+            {
+                if ( groupIndex >= 0 && groupIndex < groups.Count )
+                {
+                    groups[groupIndex].Conditions.Add( new FilterCondition
+                    {
+                        Source = FilterSource.Property,
+                        Key = string.Empty,
+                        Comparison = ComparisonType.EqualTo,
+                        Value = string.Empty
+                    } );
+                    Groups = groups;
+                }
+            }
+            else if ( e.CommandName == "DeleteGroup" )
+            {
+                if ( groupIndex >= 0 && groupIndex < groups.Count )
+                {
+                    groups.RemoveAt( groupIndex );
+                    Groups = groups;
+                }
+            }
+            else
+            {
+                return; // not ours (e.g. a bubbled DeleteRow) — leave for the inner handler
+            }
+
+            BindGroups();
         }
 
         protected void rRows_ItemCommand( object source, RepeaterCommandEventArgs e )
@@ -629,26 +917,44 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
                 return;
             }
 
-            CaptureRowsToState();
-            var index = e.CommandArgument.ToString().AsInteger();
-            var list = Conditions;
-            if ( index >= 0 && index < list.Count )
+            CaptureToState();
+
+            var groupItem = e.Item.NamingContainer?.NamingContainer as RepeaterItem;
+            if ( groupItem == null )
             {
-                list.RemoveAt( index );
-                Conditions = list;
+                return;
             }
-            BindRepeater();
+            var groupIndex = groupItem.ItemIndex;
+            var rowIndex = e.CommandArgument.ToString().AsInteger();
+
+            var groups = Groups;
+            if ( groupIndex >= 0 && groupIndex < groups.Count )
+            {
+                var conditions = groups[groupIndex].Conditions;
+                if ( rowIndex >= 0 && rowIndex < conditions.Count )
+                {
+                    conditions.RemoveAt( rowIndex );
+                    Groups = groups;
+                }
+            }
+            BindGroups();
         }
 
         protected void lbApplyRaw_Click( object sender, EventArgs e )
         {
             nbRawError.Visible = false;
+            var text = ceRawJson.Text ?? "[]";
             try
             {
-                var list = JsonConvert.DeserializeObject<List<FilterCondition>>( ceRawJson.Text ?? "[]" )
-                    ?? new List<FilterCondition>();
-                Conditions = list;
-                BindRepeater();
+                // Re-run SetJson so the same coerce/guard logic applies; a now-valid
+                // two-level config returns to the visual editor automatically.
+                JToken.Parse( text ); // validate
+                var keepRawOpen = true;
+                SetJson( text );
+                pnlRaw.Visible = keepRawOpen;
+                hfShowRaw.Value = keepRawOpen ? "true" : "false";
+                lToggleRawText.Text = pnlRaw.Visible ? "Hide raw JSON" : "Show raw JSON";
+                BindGroups();
             }
             catch ( Exception ex )
             {
@@ -659,11 +965,11 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         protected void lbToggleRaw_Click( object sender, EventArgs e )
         {
-            CaptureRowsToState();
+            CaptureToState();
             pnlRaw.Visible = !pnlRaw.Visible;
             hfShowRaw.Value = pnlRaw.Visible ? "true" : "false";
             lToggleRawText.Text = pnlRaw.Visible ? "Hide raw JSON" : "Show raw JSON";
-            BindRepeater();
+            BindGroups();
         }
 
         #endregion
@@ -681,33 +987,82 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         #region View-mode summary formatter
 
         /// <summary>
-        /// Render the configured FilterConditions JSON as a friendly vertical
-        /// summary (DataView-filter style), e.g.:
-        ///   Match all of:
-        ///     Age            equal to     1
-        ///     Ability Level  equal to     Infant
-        ///     Marital Status equal to     Widowed
+        /// Render the configured FilterConditions JSON as a friendly vertical summary.
+        /// Handles both a legacy flat array (joined by matchAll) and the nested
+        /// two-level group tree.
         /// </summary>
         public static string FormatSummaryHtml( string filterConditionsJson, bool matchAll )
         {
-            List<FilterCondition> conditions;
-            try
+            JToken root = null;
+            if ( !string.IsNullOrWhiteSpace( filterConditionsJson ) )
             {
-                conditions = JsonConvert.DeserializeObject<List<FilterCondition>>( filterConditionsJson ?? "[]" )
-                    ?? new List<FilterCondition>();
-            }
-            catch
-            {
-                return "<em class='text-muted'>(invalid JSON)</em>";
+                try { root = JToken.Parse( filterConditionsJson ); } catch { return "<em class='text-muted'>(invalid JSON)</em>"; }
             }
 
-            if ( conditions.Count == 0 )
+            if ( root == null )
             {
-                return "<em class='text-muted'>(no conditions configured — matches nobody)</em>";
+                return "<em class='text-muted'>(no conditions configured &mdash; matches nobody)</em>";
+            }
+
+            if ( root.Type == JTokenType.Array )
+            {
+                var conditions = SafeLeaves( root );
+                if ( conditions.Count == 0 )
+                {
+                    return "<em class='text-muted'>(no conditions configured &mdash; matches nobody)</em>";
+                }
+                return RenderConditionList( conditions, matchAll ? "AND" : "OR" );
+            }
+
+            // Nested tree.
+            var node = LogicTree.Parse<FilterCondition>( filterConditionsJson, LogicGroupType.All );
+            if ( node == null || LogicTree.IsEmpty( node ) )
+            {
+                return "<em class='text-muted'>(no conditions configured &mdash; matches nobody)</em>";
+            }
+
+            return RenderNode( node, 0 );
+        }
+
+        private static string RenderNode( LogicNode<FilterCondition> node, int depth )
+        {
+            if ( node == null )
+            {
+                return string.Empty;
+            }
+
+            if ( node.IsLeaf )
+            {
+                return "<div>" + FormatConditionLine( node.Leaf ) + "</div>";
             }
 
             var sb = new System.Text.StringBuilder();
-            var joiner = matchAll ? "AND" : "OR";
+            sb.Append( "<div class='text-muted small'>" ).Append( GroupLabel( node.Type.Value ) ).Append( ":</div>" );
+            sb.Append( "<div style='margin-left:16px;border-left:2px solid #eee;padding-left:8px;'>" );
+            var children = node.Children ?? new List<LogicNode<FilterCondition>>();
+            for ( int i = 0; i < children.Count; i++ )
+            {
+                sb.Append( RenderNode( children[i], depth + 1 ) );
+            }
+            sb.Append( "</div>" );
+            return sb.ToString();
+        }
+
+        private static string GroupLabel( LogicGroupType type )
+        {
+            switch ( type )
+            {
+                case LogicGroupType.All:      return "Match ALL of";
+                case LogicGroupType.Any:      return "Match ANY of";
+                case LogicGroupType.AllFalse: return "NONE of these are true";
+                case LogicGroupType.AnyFalse: return "NOT ALL of these are true";
+                default:                      return "Match";
+            }
+        }
+
+        private static string RenderConditionList( List<FilterCondition> conditions, string joiner )
+        {
+            var sb = new System.Text.StringBuilder();
             for ( int i = 0; i < conditions.Count; i++ )
             {
                 if ( i > 0 )
@@ -721,7 +1076,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         private static string FormatConditionLine( FilterCondition c )
         {
-            if ( string.IsNullOrWhiteSpace( c.Key ) )
+            if ( c == null || string.IsNullOrWhiteSpace( c.Key ) )
             {
                 return "<span class='text-danger'>(incomplete row)</span>";
             }
@@ -744,9 +1099,6 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         {
             if ( c.Source == FilterSource.Property )
             {
-                // Convert camel-case property names to spaced form, then trim the
-                // trailing "Value Id" / "Id" so e.g. "MaritalStatusValueId" reads
-                // as "Marital Status" — matches how Rock surfaces these elsewhere.
                 var split = SplitCamelCase( c.Key );
                 if ( split.EndsWith( " Value Id", StringComparison.Ordinal ) )
                     return split.Substring( 0, split.Length - " Value Id".Length );
@@ -775,8 +1127,6 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             }
         }
 
-        // Translate raw stored values into something readable: DefinedValue Ids/Guids
-        // → DefinedValue.Value; Campus Id → Campus.Name; Date → short date; etc.
         private static string ResolveValueForDisplay( FilterCondition c )
         {
             var raw = c.Value ?? string.Empty;
@@ -806,7 +1156,6 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
                         var ft = attr.FieldType?.Class ?? string.Empty;
                         if ( ft.EndsWith( ".DefinedValueFieldType" ) )
                         {
-                            // Stored values can be Id (from our picker) or Guid (Rock's native AV storage).
                             var dv = Rock.Web.Cache.DefinedValueCache.Get( raw.AsGuidOrNull() ?? Guid.Empty );
                             if ( dv == null ) dv = Rock.Web.Cache.DefinedValueCache.Get( raw.AsInteger() );
                             if ( dv != null ) return dv.Value;
