@@ -77,6 +77,20 @@ namespace com.razayya.JourneyTrack.Model
         [DataMember]
         public int? OnCompleteSystemCommunicationId { get; set; }
 
+        /// <summary>
+        /// Optional nested ANY/ALL logic tree (JSON) that combines this Stage's
+        /// calculations into the passer set. Leaves reference a child
+        /// JourneyCalculation by Id (<c>{ "calcId": N }</c>); groups combine with
+        /// All (Intersect) / Any (Union) / AllFalse / AnyFalse, mirroring a
+        /// DataView filter tree but folded in set-space.
+        ///
+        /// <para>When null/blank, the legacy gate applies: a Completion calc (if
+        /// present) defines the passers, otherwise the intersection of all
+        /// non-Completion calcs. See <c>JourneyTrackService.ProcessSubGroupInternal</c>.</para>
+        /// </summary>
+        [DataMember]
+        public string LogicTreeJson { get; set; }
+
         #endregion
 
         #region Navigation Properties
@@ -111,6 +125,18 @@ namespace com.razayya.JourneyTrack.Model
         public virtual Rock.Model.SystemCommunication OnCompleteSystemCommunication { get; set; }
 
         #endregion
+    }
+
+    /// <summary>
+    /// Leaf payload for a Stage's logic tree — references one of the Stage's child
+    /// JourneyCalculations by Id. The calc's matched-person set is the leaf's value;
+    /// the tree folds those sets with set operations. (Newtonsoft matches the
+    /// <c>calcId</c> JSON property case-insensitively.)
+    /// </summary>
+    public class StageLogicLeaf
+    {
+        /// <summary>The Id of a child JourneyCalculation in this Stage.</summary>
+        public int CalcId { get; set; }
     }
 
     #region Entity Configuration

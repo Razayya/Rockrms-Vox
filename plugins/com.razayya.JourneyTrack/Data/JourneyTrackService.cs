@@ -4,6 +4,7 @@ using System.Data.Entity;
 using System.Linq;
 
 using com.razayya.JourneyTrack.CalculationTypes;
+using com.razayya.JourneyTrack.Logic;
 using com.razayya.JourneyTrack.Model;
 
 using Rock;
@@ -490,6 +491,9 @@ namespace com.razayya.JourneyTrack.Data
 
             HashSet<int> completionPassers = null;
             var nonCompletionMatched = new List<HashSet<int>>();
+            // Matched set per calc Id — consumed by the optional Stage logic tree,
+            // which references calcs by Id and folds their sets with All/Any/…False.
+            var matchedByCalcId = new Dictionary<int, HashSet<int>>();
 
             foreach ( var calc in calculations )
             {
@@ -498,6 +502,9 @@ namespace com.razayya.JourneyTrack.Data
                     var calcResult = ExecuteCalculation( calc, workingPopulation, rockContext );
                     result.Merge( calcResult );
 
+                    var matched = calcResult.MatchedPersonIds ?? new HashSet<int>();
+                    matchedByCalcId[calc.Id] = matched;
+
                     var componentName = calc.CalculationTypeEntityType?.Name ?? string.Empty;
                     if ( componentName.Contains( "CompletionCalculation" ) )
                     {
@@ -505,7 +512,7 @@ namespace com.razayya.JourneyTrack.Data
                     }
                     else
                     {
-                        nonCompletionMatched.Add( calcResult.MatchedPersonIds ?? new HashSet<int>() );
+                        nonCompletionMatched.Add( matched );
                     }
                 }
                 catch ( Exception ex )
@@ -514,21 +521,40 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
-            // Stage-gating fallback: when there's no Completion meta-calc, the Stage is
-            // "passed" by the intersection of every non-Completion calc's matched persons.
-            // This makes transient-only Stages (Shape A — e.g. a single StepCompletion calc
-            // with no Person Attr sink) actually gate prerequisites correctly. Previous
-            // behavior fail-opened to the full workingPopulation, which broke chained Stages.
-            if ( completionPassers == null && nonCompletionMatched.Count > 0 )
-            {
-                completionPassers = new HashSet<int>( nonCompletionMatched[0] );
-                for ( int i = 1; i < nonCompletionMatched.Count; i++ )
-                {
-                    completionPassers.IntersectWith( nonCompletionMatched[i] );
-                }
-            }
+            HashSet<int> finalPassers;
 
-            var finalPassers = completionPassers ?? workingPopulation;
+            // Stage logic tree (Option A): when configured, a nested ANY/ALL tree over
+            // the Stage's calcs defines the passer set. Leaves reference a calc by Id;
+            // All=Intersect, Any=Union, AllFalse/AnyFalse complement against the
+            // working population. This is the set-space analog of a DataView filter tree.
+            var stageTree = string.IsNullOrWhiteSpace( subGroup.LogicTreeJson )
+                ? null
+                : LogicTree.Parse<StageLogicLeaf>( subGroup.LogicTreeJson, LogicGroupType.All );
+
+            if ( stageTree != null && !LogicTree.IsEmpty( stageTree ) )
+            {
+                finalPassers = EvaluateStageLogic( stageTree, matchedByCalcId, workingPopulation );
+                result.Log.Add( $"    Stage logic tree → {finalPassers.Count} passers" );
+            }
+            else
+            {
+                // Legacy gate (unchanged): when there's no Completion meta-calc, the Stage
+                // is "passed" by the intersection of every non-Completion calc's matched
+                // persons. This makes transient-only Stages (Shape A — e.g. a single
+                // StepCompletion calc with no Person Attr sink) gate prerequisites
+                // correctly. Previous behavior fail-opened to the full workingPopulation,
+                // which broke chained Stages.
+                if ( completionPassers == null && nonCompletionMatched.Count > 0 )
+                {
+                    completionPassers = new HashSet<int>( nonCompletionMatched[0] );
+                    for ( int i = 1; i < nonCompletionMatched.Count; i++ )
+                    {
+                        completionPassers.IntersectWith( nonCompletionMatched[i] );
+                    }
+                }
+
+                finalPassers = completionPassers ?? workingPopulation;
+            }
 
             // Stage-level transition detection. A person newly entering this Stage's
             // passer set (vs prior runs) triggers OnCompleteSystemCommunication if set.
@@ -548,6 +574,108 @@ namespace com.razayya.JourneyTrack.Data
                 Result = result,
                 Passers = finalPassers
             };
+        }
+
+        /// <summary>
+        /// Folds a Stage's logic tree into a passer set. Leaves resolve to a calc's
+        /// matched-person set; groups combine in set-space: All=Intersect, Any=Union,
+        /// AllFalse = population minus the union of children (in none), AnyFalse =
+        /// population minus the intersection of children (not in all). An unconfigured
+        /// or empty node matches nobody. Each call returns a fresh set, so the source
+        /// matched sets are never mutated.
+        /// </summary>
+        private static HashSet<int> EvaluateStageLogic(
+            LogicNode<StageLogicLeaf> node,
+            Dictionary<int, HashSet<int>> matchedByCalcId,
+            HashSet<int> population )
+        {
+            if ( node == null )
+            {
+                return new HashSet<int>();
+            }
+
+            if ( node.IsLeaf )
+            {
+                if ( node.Leaf != null && matchedByCalcId.TryGetValue( node.Leaf.CalcId, out var set ) )
+                {
+                    return new HashSet<int>( set );
+                }
+                return new HashSet<int>();
+            }
+
+            var children = node.Children ?? new List<LogicNode<StageLogicLeaf>>();
+            if ( children.Count == 0 )
+            {
+                return new HashSet<int>();
+            }
+
+            switch ( node.Type.Value )
+            {
+                case LogicGroupType.All:
+                {
+                    HashSet<int> acc = null;
+                    foreach ( var child in children )
+                    {
+                        var childSet = EvaluateStageLogic( child, matchedByCalcId, population );
+                        if ( acc == null )
+                        {
+                            acc = childSet;
+                        }
+                        else
+                        {
+                            acc.IntersectWith( childSet );
+                        }
+                    }
+                    return acc ?? new HashSet<int>();
+                }
+
+                case LogicGroupType.Any:
+                {
+                    var acc = new HashSet<int>();
+                    foreach ( var child in children )
+                    {
+                        acc.UnionWith( EvaluateStageLogic( child, matchedByCalcId, population ) );
+                    }
+                    return acc;
+                }
+
+                case LogicGroupType.AllFalse:
+                {
+                    // People in NONE of the children: population minus the union.
+                    var union = new HashSet<int>();
+                    foreach ( var child in children )
+                    {
+                        union.UnionWith( EvaluateStageLogic( child, matchedByCalcId, population ) );
+                    }
+                    var res = new HashSet<int>( population );
+                    res.ExceptWith( union );
+                    return res;
+                }
+
+                case LogicGroupType.AnyFalse:
+                {
+                    // People NOT in all children: population minus the intersection.
+                    HashSet<int> inter = null;
+                    foreach ( var child in children )
+                    {
+                        var childSet = EvaluateStageLogic( child, matchedByCalcId, population );
+                        if ( inter == null )
+                        {
+                            inter = childSet;
+                        }
+                        else
+                        {
+                            inter.IntersectWith( childSet );
+                        }
+                    }
+                    var res = new HashSet<int>( population );
+                    res.ExceptWith( inter ?? new HashSet<int>() );
+                    return res;
+                }
+
+                default:
+                    return new HashSet<int>();
+            }
         }
 
         private SyncResult ExecuteCalculation(

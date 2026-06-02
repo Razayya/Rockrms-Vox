@@ -63,6 +63,8 @@
     <Compile Include="Model\JourneyCommunicationLogService.cs" />
     <Compile Include="Model\JourneyProgramEnrollment.cs" />
     <Compile Include="Model\JourneyProgramEnrollmentService.cs" />
+    <!-- Logic (shared nested ANY/ALL tree) -->
+    <Compile Include="Logic\LogicTree.cs" />
     <!-- JourneyCalculation Types -->
     <Compile Include="CalculationTypes\JourneyCalculationTypeContainer.cs" />
     <Compile Include="CalculationTypes\JourneyCalculationTypeComponent.cs" />
@@ -99,6 +101,7 @@
     <Compile Include="Migrations\007_RegisterMediaWatchedCalc.cs" />
     <Compile Include="Migrations\008_AddEnrollment.cs" />
     <Compile Include="Migrations\009_AddSkipIfTargetHasValue.cs" />
+    <Compile Include="Migrations\010_AddStageLogicTree.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

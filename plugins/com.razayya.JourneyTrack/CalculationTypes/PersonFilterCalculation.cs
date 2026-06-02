@@ -5,6 +5,7 @@ using System.Data.Entity;
 using System.Linq;
 
 using com.razayya.JourneyTrack.Constants;
+using com.razayya.JourneyTrack.Logic;
 using com.razayya.JourneyTrack.Model;
 
 using Newtonsoft.Json;
@@ -65,21 +66,19 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var conditionsJson = calc.GetAttributeValue( AttributeKey.FilterConditions );
             var matchAll = calc.GetAttributeValue( AttributeKey.MatchAll ).AsBoolean();
 
-            List<FilterCondition> conditions;
-            try
-            {
-                conditions = JsonConvert.DeserializeObject<List<FilterCondition>>( conditionsJson );
-            }
-            catch
+            // Parse into a nested ANY/ALL logic tree. A legacy flat array wraps in a
+            // single root group whose type follows the existing "Match All" toggle
+            // (All when on, Any when off) — so old configs evaluate exactly as before.
+            var tree = LogicTree.Parse<FilterCondition>(
+                conditionsJson,
+                matchAll ? LogicGroupType.All : LogicGroupType.Any );
+
+            if ( LogicTree.IsEmpty( tree ) )
             {
                 return results;
             }
 
-            if ( conditions == null || conditions.Count == 0 )
-            {
-                return results;
-            }
-
+            var conditions = LogicTree.GetLeaves( tree ).ToList();
             bool needsProperties = conditions.Any( c => c.Source == FilterSource.Property );
             bool needsAttributes = conditions.Any( c => c.Source == FilterSource.Attribute );
 
@@ -122,9 +121,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
                 foreach ( var person in persons )
                 {
-                    bool matched = matchAll
-                        ? conditions.All( c => EvaluateCondition( person, c, attributeLookup ) )
-                        : conditions.Any( c => EvaluateCondition( person, c, attributeLookup ) );
+                    // EvaluateCondition handles both Property and Attribute leaves, so a
+                    // mixed tree evaluates correctly in the property-bearing path.
+                    bool matched = LogicTree.Evaluate( tree, c => EvaluateCondition( person, c, attributeLookup ) );
 
                     if ( matched )
                     {
@@ -140,9 +139,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 // Attribute-only conditions — no need to load Person entities at all
                 foreach ( var personId in populationPersonIds )
                 {
-                    bool matched = matchAll
-                        ? conditions.All( c => EvaluateAttributeCondition( personId, c, attributeLookup ) )
-                        : conditions.Any( c => EvaluateAttributeCondition( personId, c, attributeLookup ) );
+                    bool matched = LogicTree.Evaluate( tree, c => EvaluateAttributeCondition( personId, c, attributeLookup ) );
 
                     if ( matched )
                     {
