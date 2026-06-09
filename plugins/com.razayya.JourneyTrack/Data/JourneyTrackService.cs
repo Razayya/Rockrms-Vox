@@ -75,22 +75,59 @@ namespace com.razayya.JourneyTrack.Data
         /// </summary>
         public SyncResult ProcessGroupForPerson( int calculationGroupId, int personId )
         {
+            return ProcessProgramForPersonInternal( calculationGroupId, personId, maxStageOrder: int.MaxValue );
+        }
+
+        /// <summary>
+        /// Processes a single Stage for a single person. Runs the cascade from Stage Order
+        /// 0 up through the target Stage (inclusive) so prerequisite gating remains correct,
+        /// then stops — later Stages are not evaluated. The per-calc-type cache (30s TTL)
+        /// keeps repeat upstream evaluation cheap when the mobile app opens nearby pages
+        /// in quick succession. Skips the program rollup write (intersection over a partial
+        /// stagePassers map would be wrong) — that's reserved for full-program syncs.
+        /// </summary>
+        public SyncResult ProcessStageForPerson( int stageId, int personId )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var stage = new StageService( rockContext ).Get( stageId );
+                if ( stage == null )
+                {
+                    var r = new SyncResult();
+                    r.Errors.Add( $"Stage Id {stageId} not found." );
+                    return r;
+                }
+                if ( !stage.IsActive )
+                {
+                    var r = new SyncResult();
+                    r.Errors.Add( $"Stage Id {stageId} ('{stage.Name}') is inactive." );
+                    return r;
+                }
+                return ProcessProgramForPersonInternal( stage.JourneyProgramId, personId, maxStageOrder: stage.Order );
+            }
+        }
+
+        private SyncResult ProcessProgramForPersonInternal( int programId, int personId, int maxStageOrder )
+        {
             var result = new SyncResult();
 
             using ( var rockContext = new RockContext() )
             {
-                var group = new JourneyProgramService( rockContext ).Get( calculationGroupId );
+                var group = new JourneyProgramService( rockContext ).Get( programId );
                 if ( group == null )
                 {
-                    result.Errors.Add( $"Journey Program Id {calculationGroupId} not found." );
+                    result.Errors.Add( $"Journey Program Id {programId} not found." );
                     return result;
                 }
 
                 var singlePersonPopulation = new HashSet<int> { personId };
-                result.Log.Add( $"Group '{group.Name}': single-person sync for PersonId {personId}" );
+                var scopeNote = maxStageOrder == int.MaxValue
+                    ? $"full program"
+                    : $"stage-scoped (Order <= {maxStageOrder})";
+                result.Log.Add( $"Group '{group.Name}': single-person sync for PersonId {personId} — {scopeNote}" );
 
                 var subGroups = new StageService( rockContext ).Queryable()
-                    .Where( sg => sg.JourneyProgramId == group.Id && sg.IsActive )
+                    .Where( sg => sg.JourneyProgramId == group.Id && sg.IsActive && sg.Order <= maxStageOrder )
                     .OrderBy( sg => sg.Order )
                     .ThenBy( sg => sg.Name )
                     .ToList();
@@ -112,8 +149,17 @@ namespace com.razayya.JourneyTrack.Data
                     }
                 }
 
-                // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries)
-                WriteProgramRollup( group, singlePersonPopulation, subGroupPassers, result, rockContext );
+                // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries).
+                // Only safe when every Stage has been evaluated — a partial stagePassers map would
+                // make the AllStagesPass intersection report false completions.
+                if ( maxStageOrder == int.MaxValue )
+                {
+                    WriteProgramRollup( group, singlePersonPopulation, subGroupPassers, result, rockContext );
+                }
+                else
+                {
+                    result.Log.Add( $"  (program rollup skipped — partial stage scope)" );
+                }
             }
 
             FlushAttributeCache();
