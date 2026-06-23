@@ -15,10 +15,12 @@ using Rock.Model;
 namespace com.razayya.JourneyTrack.CalculationTypes
 {
     /// <summary>
-    /// Evaluates whether persons attended groups of a specific type
-    /// a minimum number of times within a given number of days.
+    /// Evaluates whether persons attended any group of the selected group type(s)
+    /// a minimum number of times within a given number of days. For attendance scoped
+    /// to specific, individually-chosen groups rather than whole group types, see
+    /// GroupAttendanceCalculation.
     /// </summary>
-    [Description( "Evaluates attendance against group type, minimum count, and date range criteria." )]
+    [Description( "Evaluates attendance against group type(s), a minimum count, and a date range." )]
 
     [GroupTypesField( "Group Types",
         Description = "The group types to check attendance for.",
@@ -43,7 +45,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
     public class AttendanceCalculation : JourneyCalculationTypeComponent
     {
         /// <inheritdoc/>
-        public override string Title => "Attendance";
+        public override string Title => "Group Type Attendance";
 
         /// <inheritdoc/>
         public override string IconCssClass => "fa fa-calendar-check";

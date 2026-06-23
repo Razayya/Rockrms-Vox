@@ -104,6 +104,7 @@
     <Compile Include="Migrations\008_AddEnrollment.cs" />
     <Compile Include="Migrations\009_AddSkipIfTargetHasValue.cs" />
     <Compile Include="Migrations\010_AddStageLogicTree.cs" />
+    <Compile Include="Migrations\011_RenameAttendanceCalcTitle.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
