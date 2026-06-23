@@ -155,8 +155,8 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
                 var enrollmentService = new JourneyProgramEnrollmentService( rockContext );
                 var existing = enrollmentService.Queryable()
-                    .Where( e => e.JourneyProgramId == ProgramId && e.PersonAlias.PersonId == personId.Value )
-                    .OrderByDescending( e => e.Id )
+                    .Where( en => en.JourneyProgramId == ProgramId && en.PersonAlias.PersonId == personId.Value )
+                    .OrderByDescending( en => en.Id )
                     .FirstOrDefault();
 
                 if ( existing == null )
