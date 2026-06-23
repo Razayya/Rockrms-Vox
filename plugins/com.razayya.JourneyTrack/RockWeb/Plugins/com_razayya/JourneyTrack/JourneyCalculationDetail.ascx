@@ -4,6 +4,8 @@
     Src="~/Plugins/com_razayya/JourneyTrack/Controls/FilterConditionsEditor.ascx" %>
 <%@ Register TagPrefix="jt" TagName="CompletionCriteriaEditor"
     Src="~/Plugins/com_razayya/JourneyTrack/Controls/CompletionCriteriaEditor.ascx" %>
+<%@ Register TagPrefix="jt" TagName="GroupAttendancePicker"
+    Src="~/Plugins/com_razayya/JourneyTrack/Controls/GroupAttendancePicker.ascx" %>
 
 <asp:UpdatePanel ID="upnlContent" runat="server">
     <ContentTemplate>
@@ -128,6 +130,7 @@
                         <%-- Visual editors that replace the JSON textarea for known JSON-input attrs --%>
                         <jt:FilterConditionsEditor   ID="fcEditor" runat="server" Visible="false" />
                         <jt:CompletionCriteriaEditor ID="ccEditor" runat="server" Visible="false" />
+                        <jt:GroupAttendancePicker    ID="gaEditor" runat="server" Visible="false" />
                     </asp:Panel>
 
                     <hr />

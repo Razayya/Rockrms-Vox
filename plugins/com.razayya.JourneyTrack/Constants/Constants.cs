@@ -25,6 +25,11 @@ namespace com.razayya.JourneyTrack.Constants
         public const string GroupRole = "GroupRole";
         public const string ActiveMembersOnly = "ActiveMembersOnly";
 
+        // Group attendance JourneyCalculation (attendance against specific groups).
+        // MinimumCount / WithinDays are shared keys — they resolve to distinct Attribute
+        // rows because each calc type qualifies by its own CalculationTypeEntityTypeId.
+        public const string Groups_GroupAttendance = "Groups_GroupAttendance";
+
         // Group membership JourneyCalculation
         public const string Group = "Group";
         public const string IncludeChildGroups = "IncludeChildGroups";

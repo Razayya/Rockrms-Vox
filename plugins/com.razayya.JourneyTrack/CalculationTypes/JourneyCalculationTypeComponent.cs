@@ -68,6 +68,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             new Dictionary<string, Lazy<JourneyCalculationTypeComponent>>( StringComparer.OrdinalIgnoreCase )
             {
                 { typeof( AttendanceCalculation ).FullName, new Lazy<JourneyCalculationTypeComponent>( () => new AttendanceCalculation() ) },
+                { typeof( GroupAttendanceCalculation ).FullName, new Lazy<JourneyCalculationTypeComponent>( () => new GroupAttendanceCalculation() ) },
                 { typeof( CompletionCalculation ).FullName, new Lazy<JourneyCalculationTypeComponent>( () => new CompletionCalculation() ) },
                 { typeof( DataViewInclusionCalculation ).FullName, new Lazy<JourneyCalculationTypeComponent>( () => new DataViewInclusionCalculation() ) },
                 { typeof( GroupTypeMembershipCalculation ).FullName, new Lazy<JourneyCalculationTypeComponent>( () => new GroupTypeMembershipCalculation() ) },

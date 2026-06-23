@@ -170,6 +170,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 {
                     editorErrors = ccEditor.GetValidationErrors();
                 }
+                else if ( componentTypeName.EndsWith( ".GroupAttendanceCalculation" ) && gaEditor.Visible )
+                {
+                    editorErrors = gaEditor.GetValidationErrors();
+                }
                 if ( editorErrors != null && editorErrors.Count > 0 )
                 {
                     nbWarning.Text = "<strong>Please fix the following before saving:</strong><ul><li>"
@@ -205,6 +209,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 else if ( componentName.EndsWith( ".CompletionCalculation" ) && ccEditor.Visible )
                 {
                     calc.SetAttributeValue( "CompletionCriteria", ccEditor.Value );
+                }
+                else if ( componentName.EndsWith( ".GroupAttendanceCalculation" ) && gaEditor.Visible )
+                {
+                    calc.SetAttributeValue( "Groups_GroupAttendance", gaEditor.Value );
                 }
 
                 calc.SaveAttributeValues( rockContext );
@@ -527,6 +535,13 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                         calc.Id );
                     configHtml += string.Format( "<dt>Completion Criteria</dt><dd>{0}</dd>", summary );
                 }
+                else if ( componentNameForView.EndsWith( ".GroupAttendanceCalculation" ) )
+                {
+                    excludeKeys.Add( "Groups_GroupAttendance" );
+                    var summary = JtControls.GroupAttendancePicker.FormatSummaryHtml(
+                        calc.GetAttributeValue( "Groups_GroupAttendance" ) );
+                    configHtml += string.Format( "<dt>Groups</dt><dd>{0}</dd>", summary );
+                }
 
                 foreach ( var attr in calc.Attributes )
                 {
@@ -657,6 +672,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 var componentName = entityType.Name ?? string.Empty;
                 fcEditor.Visible = false;
                 ccEditor.Visible = false;
+                gaEditor.Visible = false;
 
                 if ( componentName.EndsWith( ".PersonFilterCalculation" ) )
                 {
@@ -682,6 +698,15 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     if ( !ccEditor.HasInSessionState )
                     {
                         ccEditor.Value = calc.GetAttributeValue( "CompletionCriteria" );
+                    }
+                }
+                else if ( componentName.EndsWith( ".GroupAttendanceCalculation" ) )
+                {
+                    excludeKeys.Add( "Groups_GroupAttendance" );
+                    gaEditor.Visible = true;
+                    if ( !gaEditor.HasInSessionState )
+                    {
+                        gaEditor.Value = calc.GetAttributeValue( "Groups_GroupAttendance" );
                     }
                 }
 

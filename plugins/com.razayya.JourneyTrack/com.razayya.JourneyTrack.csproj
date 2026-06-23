@@ -71,6 +71,7 @@
     <Compile Include="CalculationTypes\JourneyCalculationTypeContainer.cs" />
     <Compile Include="CalculationTypes\JourneyCalculationTypeComponent.cs" />
     <Compile Include="CalculationTypes\AttendanceCalculation.cs" />
+    <Compile Include="CalculationTypes\GroupAttendanceCalculation.cs" />
     <Compile Include="CalculationTypes\PersonFilterCalculation.cs" />
     <Compile Include="CalculationTypes\DataViewInclusionCalculation.cs" />
     <Compile Include="CalculationTypes\GroupTypeMembershipCalculation.cs" />
@@ -105,6 +106,7 @@
     <Compile Include="Migrations\009_AddSkipIfTargetHasValue.cs" />
     <Compile Include="Migrations\010_AddStageLogicTree.cs" />
     <Compile Include="Migrations\011_RenameAttendanceCalcTitle.cs" />
+    <Compile Include="Migrations\012_RegisterGroupAttendanceCalc.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
