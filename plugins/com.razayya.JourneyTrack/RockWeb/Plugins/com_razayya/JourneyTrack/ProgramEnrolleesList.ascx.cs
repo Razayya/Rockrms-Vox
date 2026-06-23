@@ -10,6 +10,7 @@ using Rock;
 using Rock.Attribute;
 using Rock.Data;
 using Rock.Model;
+using Rock.Web.Cache;
 using Rock.Web.UI;
 using Rock.Web.UI.Controls;
 
@@ -47,6 +48,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             if ( !Page.IsPostBack )
             {
                 ProgramId = PageParameter( "JourneyProgramId" ).AsInteger();
+                PopulateCampusFilter();
                 LoadProgramHeader();
                 BindGrid();
             }
@@ -64,10 +66,20 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     nbResult.Visible = true;
                     return;
                 }
-                lProgramName.Text = " — " + program.Name;
+                lProgramName.Text = " &mdash; " + program.Name;
                 var activeCount = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
                     .Count( e => e.JourneyProgramId == ProgramId && e.IsActive );
                 hlActiveCount.Text = activeCount.ToString( "N0" ) + " active";
+            }
+        }
+
+        private void PopulateCampusFilter()
+        {
+            ddlCampus.Items.Clear();
+            ddlCampus.Items.Add( new ListItem( "All Campuses", string.Empty ) );
+            foreach ( var campus in CampusCache.All().Where( c => c.IsActive != false ).OrderBy( c => c.Order ).ThenBy( c => c.Name ) )
+            {
+                ddlCampus.Items.Add( new ListItem( campus.Name, campus.Id.ToString() ) );
             }
         }
 
@@ -88,17 +100,23 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     q = q.Where( e => e.Source != null && e.Source.Contains( sourceFilter ) );
                 }
 
+                var campusId = ddlCampus.SelectedValue.AsIntegerOrNull();
+                if ( campusId.HasValue )
+                {
+                    q = q.Where( e => e.PersonAlias.Person.PrimaryCampusId == campusId.Value );
+                }
+
                 var rows = q.Select( e => new
                     {
                         e.Id,
                         PersonName = e.PersonAlias.Person.NickName + " " + e.PersonAlias.Person.LastName,
+                        Campus = e.PersonAlias.Person.PrimaryCampus.Name,
                         e.EnrolledDateTime,
                         e.Source,
                         e.IsActive,
                         e.UnenrolledDateTime
                     } )
                     .OrderByDescending( e => e.EnrolledDateTime )
-                    .Take( 10000 )  // safety cap; grid pages within this
                     .ToList();
 
                 var sortProperty = gEnrollees.SortProperty;

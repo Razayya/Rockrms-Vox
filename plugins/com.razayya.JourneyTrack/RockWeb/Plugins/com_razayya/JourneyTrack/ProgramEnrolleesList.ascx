@@ -40,6 +40,8 @@
                         <asp:ListItem Text="Inactive only" Value="inactive" />
                         <asp:ListItem Text="All"           Value="all" />
                     </Rock:RockDropDownList>
+                    <Rock:RockDropDownList ID="ddlCampus" runat="server" Label="Campus"
+                        AutoPostBack="true" OnSelectedIndexChanged="ddlStatus_SelectedIndexChanged" />
                     <Rock:RockTextBox ID="tbSourceFilter" runat="server" Label="Source contains" />
                     <asp:LinkButton ID="btnFilter" runat="server" CssClass="btn btn-action btn-xs"
                         OnClick="btnFilter_Click" Text="Filter" />
@@ -51,6 +53,7 @@
                         AllowSorting="true" AllowPaging="true" OnGridRebind="gEnrollees_GridRebind">
                         <Columns>
                             <Rock:RockBoundField DataField="PersonName" HeaderText="Person" SortExpression="PersonName" />
+                            <Rock:RockBoundField DataField="Campus" HeaderText="Campus" SortExpression="Campus" />
                             <Rock:DateTimeField DataField="EnrolledDateTime" HeaderText="Enrolled" SortExpression="EnrolledDateTime" />
                             <Rock:RockBoundField DataField="Source" HeaderText="Source" SortExpression="Source"
                                 ItemStyle-HorizontalAlign="Center" HeaderStyle-HorizontalAlign="Center" />
