@@ -51,6 +51,9 @@
                         <asp:LinkButton ID="btnCopy" runat="server" Text="Copy" CssClass="btn btn-default btn-sm"
                             OnClick="btnCopy_Click" CausesValidation="false"
                             ToolTip="Create a copy of this Calculation." />
+                        <asp:LinkButton ID="btnDelete" runat="server" Text="Delete" CssClass="btn btn-link"
+                            OnClick="btnDelete_Click" CausesValidation="false"
+                            OnClientClick="return Rock.dialogs.confirmDelete(event, 'Calculation');" />
                         <asp:LinkButton ID="btnBack" runat="server" Text="Back" CssClass="btn btn-link"
                             OnClick="btnBack_Click" CausesValidation="false" />
                     </div>

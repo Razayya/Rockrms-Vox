@@ -238,6 +238,28 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             }
         }
 
+        protected void btnDelete_Click( object sender, EventArgs e )
+        {
+            int parentStageId = ParentSubGroupId;
+
+            using ( var rockContext = new RockContext() )
+            {
+                var service = new JourneyCalculationService( rockContext );
+                var calc = service.Get( JourneyCalculationId );
+                if ( calc != null )
+                {
+                    // Capture the parent before delete so we can navigate back to it.
+                    // The DB cascades JourneyCalculationRun history (ON DELETE CASCADE);
+                    // orphaned component AttributeValues are reaped by the Rock Cleanup job.
+                    parentStageId = calc.StageId;
+                    service.Delete( calc );
+                    rockContext.SaveChanges();
+                }
+            }
+
+            NavigateToLinkedPage( "ParentPage", "StageId", parentStageId );
+        }
+
         protected void btnBack_Click( object sender, EventArgs e )
         {
             NavigateToLinkedPage( "ParentPage", "StageId", ParentSubGroupId );
