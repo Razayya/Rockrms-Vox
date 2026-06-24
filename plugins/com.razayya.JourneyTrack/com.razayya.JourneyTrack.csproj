@@ -82,6 +82,7 @@
     <!-- Data / Services -->
     <Compile Include="Data\ImportExportService.cs" />
     <Compile Include="Data\JourneyTrackService.cs" />
+    <Compile Include="Data\StageVideoData.cs" />
     <!-- Field Types -->
     <Compile Include="Field\Types\JourneyProgramFieldType.cs" />
     <!-- Workflow Actions -->
@@ -92,6 +93,7 @@
     <Compile Include="Jobs\SendJourneyCommunications.cs" />
     <!-- Lava -->
     <Compile Include="Lava\SyncPersonJourneyTag.cs" />
+    <Compile Include="Lava\StageVideosTag.cs" />
     <!-- REST -->
     <Compile Include="Rest\JourneyProgramsController.cs" />
     <!-- Migrations -->

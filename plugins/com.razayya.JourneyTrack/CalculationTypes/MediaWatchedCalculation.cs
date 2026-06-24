@@ -52,6 +52,16 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             = new System.Collections.Concurrent.ConcurrentDictionary<int, (System.DateTime, Dictionary<int, PersonWatchAggregate>)>();
         private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
 
+        /// <summary>
+        /// Clears the per-MediaElement watch aggregate cache. Use from explicit
+        /// "I just wrote an Interaction; show me fresh state now" surfaces such
+        /// as the watch-flow test page; production paths should rely on the TTL.
+        /// </summary>
+        public static void InvalidateAllWatchCache()
+        {
+            _watchCache.Clear();
+        }
+
         private static Dictionary<int, PersonWatchAggregate> GetWatchAggregates( int mediaElementId, RockContext rockContext )
         {
             if ( _watchCache.TryGetValue( mediaElementId, out var cached )

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 
+using com.razayya.JourneyTrack.CalculationTypes;
 using com.razayya.JourneyTrack.Data;
 using com.razayya.JourneyTrack.Model;
 
@@ -41,6 +42,7 @@ namespace com.razayya.JourneyTrack.Lava
             public const string Program          = "program";
             public const string Stage            = "stage";
             public const string Capture          = "capture";
+            public const string BypassCache      = "bypasscache";
         }
 
         public override void OnRender( ILavaRenderContext context, TextWriter result )
@@ -90,6 +92,14 @@ namespace com.razayya.JourneyTrack.Lava
             {
                 result.Write( "<!-- syncpersonjourney: missing program or stage guid -->" );
                 return;
+            }
+
+            // Bust the MediaWatched 30s cache when the caller has just written an Interaction
+            // and needs immediate fresh state (test pages, "I just watched it" flows). Production
+            // paths should leave this off and rely on the TTL.
+            if ( parms.GetValueOrNull( P.BypassCache ).AsBoolean() )
+            {
+                MediaWatchedCalculation.InvalidateAllWatchCache();
             }
 
             var service = new JourneyTrackService();

@@ -12,6 +12,7 @@ using Rock;
 using Rock.Data;
 using Rock.Media;
 using Rock.Model;
+using Rock.Utility;
 using Rock.Web.Cache;
 
 namespace com.razayya.JourneyTrack.Data
@@ -29,8 +30,12 @@ namespace com.razayya.JourneyTrack.Data
         /// One entry per active MediaWatched calc on the Stage. Fields chosen to
         /// match what block 6187's XAML currently consumes from the AppendWatches
         /// filter — so the XAML migration is mostly s/video.X/dtoItem.X/.
+        ///
+        /// Inherits from <see cref="Rock.Utility.RockDynamic"/> so Lava can access
+        /// the properties — Rock 18's Fluid Lava engine doesn't expose plain POCO
+        /// properties to `{{ item.PropertyName }}` syntax without this base.
         /// </summary>
-        public class StageVideoItem
+        public class StageVideoItem : RockDynamic
         {
             // MediaElement fields (what XAML's MediaPlayer needs)
             public Guid   Guid                 { get; set; }

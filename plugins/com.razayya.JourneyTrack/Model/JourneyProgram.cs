@@ -17,7 +17,7 @@ namespace com.razayya.JourneyTrack.Model
     /// </summary>
     [Table( Constants.TableName.JourneyProgram )]
     [DataContract]
-    public class JourneyProgram : Model<JourneyProgram>, IRockEntity
+    public class JourneyProgram : Model<JourneyProgram>, IRockEntity, Rock.Data.IOrdered
     {
         #region Entity Properties
 

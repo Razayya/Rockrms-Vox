@@ -83,12 +83,75 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// </summary>
         public static JourneyCalculationTypeComponent GetComponent( string entityTypeName )
         {
+            // Side effect: touch the MEF container so its singleton lazy fires its first-time
+            // Refresh() — that's what reflects each calc-type class's [GroupField]/[DataViewField]
+            // /etc. decorators into Attribute rows. Without this, the JourneyCalculationDetail
+            // editor shows the type's title with no editor controls below it.
+            EnsureContainerInitialized();
+
             if ( string.IsNullOrWhiteSpace( entityTypeName ) )
             {
                 return null;
             }
 
             return _componentsByTypeName.TryGetValue( entityTypeName, out var lazy ) ? lazy.Value : null;
+        }
+
+        private static int _containerInitialized;
+        private static void EnsureContainerInitialized()
+        {
+            // Run exactly once per process. CompareExchange acts as a cheap lock-free guard.
+            if ( System.Threading.Interlocked.CompareExchange( ref _containerInitialized, 1, 0 ) != 0 )
+            {
+                return;
+            }
+
+            // The MEF-based JourneyCalculationTypeContainer is empty in practice (the calc-type
+            // classes don't carry the [Export] attribute), so we can't rely on Container.Refresh
+            // to reflect each calc-type's [GroupField]/[IntegerField]/etc. decorators into the
+            // Attribute table. Do that walk ourselves directly off the static dictionary above.
+            try
+            {
+                int calculationEntityTypeId = Rock.Web.Cache.EntityTypeCache.Get( typeof( Model.JourneyCalculation ) ).Id;
+                using ( var rockContext = new Rock.Data.RockContext() )
+                {
+                    foreach ( var lazyComponent in _componentsByTypeName.Values )
+                    {
+                        Type calcTypeType = lazyComponent.Value.GetType();
+
+                        // CRITICAL: skip when the calc-type class has NO direct field-attribute
+                        // decorators. Rock.Attribute.Helper.UpdateAttributes treats the empty
+                        // discovered-set as the truth and **deletes** any pre-existing attributes
+                        // that were registered through a different path (e.g. MediaWatched's
+                        // MediaElement + MinWatchedPercent are SQL-registered because Rock has no
+                        // [MediaElementField] sugar). Cascade-deletes wipe every per-calc
+                        // AttributeValue too — see lesson 2026-06-10 (project 5002 spike).
+                        var hasDirectFieldAttrs = calcTypeType
+                            .GetCustomAttributes( typeof( Rock.Attribute.FieldAttribute ), false )
+                            .Any();
+                        if ( !hasDirectFieldAttrs )
+                        {
+                            continue;
+                        }
+
+                        int componentEntityTypeId = Rock.Web.Cache.EntityTypeCache.Get( calcTypeType ).Id;
+                        Rock.Attribute.Helper.UpdateAttributes(
+                            calcTypeType,
+                            calculationEntityTypeId,
+                            "CalculationTypeEntityTypeId",
+                            componentEntityTypeId.ToString(),
+                            rockContext );
+                    }
+                }
+            }
+            catch
+            {
+                // Swallow to avoid breaking GetComponent on cold-start races; subsequent UI
+                // hits will re-attempt because they go through GetComponent again — but the
+                // _containerInitialized guard means only the first call does the work. Reset
+                // it on failure so a retry actually retries.
+                System.Threading.Interlocked.Exchange( ref _containerInitialized, 0 );
+            }
         }
 
         /// <summary>

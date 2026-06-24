@@ -76,6 +76,29 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 PopulateValidCategoriesPanel();
                 ShowDetail( calcId );
             }
+            else if ( pnlEdit.Visible )
+            {
+                // Re-add dynamically-rendered component-attribute editors on every postback
+                // while in edit mode. Without this, the MediaElement picker's inner AJAX
+                // postback (account → folder cascade) loses its parent controls because they
+                // weren't recreated this lifecycle. Any FieldType with internal postback
+                // behaviour (MediaElement, Schedule, Group hierarchy, ...) had the same bug.
+                var typeGuid = cpCalculationType.SelectedValue.AsGuidOrNull();
+                if ( typeGuid.HasValue )
+                {
+                    var entityType = EntityTypeCache.Get( typeGuid.Value );
+                    if ( entityType != null )
+                    {
+                        var calc = new JourneyCalculation
+                        {
+                            Id = JourneyCalculationId,
+                            CalculationTypeEntityTypeId = entityType.Id,
+                            StageId = ParentSubGroupId
+                        };
+                        LoadComponentAttributes( calc );
+                    }
+                }
+            }
         }
 
         #endregion

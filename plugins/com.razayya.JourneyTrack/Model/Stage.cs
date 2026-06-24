@@ -16,7 +16,7 @@ namespace com.razayya.JourneyTrack.Model
     /// </summary>
     [Table( Constants.TableName.Stage )]
     [DataContract]
-    public class Stage : Model<Stage>, IRockEntity
+    public class Stage : Model<Stage>, IRockEntity, Rock.Data.IOrdered
     {
         #region Entity Properties
 

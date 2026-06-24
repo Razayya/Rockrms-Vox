@@ -16,7 +16,16 @@ namespace com.razayya.JourneyTrack.CalculationTypes
     public class JourneyCalculationTypeContainer : Container<JourneyCalculationTypeComponent, IComponentData>
     {
         private static readonly Lazy<JourneyCalculationTypeContainer> instance =
-            new Lazy<JourneyCalculationTypeContainer>( () => new JourneyCalculationTypeContainer() );
+            new Lazy<JourneyCalculationTypeContainer>( () =>
+            {
+                var c = new JourneyCalculationTypeContainer();
+                // Auto-register each calc-type component's config attributes (the [GroupField],
+                // [DataViewField], [IntegerField], etc. decorators on the calc-type classes).
+                // Without this, the JourneyCalculationDetail block renders only the panel title
+                // with no editor controls below it, because calc.LoadAttributes() returns nothing.
+                try { c.Refresh(); } catch { /* swallow on cold-start race; first UI hit will rerun via GetComponent */ }
+                return c;
+            } );
 
         /// <summary>
         /// Gets the singleton instance.
