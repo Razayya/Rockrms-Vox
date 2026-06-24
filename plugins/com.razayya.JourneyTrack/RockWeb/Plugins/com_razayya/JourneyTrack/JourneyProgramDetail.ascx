@@ -45,6 +45,8 @@
                             Visible="false" ToolTip="View / manage the people enrolled in this program." />
                         <asp:LinkButton ID="btnReconcile" runat="server" Text="Reconcile Now" CssClass="btn btn-default btn-sm" OnClick="btnReconcile_Click" CausesValidation="false"
                             Visible="false" ToolTip="Run an auto-enroll reconciliation pass against the configured population spec." />
+                        <asp:LinkButton ID="btnResetEnrollment" runat="server" Text="Reset Enrollment" CssClass="btn btn-default btn-sm" OnClick="btnResetEnrollment_Click" CausesValidation="false"
+                            Visible="false" ToolTip="Remove enrollees. When Auto-Enroll is on, auto-enrolled people are kept and only manual adds are removed; otherwise all enrollees are removed. No attributes are changed." />
                         <asp:LinkButton ID="btnCopy" runat="server" Text="Copy" CssClass="btn btn-default btn-sm" OnClick="btnCopy_Click" CausesValidation="false"
                             ToolTip="Create a deep copy of this group including all sub-groups and calculations." />
                         <asp:LinkButton ID="btnExport" runat="server" Text="Export" CssClass="btn btn-default btn-sm" OnClick="btnExport_Click" CausesValidation="false"

@@ -197,6 +197,34 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             }
         }
 
+        protected void btnResetEnrollment_Click( object sender, EventArgs e )
+        {
+            try
+            {
+                var res = new JourneyTrackService().ResetEnrollment( JourneyProgramId );
+                if ( res.Errors.Count > 0 )
+                {
+                    nbWarning.NotificationBoxType = NotificationBoxType.Danger;
+                    nbWarning.Text = "Reset Enrollment failed: " + string.Join( "; ", res.Errors );
+                }
+                else
+                {
+                    nbWarning.NotificationBoxType = NotificationBoxType.Success;
+                    nbWarning.Text = res.AutoEnrollMode
+                        ? string.Format( "Reset complete: removed <strong>{0}</strong> manually-added enrollee(s); kept <strong>{1}</strong> auto-enrolled.", res.Removed, res.KeptAutoEnrolled )
+                        : string.Format( "Reset complete: removed <strong>{0}</strong> enrollee(s).", res.Removed );
+                }
+                nbWarning.Visible = true;
+                ShowDetail( JourneyProgramId );
+            }
+            catch ( Exception ex )
+            {
+                nbWarning.NotificationBoxType = NotificationBoxType.Danger;
+                nbWarning.Text = "Reset Enrollment failed: " + ex.Message;
+                nbWarning.Visible = true;
+            }
+        }
+
         protected void btnCopy_Click( object sender, EventArgs e )
         {
             var service = new ImportExportService();
@@ -317,10 +345,16 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             if ( group.RequiresEnrollment )
             {
                 int activeEnrollees;
+                int resetRemoveCount;
                 using ( var ctx = new RockContext() )
                 {
-                    activeEnrollees = new JourneyProgramEnrollmentService( ctx ).Queryable().AsNoTracking()
-                        .Count( e => e.JourneyProgramId == group.Id && e.IsActive );
+                    var enrollQry = new JourneyProgramEnrollmentService( ctx ).Queryable().AsNoTracking()
+                        .Where( e => e.JourneyProgramId == group.Id );
+                    activeEnrollees = enrollQry.Count( e => e.IsActive );
+                    // Rows the Reset button would remove: manual-only when auto-enroll is on, else all.
+                    resetRemoveCount = group.AutoEnrollFromPopulation
+                        ? enrollQry.Count( e => e.Source == null || e.Source != "AutoEnroll" )
+                        : enrollQry.Count();
                 }
                 populationHtml += string.Format( "<dt>Enrollees</dt><dd>{0} active</dd>", activeEnrollees );
                 var modeLabel = group.AutoEnrollFromPopulation
@@ -329,11 +363,19 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 populationHtml += string.Format( "<dt>Enrollment Mode</dt><dd>{0}</dd>", modeLabel );
                 btnEnrollees.Visible = true;
                 btnReconcile.Visible = group.AutoEnrollFromPopulation;
+
+                // Reset Enrollment — confirm text reflects the mode + how many rows get removed.
+                string resetMsg = group.AutoEnrollFromPopulation
+                    ? string.Format( "Remove {0} manually-added enrollee(s)? Auto-enrolled people will stay. No attributes are changed.", resetRemoveCount )
+                    : string.Format( "Remove ALL {0} enrollee(s) from this program? No attributes are changed.", resetRemoveCount );
+                btnResetEnrollment.OnClientClick = "return confirm('" + resetMsg.Replace( "'", "\\'" ) + "');";
+                btnResetEnrollment.Visible = true;
             }
             else
             {
                 btnEnrollees.Visible = false;
                 btnReconcile.Visible = false;
+                btnResetEnrollment.Visible = false;
             }
 
             // Population summary

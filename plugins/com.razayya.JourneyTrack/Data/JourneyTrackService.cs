@@ -1225,6 +1225,49 @@ namespace com.razayya.JourneyTrack.Data
             return result;
         }
 
+        /// <summary>
+        /// "Reset Enrollment": removes enrollees from a program. Touches ONLY the enrollment
+        /// table — no Person Attributes or calc data are changed. Hard delete (not
+        /// soft-unenroll), so this is a clean reset:
+        ///  - Auto-Enroll ON  (AutoEnrollFromPopulation): keep the auto-enrolled rows
+        ///    (Source = "AutoEnroll") and remove the manually-added ones (any other / null
+        ///    Source). Anyone still in the population is re-added fresh on the next reconcile.
+        ///  - Auto-Enroll OFF: remove every enrollment row for the program.
+        /// </summary>
+        public ResetEnrollmentResult ResetEnrollment( int programId )
+        {
+            var result = new ResetEnrollmentResult();
+            using ( var rockContext = new RockContext() )
+            {
+                var group = new JourneyProgramService( rockContext ).Get( programId );
+                if ( group == null )
+                {
+                    result.Errors.Add( $"Journey Program Id {programId} not found." );
+                    return result;
+                }
+
+                result.AutoEnrollMode = group.AutoEnrollFromPopulation;
+                if ( group.AutoEnrollFromPopulation )
+                {
+                    result.KeptAutoEnrolled = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                        .Count( e => e.JourneyProgramId == programId && e.Source == "AutoEnroll" );
+
+                    // Keep auto-enrolled rows; remove manual (and null-Source) adds.
+                    result.Removed = rockContext.Database.ExecuteSqlCommand(
+                        "DELETE FROM [_com_razayya_JourneyTrack_JourneyProgramEnrollment] WHERE [JourneyProgramId] = @p0 AND ( [Source] IS NULL OR [Source] <> @p1 )",
+                        programId, "AutoEnroll" );
+                }
+                else
+                {
+                    // No auto-enroll: clear everyone.
+                    result.Removed = rockContext.Database.ExecuteSqlCommand(
+                        "DELETE FROM [_com_razayya_JourneyTrack_JourneyProgramEnrollment] WHERE [JourneyProgramId] = @p0",
+                        programId );
+                }
+            }
+            return result;
+        }
+
         private static string ResolveMatchValue( JourneyCalculation calc, Dictionary<string, object> mergeFields )
         {
             if ( !string.IsNullOrWhiteSpace( calc.ResultLavaTemplate ) )
@@ -1599,6 +1642,20 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
     }
 
     #region Result Classes
+
+    /// <summary>
+    /// Result of a Reset Enrollment pass.
+    /// </summary>
+    public class ResetEnrollmentResult
+    {
+        /// <summary>Number of enrollment rows hard-deleted.</summary>
+        public int Removed { get; set; }
+        /// <summary>Auto-enrolled rows left in place (only meaningful when AutoEnrollMode).</summary>
+        public int KeptAutoEnrolled { get; set; }
+        /// <summary>True if the program auto-enrolls — i.e. only manual adds were removed.</summary>
+        public bool AutoEnrollMode { get; set; }
+        public List<string> Errors { get; set; } = new List<string>();
+    }
 
     /// <summary>
     /// Result of an enrollment reconciliation pass.

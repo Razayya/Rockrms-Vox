@@ -260,6 +260,20 @@ namespace com.razayya.JourneyTrack.Rest
         {
             return new JourneyTrackService().ReconcileEnrollments( programId );
         }
+
+        /// <summary>
+        /// Reset enrollment: removes manually-added enrollees (keeping the auto-enrolled set)
+        /// when the program auto-enrolls, or removes all enrollees when it doesn't. Touches
+        /// only the enrollment table — no attributes or calc data are changed.
+        /// </summary>
+        [Authenticate, Secured]
+        [HttpPost]
+        [System.Web.Http.Route( "api/com_razayya_JourneyTrack/JourneyPrograms/ResetEnrollment/{programId}" )]
+        [Rock.SystemGuid.RestActionGuid( "7E3B9C12-4A5D-4E6F-8B90-1C2D3E4F5A6B" )]
+        public ResetEnrollmentResult ResetEnrollment( int programId )
+        {
+            return new JourneyTrackService().ResetEnrollment( programId );
+        }
     }
 
     public class EnrollmentSummary
