@@ -27,6 +27,27 @@ namespace com.razayya.JourneyTrack.Data
         public int? RunByPersonAliasId { get; set; }
 
         /// <summary>
+        /// Optional progress sink. When set (e.g. by the nightly job, which wires this
+        /// to RockJob.UpdateLastStatusMessage), the engine reports milestone-level
+        /// progress so a long full-population run is observable live on the Jobs
+        /// Administration page. Left null on the single-person / mobile sync paths, so
+        /// those carry zero overhead.
+        /// </summary>
+        public Action<string> OnProgress { get; set; }
+
+        /// <summary>
+        /// Emits a progress message if a sink is wired. Never throws into the engine.
+        /// </summary>
+        private void Report( string message )
+        {
+            if ( OnProgress == null )
+            {
+                return;
+            }
+            try { OnProgress( message ); } catch { /* progress is best-effort */ }
+        }
+
+        /// <summary>
         /// Processes all active Journey Programs.
         /// </summary>
         public SyncResult ProcessAllGroups()
@@ -41,19 +62,25 @@ namespace com.razayya.JourneyTrack.Data
                     .ThenBy( g => g.Name )
                     .ToList();
 
+                int groupIndex = 0;
                 foreach ( var group in groups )
                 {
+                    groupIndex++;
                     try
                     {
+                        Report( $"Program {groupIndex}/{groups.Count} '{group.Name}': starting" );
+
                         // Reconcile enrollments from the population spec BEFORE processing,
                         // so the run iterates the freshly-materialized active set.
                         if ( group.RequiresEnrollment && group.AutoEnrollFromPopulation )
                         {
+                            Report( $"Program '{group.Name}': reconciling enrollments" );
                             var rec = ReconcileEnrollments( group.Id );
                             if ( rec.Added > 0 || rec.Reactivated > 0 || rec.SoftUnenrolled > 0 )
                             {
                                 result.Log.Add( $"Reconcile '{group.Name}': +{rec.Added} added, +{rec.Reactivated} reactivated, -{rec.SoftUnenrolled} soft-unenrolled (active now {rec.ActiveAfter})." );
                             }
+                            Report( $"Program '{group.Name}': enrollment reconciled (+{rec.Added} new, +{rec.Reactivated} reactivated, active {rec.ActiveAfter})" );
                             result.Errors.AddRange( rec.Errors );
                         }
 
@@ -182,8 +209,10 @@ namespace com.razayya.JourneyTrack.Data
                     return result;
                 }
 
+                Report( $"Program '{group.Name}': building base population" );
                 var basePopulation = BuildBasePopulation( group, rockContext );
                 result.Log.Add( $"Group '{group.Name}': base population {basePopulation.Count}" );
+                Report( $"Program '{group.Name}': base population {basePopulation.Count:N0}" );
 
                 var subGroups = new StageService( rockContext ).Queryable()
                     .Where( sg => sg.JourneyProgramId == group.Id && sg.IsActive )
@@ -193,11 +222,13 @@ namespace com.razayya.JourneyTrack.Data
 
                 var subGroupPassers = new Dictionary<int, HashSet<int>>();
 
+                int stageIndex = 0;
                 foreach ( var subGroup in subGroups )
                 {
+                    stageIndex++;
                     try
                     {
-                        var subResult = ProcessSubGroupInternal( subGroup, basePopulation, subGroupPassers, rockContext );
+                        var subResult = ProcessSubGroupInternal( subGroup, basePopulation, subGroupPassers, rockContext, stageIndex, subGroups.Count );
                         result.Merge( subResult.Result );
                         subGroupPassers[subGroup.Id] = subResult.Passers;
                     }
@@ -452,9 +483,12 @@ namespace com.razayya.JourneyTrack.Data
             Stage subGroup,
             HashSet<int> basePopulation,
             Dictionary<int, HashSet<int>> subGroupPassers,
-            RockContext rockContext )
+            RockContext rockContext,
+            int stageIndex = 0,
+            int stageCount = 0 )
         {
             var result = new SyncResult();
+            var stageLabel = stageCount > 0 ? $"Stage {stageIndex}/{stageCount} '{subGroup.Name}'" : $"Stage '{subGroup.Name}'";
 
             HashSet<int> workingPopulation;
             var prerequisiteIds = ( subGroup.PrerequisiteStageIds ?? string.Empty )
@@ -521,6 +555,7 @@ namespace com.razayya.JourneyTrack.Data
             if ( workingPopulation.Count == 0 )
             {
                 result.Log.Add( $"    (skipping {subGroup.Name} calc evaluation — empty working population)" );
+                Report( $"{stageLabel}: skipped (no one reached this stage yet)" );
                 return new SubGroupProcessResult
                 {
                     Result = result,
@@ -535,16 +570,21 @@ namespace com.razayya.JourneyTrack.Data
                 .ThenBy( c => c.Name )
                 .ToList();
 
+            Report( $"{stageLabel}: evaluating {calculations.Count} calc(s) over {workingPopulation.Count:N0} people" );
+
             HashSet<int> completionPassers = null;
             var nonCompletionMatched = new List<HashSet<int>>();
             // Matched set per calc Id — consumed by the optional Stage logic tree,
             // which references calcs by Id and folds their sets with All/Any/…False.
             var matchedByCalcId = new Dictionary<int, HashSet<int>>();
 
+            int calcIndex = 0;
             foreach ( var calc in calculations )
             {
+                calcIndex++;
                 try
                 {
+                    Report( $"{stageLabel}: calc {calcIndex}/{calculations.Count} '{calc.Name}'" );
                     var calcResult = ExecuteCalculation( calc, workingPopulation, rockContext );
                     result.Merge( calcResult );
 
@@ -758,14 +798,11 @@ namespace com.razayya.JourneyTrack.Data
             int skippedCount = 0;
             if ( calc.SkipIfTargetHasValue && calc.PersonAttributeId.HasValue && workingPopulation.Count > 0 )
             {
-                var skipPersonIds = new HashSet<int>( new AttributeValueService( rockContext ).Queryable().AsNoTracking()
-                    .Where( av => av.AttributeId == calc.PersonAttributeId.Value
-                        && av.EntityId.HasValue
-                        && workingPopulation.Contains( av.EntityId.Value )
-                        && av.Value != null
-                        && av.Value != string.Empty )
-                    .Select( av => av.EntityId.Value )
-                    .ToList() );
+                // Size-aware read (avoids a large-IN clause), then keep only non-blank values.
+                var existingForSkip = ReadExistingAttributeValues( calc.PersonAttributeId.Value, workingPopulation, rockContext );
+                var skipPersonIds = new HashSet<int>( existingForSkip
+                    .Where( kv => !string.IsNullOrEmpty( kv.Value ) )
+                    .Select( kv => kv.Key ) );
                 if ( skipPersonIds.Count > 0 )
                 {
                     workingPopulationForEval = new HashSet<int>( workingPopulation );
@@ -821,15 +858,12 @@ namespace com.razayya.JourneyTrack.Data
                 return result;
             }
 
-            // Batch-read all existing attribute values for this attribute + population in one query.
+            // Batch-read existing attribute values for this attribute, restricted to the
+            // population. Size-aware to avoid a large-IN clause on full-population syncs.
             Dictionary<int, string> existingValues;
             using ( var readContext = new RockContext() )
             {
-                var personIdList = workingPopulation.ToList();
-                existingValues = new AttributeValueService( readContext ).Queryable().AsNoTracking()
-                    .Where( av => av.AttributeId == targetAttribute.Id && personIdList.Contains( av.EntityId.Value ) )
-                    .Select( av => new { av.EntityId, av.Value } )
-                    .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+                existingValues = ReadExistingAttributeValues( targetAttribute.Id, workingPopulation, readContext );
             }
 
             // Build the list of writes needed (resolve Lava templates first, then diff against existing).
@@ -896,46 +930,10 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
-            // Execute writes in batches. On partial failure, record progress and continue
-            // with remaining batches so a single bad row doesn't block the entire population.
-            const int batchSize = 200;
-            int writtenCount = 0;
-
-            for ( int i = 0; i < pendingWrites.Count; i += batchSize )
-            {
-                var batch = pendingWrites.GetRange( i, Math.Min( batchSize, pendingWrites.Count - i ) );
-
-                try
-                {
-                    using ( var writeContext = new RockContext() )
-                    {
-                        foreach ( var write in batch )
-                        {
-                            if ( write.IsUpdate )
-                            {
-                                writeContext.Database.ExecuteSqlCommand(
-                                    "UPDATE [AttributeValue] SET [Value] = @p0, [ModifiedDateTime] = GETDATE(), [IsPersistedValueDirty] = 1 WHERE [AttributeId] = @p1 AND [EntityId] = @p2",
-                                    write.NewValue, targetAttribute.Id, write.PersonId );
-                            }
-                            else
-                            {
-                                writeContext.Database.ExecuteSqlCommand(
-                                    "INSERT INTO [AttributeValue] ([IsSystem], [AttributeId], [EntityId], [Value], [Guid], [CreatedDateTime], [ModifiedDateTime], [IsPersistedValueDirty]) VALUES (0, @p0, @p1, @p2, NEWID(), GETDATE(), GETDATE(), 1)",
-                                    targetAttribute.Id, write.PersonId, write.NewValue );
-                            }
-
-                            writtenCount++;
-                        }
-                    }
-
-                    result.Updated += batch.Count;
-                }
-                catch ( Exception ex )
-                {
-                    result.Errors.Add( $"Write batch failed after {writtenCount} of {pendingWrites.Count} writes for attribute '{targetAttribute.Name}': {ex.Message}" );
-                    ExceptionLogService.LogException( ex );
-                }
-            }
+            // Execute writes set-based (chunked, grouped by value) rather than one round-trip
+            // per person. A failed chunk is logged and the rest continue.
+            int writtenCount = BulkWriteAttributeValues( targetAttribute.Id, pendingWrites, result );
+            result.Updated += writtenCount;
 
             // Queue comm log rows for the newly-matched persons (transition: blank → match).
             // Dedup vs prior logs is handled inside QueueCommunicationLogs.
@@ -1248,6 +1246,114 @@ namespace com.razayya.JourneyTrack.Data
             return null;
         }
 
+        /// <summary>
+        /// Reads existing AttributeValue strings for an attribute, keyed by EntityId (PersonId),
+        /// restricted to the given population. Avoids the large-IN-clause trap: for a big
+        /// population a per-id IN() expands into tens of thousands of parameters that are slow
+        /// to compile and transmit (this was the ~11s-per-calc cost on full-population syncs).
+        /// For large populations we instead read every row for the attribute — an index seek
+        /// bounded by the enrolled population for a dedicated sink attribute — and filter in
+        /// memory. Small populations (single-person / collapsed downstream stages) keep the
+        /// cheap IN() path so they never over-read.
+        /// </summary>
+        private Dictionary<int, string> ReadExistingAttributeValues( int attributeId, HashSet<int> population, RockContext rockContext )
+        {
+            const int inClauseThreshold = 2000;
+            var query = new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                .Where( av => av.AttributeId == attributeId && av.EntityId.HasValue );
+
+            if ( population.Count <= inClauseThreshold )
+            {
+                var ids = population.ToList();
+                return query.Where( av => ids.Contains( av.EntityId.Value ) )
+                    .Select( av => new { av.EntityId, av.Value } )
+                    .ToList()
+                    .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+            }
+
+            return query
+                .Select( av => new { av.EntityId, av.Value } )
+                .ToList()
+                .Where( av => population.Contains( av.EntityId.Value ) )
+                .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+        }
+
+        /// <summary>
+        /// Writes AttributeValue rows set-based instead of one ExecuteSqlCommand per person.
+        /// Groups writes by target value (so each statement carries a single value parameter),
+        /// then issues chunked multi-row INSERTs for new rows and chunked UPDATEs for changed
+        /// rows — ~1000 entities per round-trip rather than one. This is the dominant win on
+        /// full-population syncs (the program rollup alone was writing 30k+ rows one statement
+        /// at a time). Mirrors the raw-SQL + IsPersistedValueDirty convention used elsewhere
+        /// here: it bypasses EF change tracking and Rock save hooks; the dirty flag triggers a
+        /// lazy recompute of the persisted Value* columns. A failed chunk is logged and the
+        /// remaining chunks continue, matching the previous per-batch resilience.
+        /// </summary>
+        private int BulkWriteAttributeValues( int attributeId, List<AttributeWrite> writes, SyncResult result, Action<int> onProgress = null )
+        {
+            int written = 0;
+            written += WriteAttributeValueChunks( attributeId, writes.Where( w => !w.IsUpdate ).GroupBy( w => w.NewValue ), false, result, written, onProgress );
+            written += WriteAttributeValueChunks( attributeId, writes.Where( w => w.IsUpdate ).GroupBy( w => w.NewValue ), true, result, written, onProgress );
+            return written;
+        }
+
+        private int WriteAttributeValueChunks( int attributeId, IEnumerable<IGrouping<string, AttributeWrite>> groups, bool isUpdate, SyncResult result, int alreadyWritten, Action<int> onProgress )
+        {
+            const int chunkSize = 1000;
+            int writtenHere = 0;
+
+            foreach ( var grp in groups )
+            {
+                var ids = grp.Select( w => w.PersonId ).ToList();
+                for ( int i = 0; i < ids.Count; i += chunkSize )
+                {
+                    var chunk = ids.GetRange( i, Math.Min( chunkSize, ids.Count - i ) );
+
+                    // args[0]=attributeId, args[1]=value, args[2..]=entityIds → @p0, @p1, @p2..
+                    var args = new object[2 + chunk.Count];
+                    args[0] = attributeId;
+                    args[1] = (object)grp.Key ?? DBNull.Value;
+                    for ( int k = 0; k < chunk.Count; k++ )
+                    {
+                        args[2 + k] = chunk[k];
+                    }
+
+                    string sql;
+                    if ( isUpdate )
+                    {
+                        var inList = string.Join( ",", chunk.Select( ( _, k ) => $"@p{2 + k}" ) );
+                        sql = $@"UPDATE [AttributeValue] SET [Value] = @p1, [ModifiedDateTime] = GETDATE(), [IsPersistedValueDirty] = 1
+WHERE [AttributeId] = @p0 AND [EntityId] IN ({inList})";
+                    }
+                    else
+                    {
+                        var valuesList = string.Join( ",", chunk.Select( ( _, k ) => $"(@p{2 + k})" ) );
+                        sql = $@"INSERT INTO [AttributeValue] ([IsSystem],[AttributeId],[EntityId],[Value],[Guid],[CreatedDateTime],[ModifiedDateTime],[IsPersistedValueDirty])
+SELECT 0, @p0, v.EntityId, @p1, NEWID(), GETDATE(), GETDATE(), 1
+FROM ( VALUES {valuesList} ) v(EntityId)
+WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p0 AND av.[EntityId] = v.EntityId )";
+                    }
+
+                    try
+                    {
+                        using ( var writeContext = new RockContext() )
+                        {
+                            writeContext.Database.ExecuteSqlCommand( sql, args );
+                        }
+                        writtenHere += chunk.Count;
+                        onProgress?.Invoke( alreadyWritten + writtenHere );
+                    }
+                    catch ( Exception ex )
+                    {
+                        result.Errors.Add( $"Bulk {( isUpdate ? "update" : "insert" )} of attribute {attributeId} failed for {chunk.Count} row(s): {ex.Message}" );
+                        ExceptionLogService.LogException( ex );
+                    }
+                }
+            }
+
+            return writtenHere;
+        }
+
         private void RecordJourneyCalculationRun( int calculationId, DateTime runStart, int populationCount, int matchedCount, SyncResult result )
         {
             try
@@ -1403,65 +1509,55 @@ namespace com.razayya.JourneyTrack.Data
                 completed.IntersectWith( passers );
             }
 
-            // Read existing AVs in one batch
-            var personIdList = basePopulation.ToList();
+            // Read existing AVs (size-aware: avoids a large-IN clause on full-population syncs).
             Dictionary<int, string> existing;
             using ( var readContext = new RockContext() )
             {
-                existing = new AttributeValueService( readContext ).Queryable().AsNoTracking()
-                    .Where( av => av.AttributeId == targetAttribute.Id && av.EntityId.HasValue && personIdList.Contains( av.EntityId.Value ) )
-                    .Select( av => new { av.EntityId, av.Value } )
-                    .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+                existing = ReadExistingAttributeValues( targetAttribute.Id, basePopulation, readContext );
             }
 
-            int written = 0;
             // Track persons transitioning to complete this run (existing != True, new = True)
             // so we can queue rollup-level communications after the write.
             var newlyCompletedPersonIds = program.OnCompleteSystemCommunicationId.HasValue
                 ? new HashSet<int>()
                 : null;
-            using ( var writeContext = new RockContext() )
-            {
-                foreach ( var personId in basePopulation )
-                {
-                    var newValue = completed.Contains( personId ) ? "True" : "False";
-                    existing.TryGetValue( personId, out var oldValue );
-                    oldValue = oldValue ?? string.Empty;
-                    if ( string.Equals( oldValue, newValue, StringComparison.OrdinalIgnoreCase ) )
-                    {
-                        continue;
-                    }
-                    if ( newlyCompletedPersonIds != null
-                        && newValue.Equals( "True", StringComparison.OrdinalIgnoreCase )
-                        && !oldValue.Equals( "True", StringComparison.OrdinalIgnoreCase ) )
-                    {
-                        newlyCompletedPersonIds.Add( personId );
-                    }
 
-                    var isUpdate = existing.ContainsKey( personId );
-                    try
-                    {
-                        if ( isUpdate )
-                        {
-                            writeContext.Database.ExecuteSqlCommand(
-                                "UPDATE [AttributeValue] SET [Value] = @p0, [ModifiedDateTime] = GETDATE(), [IsPersistedValueDirty] = 1 WHERE [AttributeId] = @p1 AND [EntityId] = @p2",
-                                newValue, targetAttribute.Id, personId );
-                        }
-                        else
-                        {
-                            writeContext.Database.ExecuteSqlCommand(
-                                "INSERT INTO [AttributeValue] ([IsSystem], [AttributeId], [EntityId], [Value], [Guid], [CreatedDateTime], [ModifiedDateTime], [IsPersistedValueDirty]) VALUES (0, @p0, @p1, @p2, NEWID(), GETDATE(), GETDATE(), 1)",
-                                targetAttribute.Id, personId, newValue );
-                        }
-                        written++;
-                    }
-                    catch ( Exception ex )
-                    {
-                        result.Errors.Add( $"Program rollup write failed for PersonId {personId}: {ex.Message}" );
-                        ExceptionLogService.LogException( ex );
-                    }
+            // Diff against existing → build the change list, then write it set-based.
+            var pendingWrites = new List<AttributeWrite>();
+            foreach ( var personId in basePopulation )
+            {
+                var newValue = completed.Contains( personId ) ? "True" : "False";
+                existing.TryGetValue( personId, out var oldValue );
+                oldValue = oldValue ?? string.Empty;
+                if ( string.Equals( oldValue, newValue, StringComparison.OrdinalIgnoreCase ) )
+                {
+                    continue;
                 }
+                if ( newlyCompletedPersonIds != null
+                    && newValue.Equals( "True", StringComparison.OrdinalIgnoreCase )
+                    && !oldValue.Equals( "True", StringComparison.OrdinalIgnoreCase ) )
+                {
+                    newlyCompletedPersonIds.Add( personId );
+                }
+
+                pendingWrites.Add( new AttributeWrite
+                {
+                    PersonId = personId,
+                    NewValue = newValue,
+                    IsUpdate = existing.ContainsKey( personId )
+                } );
             }
+
+            int totalToWrite = pendingWrites.Count;
+            Report( $"Program '{program.Name}': writing rollup ({totalToWrite:N0} change(s), {completed.Count:N0} complete)" );
+            int written = BulkWriteAttributeValues( targetAttribute.Id, pendingWrites, result,
+                done =>
+                {
+                    if ( done == totalToWrite || done % 5000 == 0 )
+                    {
+                        Report( $"Program '{program.Name}': rollup written {done:N0}/{totalToWrite:N0}" );
+                    }
+                } );
 
             result.Updated += written;
             result.Log.Add( $"  Program rollup '{program.Name}': {completed.Count}/{basePopulation.Count} complete, {written} attribute values written." );

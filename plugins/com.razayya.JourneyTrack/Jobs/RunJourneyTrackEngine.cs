@@ -34,8 +34,27 @@ namespace com.razayya.JourneyTrack.Jobs
         {
             var showDebug = GetAttributeValue( AttributeKey.ShowDebug ).AsBoolean();
 
-            var service = new JourneyTrackService();
+            // Show the last few milestones, each on its own line, so the Jobs Administration
+            // status reads as a short rolling log instead of one squished line.
+            // UpdateLastStatusMessage persists immediately (one small read+write per call), so
+            // the engine only reports at program / stage / calc boundaries and throttled inside
+            // the bulk write loop — never per person.
+            var recent = new System.Collections.Generic.Queue<string>();
+            var service = new JourneyTrackService
+            {
+                OnProgress = message =>
+                {
+                    recent.Enqueue( message );
+                    while ( recent.Count > 4 ) recent.Dequeue();
+                    UpdateLastStatusMessage( string.Join( "\n", recent ) );
+                }
+            };
             var result = service.ProcessAllGroups();
+
+            // Build the final summary fresh. Rock writes Result to LastStatusMessage when the
+            // job ends; without this reset it would append onto the last in-flight progress
+            // line (the overwrite-per-message progress leaves that line in Result).
+            Result = string.Empty;
 
             if ( showDebug && result.Log.Any() )
             {
@@ -51,7 +70,7 @@ namespace com.razayya.JourneyTrack.Jobs
                 }
             }
 
-            Result += $"Completed. {result.Updated} attribute(s) updated. {result.Skipped} skipped. {result.Errors.Count} error(s).";
+            Result += $"Completed.\n{result.Updated:N0} updated · {result.Skipped:N0} skipped · {result.Errors.Count} error(s).";
 
             // Optimization O9: Run-history retention. Drop JourneyCalculationRun rows older
             // than 90 days so the table doesn't grow unbounded.
