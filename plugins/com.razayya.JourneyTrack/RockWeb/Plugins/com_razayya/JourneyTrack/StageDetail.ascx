@@ -1,6 +1,7 @@
 <%@ Control Language="C#" AutoEventWireup="true" CodeFile="StageDetail.ascx.cs"
     Inherits="RockWeb.Plugins.com_razayya.JourneyTrack.StageDetail" %>
 <%@ Register TagPrefix="jt" TagName="StageLogic" Src="~/Plugins/com_razayya/JourneyTrack/Controls/StageLogicEditor.ascx" %>
+<%@ Register TagPrefix="jt" TagName="MediaGroups" Src="~/Plugins/com_razayya/JourneyTrack/Controls/MediaGroupsEditor.ascx" %>
 
 <asp:UpdatePanel ID="upnlContent" runat="server">
     <ContentTemplate>
@@ -61,6 +62,22 @@
                             </Columns>
                         </Rock:Grid>
                     </div>
+
+                    <%-- Media Groups (only when the Stage has more than one Media Watched calc) --%>
+                    <asp:Panel ID="pnlMediaGroups" runat="server" Visible="false">
+                        <div class="row">
+                            <div class="col-md-9">
+                                <h4>Media Groups</h4>
+                                <asp:Literal ID="lMediaGroupsSummary" runat="server" />
+                            </div>
+                            <div class="col-md-3 text-right" style="padding-top: 28px;">
+                                <asp:LinkButton ID="btnManageMediaGroups" runat="server" CssClass="btn btn-default btn-sm"
+                                    OnClick="btnManageMediaGroups_Click" CausesValidation="false">
+                                    <i class="fa fa-object-group"></i> Manage Media Groups
+                                </asp:LinkButton>
+                            </div>
+                        </div>
+                    </asp:Panel>
                 </asp:Panel>
 
                 <%-- Edit Mode --%>
@@ -121,5 +138,16 @@
                 </asp:Panel>
             </div>
         </asp:Panel>
+
+        <%-- Media Groups editor (drag-and-drop) --%>
+        <Rock:ModalDialog ID="mdMediaGroups" runat="server" Title="Manage Media Groups"
+            SaveButtonText="Save" OnSaveClick="mdMediaGroups_SaveClick" ValidationGroup="vgMediaGroups">
+            <Content>
+                <asp:ValidationSummary ID="vsMediaGroups" runat="server" ValidationGroup="vgMediaGroups"
+                    HeaderText="Please correct the following:" CssClass="alert alert-validation" />
+                <Rock:NotificationBox ID="nbMediaGroups" runat="server" NotificationBoxType="Danger" Visible="false" />
+                <jt:MediaGroups ID="mgEditor" runat="server" />
+            </Content>
+        </Rock:ModalDialog>
     </ContentTemplate>
 </asp:UpdatePanel>

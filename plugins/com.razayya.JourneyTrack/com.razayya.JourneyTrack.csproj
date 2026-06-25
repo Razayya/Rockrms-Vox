@@ -109,6 +109,7 @@
     <Compile Include="Migrations\010_AddStageLogicTree.cs" />
     <Compile Include="Migrations\011_RenameAttendanceCalcTitle.cs" />
     <Compile Include="Migrations\012_RegisterGroupAttendanceCalc.cs" />
+    <Compile Include="Migrations\013_AddStageMediaGroups.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

@@ -1,6 +1,11 @@
+using System.Collections.Generic;
 using System.Data.Entity;
 using System.Linq;
+using System.Text;
+using System.Web;
 using System.Web.UI.WebControls;
+
+using com.razayya.JourneyTrack.Model;
 
 using Rock;
 using Rock.Data;
@@ -47,6 +52,48 @@ namespace com.razayya.JourneyTrack.UI
             {
                 ddl.SetValue( selectedId.Value );
             }
+        }
+
+        /// <summary>
+        /// Renders a friendly view-mode summary of a Stage's <c>MediaGroupsJson</c> (the
+        /// Media Groups editor's persisted value), resolving calc Ids to names. Returns a
+        /// "one sequence" note when no groups are configured. Lives here (DLL) rather than on
+        /// the editor's .ascx code-behind so StageDetail can call it without the cross-control
+        /// CS0103 trap described above.
+        /// </summary>
+        public static string FormatMediaGroupsSummaryHtml( string mediaGroupsJson, int stageId )
+        {
+            var config = StageMediaGroups.Parse( mediaGroupsJson );
+
+            Dictionary<int, string> names;
+            using ( var rockContext = new RockContext() )
+            {
+                names = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                    .Where( c => c.StageId == stageId )
+                    .Select( c => new { c.Id, c.Name } )
+                    .ToDictionary( c => c.Id, c => c.Name );
+            }
+
+            if ( config.Groups.Count == 0 )
+            {
+                return "<span class='text-muted'>No media groups &mdash; all videos play as one sequence.</span>";
+            }
+
+            var sb = new StringBuilder();
+            int n = 0;
+            foreach ( var group in config.Groups )
+            {
+                n++;
+                var label = string.IsNullOrWhiteSpace( group.Name ) ? ( "Group " + n ) : group.Name;
+                var vids = group.CalcIds.Select( id =>
+                    HttpUtility.HtmlEncode( names.TryGetValue( id, out var nm ) ? nm : ( "calc #" + id ) ) );
+                sb.Append( "<div><strong>" )
+                  .Append( HttpUtility.HtmlEncode( label ) )
+                  .Append( "</strong>: " )
+                  .Append( string.Join( " &rarr; ", vids ) )
+                  .Append( "</div>" );
+            }
+            return sb.ToString();
         }
     }
 }

@@ -21,6 +21,12 @@ namespace com.razayya.JourneyTrack.Lava
     /// engine sync. Callers that want fresh per-video sink writes should pair this
     /// with {% syncpersonjourney stage:'...' personid:'...' %} first.
     ///
+    /// Each captured item also carries its Media Group / sequence membership
+    /// (GroupName, IsGrouped, OrderInSequence, IsFirstInSequence) and lock state
+    /// (IsLocked / IsAvailable, PreviousName) derived from Stage.MediaGroupsJson — so
+    /// the app can render group headers and gate videos that aren't unlocked yet. With
+    /// no groups configured every video is in one "default" sequence (fully sequential).
+    ///
     /// Capture is required; the tag emits no body output.
     ///
     /// Requires the host block's EnabledLavaCommands to include `stagevideos`.

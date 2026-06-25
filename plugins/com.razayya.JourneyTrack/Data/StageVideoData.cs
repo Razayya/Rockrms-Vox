@@ -63,6 +63,19 @@ namespace com.razayya.JourneyTrack.Data
             // Most-recent interaction (so MediaPlayer can resume the in-progress session)
             public Guid?  WatchInteractionGuid { get; set; }
             public string WatchMap             { get; set; }
+
+            // Media Group / sequence membership (from Stage.MediaGroupsJson). Each item
+            // belongs to exactly one sequence: a named group, or the implicit "default"
+            // sequence of ungrouped videos. Within a sequence a video is locked until the
+            // prior one is watched; sequences run in parallel. See ApplyMediaGroups.
+            public string GroupKey          { get; set; }   // named group key, or "default"
+            public string GroupName         { get; set; }   // header label; null for the default sequence
+            public bool   IsGrouped         { get; set; }   // true when in a named group
+            public int    OrderInSequence   { get; set; }   // 1-based position within its sequence
+            public bool   IsFirstInSequence { get; set; }   // true for the first item of its sequence
+            public bool   IsLocked          { get; set; }   // an earlier item in the sequence isn't watched yet
+            public bool   IsAvailable       { get; set; }   // == !IsLocked (convenience for XAML)
+            public string PreviousName      { get; set; }   // immediately-prior item's name ("Finish X first"); null for first
         }
 
         /// <summary>
@@ -252,7 +265,111 @@ namespace com.razayya.JourneyTrack.Data
                 } );
             }
 
-            return output;
+            // Partition into ordered sequences (named Media Groups + the default sequence)
+            // and compute per-item lock state for the resolved person.
+            return ApplyMediaGroups( output, stage.MediaGroupsJson );
+        }
+
+        /// <summary>Sequence key used for every video that isn't in a named Media Group.</summary>
+        public const string DefaultSequenceKey = "default";
+
+        /// <summary>
+        /// Partitions <paramref name="items"/> into sequences per the Stage's
+        /// <see cref="Stage.MediaGroupsJson"/>: one sequence per named group (in display
+        /// order) plus an implicit "default" sequence of every ungrouped video. Within each
+        /// sequence a video is locked until every earlier video is watched; sequences are
+        /// independent. Returns the items re-ordered as the default sequence first, then each
+        /// named group contiguously. With no groups configured, every video lands in the
+        /// default sequence — i.e. the whole Stage is one sequential playlist.
+        /// </summary>
+        private static List<StageVideoItem> ApplyMediaGroups( List<StageVideoItem> items, string mediaGroupsJson )
+        {
+            if ( items == null || items.Count == 0 )
+            {
+                return items ?? new List<StageVideoItem>();
+            }
+
+            var config = StageMediaGroups.Parse( mediaGroupsJson );
+
+            // Map each named-group calcId to its group + index within that group.
+            var groupByCalcId = new Dictionary<int, MediaGroup>();
+            var indexByCalcId = new Dictionary<int, int>();
+            foreach ( var group in config.Groups )
+            {
+                for ( int i = 0; i < group.CalcIds.Count; i++ )
+                {
+                    var calcId = group.CalcIds[i];
+                    if ( !groupByCalcId.ContainsKey( calcId ) )
+                    {
+                        groupByCalcId[calcId] = group;
+                        indexByCalcId[calcId] = i;
+                    }
+                }
+            }
+
+            var ordered = new List<StageVideoItem>();
+
+            // Default sequence first: ungrouped videos, ordered by calc Order/Name.
+            var defaultItems = items
+                .Where( it => !groupByCalcId.ContainsKey( it.CalcId ) )
+                .OrderBy( it => it.CalcOrder )
+                .ThenBy( it => it.CalcName )
+                .ToList();
+            foreach ( var it in defaultItems )
+            {
+                it.IsGrouped = false;
+                it.GroupKey = DefaultSequenceKey;
+                it.GroupName = null;
+            }
+            SequenceAndLock( defaultItems );
+            ordered.AddRange( defaultItems );
+
+            // Named groups, in display order; each contiguous and internally sequenced.
+            foreach ( var group in config.Groups )
+            {
+                var groupItems = items
+                    .Where( it => groupByCalcId.TryGetValue( it.CalcId, out var g ) && ReferenceEquals( g, group ) )
+                    .OrderBy( it => indexByCalcId[it.CalcId] )
+                    .ToList();
+                if ( groupItems.Count == 0 )
+                {
+                    continue;
+                }
+                foreach ( var it in groupItems )
+                {
+                    it.IsGrouped = true;
+                    it.GroupKey = group.Key;
+                    it.GroupName = group.Name;
+                }
+                SequenceAndLock( groupItems );
+                ordered.AddRange( groupItems );
+            }
+
+            return ordered;
+        }
+
+        /// <summary>
+        /// Assigns 1-based position + lock state across one already-ordered sequence. A video
+        /// is locked until every earlier video in the sequence is <c>Matched</c> (watched to
+        /// the calc's threshold); the first video is always available. <c>PreviousName</c> is
+        /// the immediately-prior video's name, for a "finish X first" hint.
+        /// </summary>
+        private static void SequenceAndLock( List<StageVideoItem> sequence )
+        {
+            bool allPriorWatched = true;
+            string priorName = null;
+            for ( int i = 0; i < sequence.Count; i++ )
+            {
+                var it = sequence[i];
+                it.OrderInSequence = i + 1;
+                it.IsFirstInSequence = i == 0;
+                it.IsLocked = !allPriorWatched;
+                it.IsAvailable = allPriorWatched;
+                it.PreviousName = priorName;
+
+                allPriorWatched = allPriorWatched && it.Matched;
+                priorName = it.Name;
+            }
         }
 
         private static double SafeToDouble( Dictionary<string, object> fields, string key )

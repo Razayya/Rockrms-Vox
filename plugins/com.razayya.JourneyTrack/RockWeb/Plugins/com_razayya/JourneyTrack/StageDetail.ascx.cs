@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Data.Entity;
 using System.Linq;
 
+using com.razayya.JourneyTrack.CalculationTypes;
 using com.razayya.JourneyTrack.Data;
 using com.razayya.JourneyTrack.Model;
 using com.razayya.JourneyTrack.UI;
@@ -207,6 +208,50 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             BindCalculationsGrid();
         }
 
+        protected void btnManageMediaGroups_Click( object sender, EventArgs e )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var stage = new StageService( rockContext ).Get( SubGroupId );
+                if ( stage == null )
+                {
+                    return;
+                }
+
+                // StageId must be set before Value so the editor can resolve calc names.
+                mgEditor.StageId = stage.Id;
+                mgEditor.Value = stage.MediaGroupsJson;
+            }
+
+            nbMediaGroups.Visible = false;
+            mdMediaGroups.Show();
+        }
+
+        protected void mdMediaGroups_SaveClick( object sender, EventArgs e )
+        {
+            var errors = mgEditor.GetValidationErrors();
+            if ( errors.Any() )
+            {
+                nbMediaGroups.Text = string.Join( "<br/>", errors );
+                nbMediaGroups.Visible = true;
+                mdMediaGroups.Show();
+                return;
+            }
+
+            using ( var rockContext = new RockContext() )
+            {
+                var stage = new StageService( rockContext ).Get( SubGroupId );
+                if ( stage != null )
+                {
+                    stage.MediaGroupsJson = mgEditor.Value;
+                    rockContext.SaveChanges();
+                }
+            }
+
+            mdMediaGroups.Hide();
+            ShowDetail( SubGroupId );
+        }
+
         #endregion
 
         #region Methods
@@ -286,6 +331,14 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             pnlEdit.Visible = false;
 
             BindCalculationsGrid();
+
+            // Media Groups surface — only meaningful once a Stage has more than one video.
+            int mediaCalcCount = CountActiveMediaCalcs( subGroup.Id );
+            pnlMediaGroups.Visible = mediaCalcCount > 1;
+            if ( pnlMediaGroups.Visible )
+            {
+                lMediaGroupsSummary.Text = JourneyTrackUiHelper.FormatMediaGroupsSummaryHtml( subGroup.MediaGroupsJson, subGroup.Id );
+            }
         }
 
         private void ShowEditDetails( Stage subGroup )
@@ -349,6 +402,23 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
                 gCalculations.DataSource = calcs;
                 gCalculations.DataBind();
+            }
+        }
+
+        private int CountActiveMediaCalcs( int stageId )
+        {
+            if ( stageId <= 0 )
+            {
+                return 0;
+            }
+
+            var mediaTypeName = typeof( MediaWatchedCalculation ).FullName;
+            using ( var rockContext = new RockContext() )
+            {
+                return new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                    .Count( c => c.StageId == stageId
+                        && c.IsActive
+                        && c.CalculationTypeEntityType.Name == mediaTypeName );
             }
         }
 
