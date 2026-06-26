@@ -333,7 +333,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             BindCalculationsGrid();
 
             // Media Groups surface — only meaningful once a Stage has more than one video.
+            // The action button lives in the .actions bar (between Edit and Copy); the summary
+            // panel stays below the Calculations grid. Both gate on the same >1-media-calc test.
             int mediaCalcCount = CountActiveMediaCalcs( subGroup.Id );
+            btnManageMediaGroups.Visible = mediaCalcCount > 1;
             pnlMediaGroups.Visible = mediaCalcCount > 1;
             if ( pnlMediaGroups.Visible )
             {

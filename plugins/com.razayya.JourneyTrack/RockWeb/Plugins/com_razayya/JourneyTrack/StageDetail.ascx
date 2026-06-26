@@ -40,6 +40,11 @@
 
                     <div class="actions">
                         <asp:LinkButton ID="btnEdit" runat="server" Text="Edit" CssClass="btn btn-primary" OnClick="btnEdit_Click" CausesValidation="false" />
+                        <asp:LinkButton ID="btnManageMediaGroups" runat="server" CssClass="btn btn-default btn-sm" Visible="false"
+                            OnClick="btnManageMediaGroups_Click" CausesValidation="false"
+                            ToolTip="Organize this stage's videos into sequenced playlists.">
+                            <i class="fa fa-object-group"></i> Manage Media Groups
+                        </asp:LinkButton>
                         <asp:LinkButton ID="btnCopy" runat="server" Text="Copy" CssClass="btn btn-default btn-sm" OnClick="btnCopy_Click" CausesValidation="false"
                             ToolTip="Create a copy of this sub-group including all calculations." />
                         <asp:LinkButton ID="btnBack" runat="server" Text="Back" CssClass="btn btn-link" OnClick="btnBack_Click" CausesValidation="false" />
@@ -65,18 +70,8 @@
 
                     <%-- Media Groups (only when the Stage has more than one Media Watched calc) --%>
                     <asp:Panel ID="pnlMediaGroups" runat="server" Visible="false">
-                        <div class="row">
-                            <div class="col-md-9">
-                                <h4>Media Groups</h4>
-                                <asp:Literal ID="lMediaGroupsSummary" runat="server" />
-                            </div>
-                            <div class="col-md-3 text-right" style="padding-top: 28px;">
-                                <asp:LinkButton ID="btnManageMediaGroups" runat="server" CssClass="btn btn-default btn-sm"
-                                    OnClick="btnManageMediaGroups_Click" CausesValidation="false">
-                                    <i class="fa fa-object-group"></i> Manage Media Groups
-                                </asp:LinkButton>
-                            </div>
-                        </div>
+                        <h4>Media Groups</h4>
+                        <asp:Literal ID="lMediaGroupsSummary" runat="server" />
                     </asp:Panel>
                 </asp:Panel>
 

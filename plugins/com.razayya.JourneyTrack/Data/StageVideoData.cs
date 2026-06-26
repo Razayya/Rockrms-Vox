@@ -86,8 +86,12 @@ namespace com.razayya.JourneyTrack.Data
         ///
         /// Does NOT call the engine sync — callers that want fresh writes to the per-video
         /// sink attribute should fire {% syncpersonjourney stage:'...' %} first.
+        ///
+        /// <paramref name="groupRef"/> (optional) narrows the result to a single Media Group
+        /// sequence, addressed by the group's Name or Key (or the literal "default" for the
+        /// ungrouped sequence). Blank returns every sequence.
         /// </summary>
-        public static List<StageVideoItem> GetForStageAndPerson( Guid stageGuid, int personId, RockContext rockContext )
+        public static List<StageVideoItem> GetForStageAndPerson( Guid stageGuid, int personId, RockContext rockContext, string groupRef = null )
         {
             var output = new List<StageVideoItem>();
             if ( rockContext == null )
@@ -267,7 +271,12 @@ namespace com.razayya.JourneyTrack.Data
 
             // Partition into ordered sequences (named Media Groups + the default sequence)
             // and compute per-item lock state for the resolved person.
-            return ApplyMediaGroups( output, stage.MediaGroupsJson );
+            var sequenced = ApplyMediaGroups( output, stage.MediaGroupsJson );
+
+            // Optional: narrow to a single sequence, addressed by group Name or Key. Lock
+            // state is computed per-sequence, so post-filtering the already-sequenced list
+            // keeps each kept item's correct lock/availability.
+            return FilterToGroup( sequenced, groupRef );
         }
 
         /// <summary>Sequence key used for every video that isn't in a named Media Group.</summary>
@@ -346,6 +355,29 @@ namespace com.razayya.JourneyTrack.Data
             }
 
             return ordered;
+        }
+
+        /// <summary>
+        /// When <paramref name="groupRef"/> is non-blank, narrows <paramref name="items"/> to a
+        /// single sequence — matched case-insensitively against a group's <see cref="MediaGroup.Name"/>
+        /// or <see cref="MediaGroup.Key"/> (so a sequence is addressable by name OR by Id), or the
+        /// literal <see cref="DefaultSequenceKey"/> for the ungrouped sequence. A blank groupRef
+        /// returns the full list unchanged; a groupRef matching no sequence returns an empty list.
+        /// </summary>
+        private static List<StageVideoItem> FilterToGroup( List<StageVideoItem> items, string groupRef )
+        {
+            if ( items == null || string.IsNullOrWhiteSpace( groupRef ) )
+            {
+                return items ?? new List<StageVideoItem>();
+            }
+
+            var needle = groupRef.Trim();
+            return items
+                .Where( it =>
+                    string.Equals( it.GroupKey, needle, StringComparison.OrdinalIgnoreCase )
+                    || ( !string.IsNullOrEmpty( it.GroupName )
+                        && string.Equals( it.GroupName, needle, StringComparison.OrdinalIgnoreCase ) ) )
+                .ToList();
         }
 
         /// <summary>

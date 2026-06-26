@@ -14,6 +14,10 @@ namespace com.razayya.JourneyTrack.Lava
     /// Lava tag: {% stagevideos stage:'<guid>' personid:'<int>' capture:'videos' %}
     ///   or:   {% stagevideos stage:'<guid>' personaliasguid:'<guid>' capture:'videos' %}
     ///
+    /// Optional group:'<name-or-key>' narrows the capture to a single Media Group
+    /// sequence — matched on the group's Name or Key (or "default" for the ungrouped
+    /// sequence). Omit it to capture every sequence in the Stage.
+    ///
     /// Captures into the named Lava variable the ordered list of active MediaWatched
     /// JourneyCalculations under the supplied Stage, each with the engine-evaluated
     /// watch state for the resolved person and the most-recent Interaction Guid +
@@ -40,6 +44,7 @@ namespace com.razayya.JourneyTrack.Lava
             public const string Stage           = "stage";
             public const string PersonId        = "personid";
             public const string PersonAliasGuid = "personaliasguid";
+            public const string Group           = "group";
             public const string Capture         = "capture";
         }
 
@@ -91,7 +96,10 @@ namespace com.razayya.JourneyTrack.Lava
                 return;
             }
 
-            var items = StageVideoData.GetForStageAndPerson( stageGuid.Value, personId.Value, rockContext );
+            // Optional: render only one sequence, addressed by Media Group Name or Key.
+            var groupRef = parms.GetValueOrNull( P.Group );
+
+            var items = StageVideoData.GetForStageAndPerson( stageGuid.Value, personId.Value, rockContext, groupRef );
             context.SetMergeField( captureVar, items );
         }
 
