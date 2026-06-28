@@ -373,7 +373,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 .jp-seg-icon{display:block;font-size:1.05rem;line-height:1;}
 .jp-seg-name{display:block;margin-top:.2rem;font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .jp-drawers{margin-top:1rem;}
-.jp-drawer{border:1px solid #e5e7eb;border-radius:8px;margin-bottom:.55rem;overflow:hidden;}
+.jp-drawer{border:1px solid #e5e7eb;border-radius:8px;margin-bottom:.55rem;overflow:hidden;background:#fff;}
 .jp-drawer>summary{padding:.65rem 1rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:.5rem;background:#f9fafb;}
 .jp-drawer[open]>summary{border-bottom:1px solid #e5e7eb;}
 .jp-drawer-name{font-weight:600;}
