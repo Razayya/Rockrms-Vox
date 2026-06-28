@@ -90,6 +90,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
             var service = new JourneyTrackService();
             var sb = new StringBuilder();
+            sb.Append( JourneyCss() );
             int rendered = 0;
             var enrollPrompts = new List<EnrollPrompt>();
 
@@ -228,22 +229,29 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             var sinkAttrIds = calcs.Where( c => c.PersonAttributeId.HasValue )
                 .Select( c => c.PersonAttributeId.Value )
                 .Distinct().ToList();
-            var avLookup = new Dictionary<int, string>();
+            // Pull both the raw Value (for the presence test) and the PersistedTextValue (the
+            // field-type-formatted text Rock stores) so the cell can display generically by
+            // presence, not by field type — sidesteps the Date-attr-holding-"True" render gap.
+            var avValue = new Dictionary<int, string>();
+            var avPersisted = new Dictionary<int, string>();
             if ( sinkAttrIds.Count > 0 )
             {
-                avLookup = new AttributeValueService( rockContext ).Queryable().AsNoTracking()
-                    .Where( av => sinkAttrIds.Contains( av.AttributeId )
-                        && av.EntityId == Person.Id )
-                    .Select( av => new { av.AttributeId, av.Value } )
-                    .ToList()
-                    .GroupBy( av => av.AttributeId )
-                    .ToDictionary( g => g.Key, g => g.First().Value );
+                var avRows = new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                    .Where( av => sinkAttrIds.Contains( av.AttributeId ) && av.EntityId == Person.Id )
+                    .Select( av => new { av.AttributeId, av.Value, av.PersistedTextValue } )
+                    .ToList();
+                foreach ( var grp in avRows.GroupBy( av => av.AttributeId ) )
+                {
+                    var first = grp.First();
+                    avValue[grp.Key] = first.Value;
+                    avPersisted[grp.Key] = first.PersistedTextValue;
+                }
             }
 
             var calcsByStage = calcs.GroupBy( c => c.StageId ).ToDictionary( g => g.Key, g => g.ToList() );
 
             var sb = new StringBuilder();
-            sb.Append( "<div class='journey-stage-drawers' style='margin-top:1rem;'>" );
+            sb.Append( "<div class='jp-drawers'>" );
             foreach ( var stage in progress.Stages )
             {
                 if ( !calcsByStage.TryGetValue( stage.StageId, out var stageCalcs ) || stageCalcs.Count == 0 )
@@ -251,65 +259,47 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     continue;
                 }
 
-                string statusBadge;
-                if ( stage.Passed )
-                {
-                    statusBadge = "<span class='label' style='background:#16a34a;color:#fff;'>Passed</span>";
-                }
-                else if ( stage.IsCurrent )
-                {
-                    statusBadge = "<span class='label' style='background:#f59e0b;color:#fff;'>Current</span>";
-                }
-                else
-                {
-                    statusBadge = "<span class='label' style='background:#e5e7eb;color:#374151;'>Pending</span>";
-                }
+                string badgeClass, badgeText;
+                if ( stage.Passed ) { badgeClass = "passed"; badgeText = "Passed"; }
+                else if ( stage.IsCurrent ) { badgeClass = "current"; badgeText = "Current"; }
+                else { badgeClass = "pending"; badgeText = "Pending"; }
 
                 var openAttr = stage.IsCurrent ? " open" : string.Empty;
 
                 sb.AppendFormat(
-                    "<details{0} style='margin-bottom:.5rem;border:1px solid #e5e7eb;border-radius:6px;'>" +
-                    "<summary style='padding:.6rem .85rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#f9fafb;border-radius:6px 6px 0 0;'>" +
-                    "<span><strong>{1}</strong></span>{2}</summary>" +
-                    "<div style='padding:.5rem .85rem;'>" +
-                    "<table class='table table-condensed' style='margin-bottom:0;'><thead><tr><th>Calculation</th><th>Type</th><th>Target Attribute</th><th>Current Value</th></tr></thead><tbody>",
+                    "<details class='jp-drawer'{0}>" +
+                    "<summary><span class='jp-drawer-name'>{1}</span><span class='jp-badge {2}'>{3}</span></summary>" +
+                    "<div class='jp-drawer-body'>" +
+                    "<table class='jp-table'><thead><tr><th>Calculation</th><th>Type</th><th>Target Attribute</th><th class='jp-th-val'>Current Value</th></tr></thead><tbody>",
                     openAttr,
                     System.Web.HttpUtility.HtmlEncode( stage.StageName ?? string.Empty ),
-                    statusBadge );
+                    badgeClass, badgeText );
 
                 foreach ( var calc in stageCalcs )
                 {
                     var calcTypeFriendly = SimplifyCalcTypeName( calc.CalculationTypeEntityType?.Name );
-                    var targetName = calc.PersonAttribute != null
-                        ? calc.PersonAttribute.Name
-                        : "<em class='text-muted'>(transient)</em>";
+                    var targetCell = calc.PersonAttributeId.HasValue
+                        ? "<span class='jp-target'>" + System.Web.HttpUtility.HtmlEncode( calc.PersonAttribute?.Name ?? string.Empty ) + "</span>"
+                        : "<span class='jp-target transient'>(transient)</span>";
 
-                    string valueCell;
+                    // Display the value of the attribute being written to: blank stays blank; a present
+                    // value (incl. "True"/"False") shows the attribute's PersistedTextValue — generic on
+                    // presence, not field type (falls back to the raw value if no persisted text yet).
+                    string valueCell = string.Empty;
                     if ( calc.PersonAttributeId.HasValue
-                        && avLookup.TryGetValue( calc.PersonAttributeId.Value, out var v )
+                        && avValue.TryGetValue( calc.PersonAttributeId.Value, out var v )
                         && !string.IsNullOrWhiteSpace( v ) )
                     {
-                        // Use AttributeCache to reach the FieldType helper (calc.PersonAttribute
-                        // is the EF entity, which exposes the FieldType entity but not the IFieldType impl).
-                        var attrCache = AttributeCache.Get( calc.PersonAttributeId.Value );
-                        valueCell = attrCache != null
-                            ? attrCache.FieldType.Field.FormatValueAsHtml( null, attrCache.EntityTypeId, Person.Id, v, attrCache.QualifierValues, false )
-                            : System.Web.HttpUtility.HtmlEncode( v );
-                    }
-                    else if ( calc.PersonAttributeId.HasValue )
-                    {
-                        valueCell = "<span class='text-muted'>—</span>";
-                    }
-                    else
-                    {
-                        valueCell = "<span class='text-muted'>—</span>";
+                        avPersisted.TryGetValue( calc.PersonAttributeId.Value, out var pt );
+                        var text = !string.IsNullOrWhiteSpace( pt ) ? pt : v;
+                        valueCell = "<span class='jp-val'>" + System.Web.HttpUtility.HtmlEncode( text ) + "</span>";
                     }
 
                     sb.AppendFormat(
-                        "<tr><td>{0}</td><td><span class='text-muted small'>{1}</span></td><td>{2}</td><td>{3}</td></tr>",
+                        "<tr><td class='jp-calc'>{0}</td><td><span class='jp-type'>{1}</span></td><td>{2}</td><td class='jp-td-val'>{3}</td></tr>",
                         System.Web.HttpUtility.HtmlEncode( calc.Name ?? string.Empty ),
                         System.Web.HttpUtility.HtmlEncode( calcTypeFriendly ),
-                        targetName.StartsWith( "<" ) ? targetName : System.Web.HttpUtility.HtmlEncode( targetName ),
+                        targetCell,
                         valueCell );
                 }
 
@@ -340,45 +330,70 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 return string.Empty;
             }
 
+            var passedCount = progress.Stages.Count( s => s.Passed );
             var sb = new StringBuilder();
-            sb.Append( "<div class='journey-progress' style='margin-bottom:1.25rem;'>" );
+            sb.Append( "<div class='jp-progress'>" );
             sb.AppendFormat(
-                "<div class='journey-progress-header' style='display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.4rem;'>" +
-                "<strong>{0}</strong>" +
-                "<span class='text-muted' style='font-size:.85em;'>{1}</span></div>",
+                "<div class='jp-progress-head'><span class='jp-prog-name'>{0}</span>" +
+                "<span class='jp-prog-status'>{1}</span></div>",
                 System.Web.HttpUtility.HtmlEncode( progress.ProgramName ?? string.Empty ),
-                progress.AllPassed ? "Completed" : string.Format( "{0}/{1} stages",
-                    progress.Stages.Count( s => s.Passed ),
-                    progress.Stages.Count ) );
+                progress.AllPassed ? "Completed" : string.Format( "{0} of {1} stages", passedCount, progress.Stages.Count ) );
 
-            sb.Append( "<div class='journey-progress-bar' style='display:flex;gap:.25rem;'>" );
+            sb.Append( "<div class='jp-bar'>" );
             foreach ( var stage in progress.Stages )
             {
-                string bg, fg, border, label;
-                if ( stage.Passed )
-                {
-                    bg = "#16a34a"; fg = "#ffffff"; border = "#16a34a"; label = "&#10003;";
-                }
-                else if ( stage.IsCurrent )
-                {
-                    bg = "#fef3c7"; fg = "#92400e"; border = "#f59e0b"; label = "&#9679;";
-                }
-                else
-                {
-                    bg = "#f3f4f6"; fg = "#9ca3af"; border = "#d1d5db"; label = "&#9675;";
-                }
+                string cls, label;
+                if ( stage.Passed ) { cls = "passed"; label = "&#10003;"; }
+                else if ( stage.IsCurrent ) { cls = "current"; label = "&#9679;"; }
+                else { cls = "pending"; label = "&#9675;"; }
 
                 sb.AppendFormat(
-                    "<div title='{0}' style='flex:1;padding:.45rem .5rem;text-align:center;border:1px solid {1};border-radius:4px;background:{2};color:{3};font-size:.8em;line-height:1.1;'>" +
-                    "<div style='font-size:1.1em;'>{4}</div>" +
-                    "<div style='margin-top:.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>{5}</div>" +
-                    "</div>",
+                    "<div class='jp-seg {0}' title='{1}'><span class='jp-seg-icon'>{2}</span><span class='jp-seg-name'>{3}</span></div>",
+                    cls,
                     System.Web.HttpUtility.HtmlEncode( stage.StageName ?? string.Empty ),
-                    border, bg, fg, label,
+                    label,
                     System.Web.HttpUtility.HtmlEncode( stage.StageName ?? string.Empty ) );
             }
             sb.Append( "</div></div>" );
             return sb.ToString();
+        }
+
+        // Scoped styles for the progress bar + stage drawers (emitted once per render).
+        private static string JourneyCss()
+        {
+            return @"<style>
+.jp-progress{margin:0 0 1.25rem;}
+.jp-progress-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.5rem;gap:.5rem;}
+.jp-prog-name{font-weight:700;font-size:1.05rem;}
+.jp-prog-status{font-size:.78rem;color:#6b7280;font-weight:600;white-space:nowrap;}
+.jp-bar{display:flex;gap:.3rem;}
+.jp-seg{flex:1;min-width:0;text-align:center;padding:.45rem .35rem;border-radius:6px;border:1px solid #d1d5db;background:#f3f4f6;color:#9ca3af;}
+.jp-seg.passed{background:#ecfdf5;border-color:#16a34a;color:#166534;}
+.jp-seg.current{background:#fffbeb;border-color:#f59e0b;color:#92400e;}
+.jp-seg-icon{display:block;font-size:1.05rem;line-height:1;}
+.jp-seg-name{display:block;margin-top:.2rem;font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.jp-drawers{margin-top:1rem;}
+.jp-drawer{border:1px solid #e5e7eb;border-radius:8px;margin-bottom:.55rem;overflow:hidden;}
+.jp-drawer>summary{padding:.65rem 1rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:.5rem;background:#f9fafb;}
+.jp-drawer[open]>summary{border-bottom:1px solid #e5e7eb;}
+.jp-drawer-name{font-weight:600;}
+.jp-badge{font-size:.68rem;font-weight:700;padding:.15rem .55rem;border-radius:999px;text-transform:uppercase;letter-spacing:.02em;white-space:nowrap;}
+.jp-badge.passed{background:#dcfce7;color:#166534;}
+.jp-badge.current{background:#fef3c7;color:#92400e;}
+.jp-badge.pending{background:#eef2f7;color:#6b7280;}
+.jp-drawer-body{padding:.25rem .5rem .5rem;}
+.jp-table{width:100%;border-collapse:collapse;font-size:.85rem;}
+.jp-table th{text-align:left;padding:.45rem .65rem;border-bottom:2px solid #eef2f7;color:#9ca3af;font-weight:700;text-transform:uppercase;font-size:.66rem;letter-spacing:.03em;}
+.jp-table td{padding:.45rem .65rem;border-bottom:1px solid #f3f4f6;vertical-align:top;}
+.jp-table tbody tr:last-child td{border-bottom:none;}
+.jp-table tbody tr:hover{background:#f9fafb;}
+.jp-th-val,.jp-td-val{text-align:right;white-space:nowrap;}
+.jp-calc{font-weight:600;color:#1f2937;}
+.jp-type{color:#9ca3af;font-size:.78rem;}
+.jp-target{color:#374151;}
+.jp-target.transient{color:#9ca3af;font-style:italic;}
+.jp-val{font-weight:700;color:#111827;}
+</style>";
         }
     }
 }
