@@ -221,6 +221,7 @@ namespace com.razayya.JourneyTrack.Data
                     .ToList();
 
                 var subGroupPassers = new Dictionary<int, HashSet<int>>();
+                var progSummary = new ProgramRunSummary { ProgramName = group.Name, Enrollees = basePopulation.Count };
 
                 int stageIndex = 0;
                 foreach ( var subGroup in subGroups )
@@ -231,6 +232,10 @@ namespace com.razayya.JourneyTrack.Data
                         var subResult = ProcessSubGroupInternal( subGroup, basePopulation, subGroupPassers, rockContext, stageIndex, subGroups.Count );
                         result.Merge( subResult.Result );
                         subGroupPassers[subGroup.Id] = subResult.Passers;
+                        if ( subResult.Summary != null )
+                        {
+                            progSummary.Stages.Add( subResult.Summary );
+                        }
                     }
                     catch ( Exception ex )
                     {
@@ -240,7 +245,8 @@ namespace com.razayya.JourneyTrack.Data
                 }
 
                 // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries)
-                WriteProgramRollup( group, basePopulation, subGroupPassers, result, rockContext );
+                WriteProgramRollup( group, basePopulation, subGroupPassers, result, rockContext, progSummary );
+                result.ProgramSummaries.Add( progSummary );
 
                 group.LastRunDateTime = RockDateTime.Now;
                 rockContext.SaveChanges();
@@ -556,10 +562,13 @@ namespace com.razayya.JourneyTrack.Data
             {
                 result.Log.Add( $"    (skipping {subGroup.Name} calc evaluation — empty working population)" );
                 Report( $"{stageLabel}: skipped (no one reached this stage yet)" );
+                int skippedCalcCount = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                    .Count( c => c.StageId == subGroup.Id && c.IsActive );
                 return new SubGroupProcessResult
                 {
                     Result = result,
-                    Passers = new HashSet<int>()
+                    Passers = new HashSet<int>(),
+                    Summary = new StageRunSummary { Order = subGroup.Order, Name = subGroup.Name, CalcCount = skippedCalcCount, Skipped = true }
                 };
             }
 
@@ -658,7 +667,18 @@ namespace com.razayya.JourneyTrack.Data
             return new SubGroupProcessResult
             {
                 Result = result,
-                Passers = finalPassers
+                Passers = finalPassers,
+                Summary = new StageRunSummary
+                {
+                    Order = subGroup.Order,
+                    Name = subGroup.Name,
+                    CalcCount = calculations.Count,
+                    Evaluated = workingPopulation.Count,
+                    Passers = finalPassers?.Count ?? 0,
+                    Written = result.Updated,
+                    Unchanged = result.Skipped,
+                    Skipped = false
+                }
             };
         }
 
@@ -1438,6 +1458,7 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
         {
             public SyncResult Result { get; set; }
             public HashSet<int> Passers { get; set; }
+            public StageRunSummary Summary { get; set; }
         }
 
         private class AttributeWrite
@@ -1527,7 +1548,8 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
             HashSet<int> basePopulation,
             Dictionary<int, HashSet<int>> stagePassers,
             SyncResult result,
-            RockContext rockContext )
+            RockContext rockContext,
+            ProgramRunSummary progSummary = null )
         {
             if ( !program.CompletionTargetPersonAttributeId.HasValue || basePopulation.Count == 0 )
             {
@@ -1605,6 +1627,14 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
             result.Updated += written;
             result.Log.Add( $"  Program rollup '{program.Name}': {completed.Count}/{basePopulation.Count} complete, {written} attribute values written." );
 
+            if ( progSummary != null )
+            {
+                progSummary.HasRollup = true;
+                progSummary.RollupAttributeName = targetAttribute.Name;
+                progSummary.RollupCompleted = completed.Count;
+                progSummary.RollupWritten = written;
+            }
+
             // Program-level transition detection: rollup went False/blank → True this run
             if ( newlyCompletedPersonIds != null && newlyCompletedPersonIds.Count > 0 )
             {
@@ -1681,6 +1711,8 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
         public List<string> Errors { get; set; } = new List<string>();
         public List<string> Log { get; set; } = new List<string>();
         public HashSet<int> MatchedPersonIds { get; set; } = new HashSet<int>();
+        /// <summary>Per-program, per-stage breakdown for the job summary (populated by ProcessGroup).</summary>
+        public List<ProgramRunSummary> ProgramSummaries { get; set; } = new List<ProgramRunSummary>();
 
         public void Merge( SyncResult other )
         {
@@ -1688,12 +1720,43 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
             Skipped += other.Skipped;
             Errors.AddRange( other.Errors );
             Log.AddRange( other.Log );
+            ProgramSummaries.AddRange( other.ProgramSummaries );
         }
 
         public override string ToString()
         {
             return $"{Updated} updated, {Skipped} skipped, {Errors.Count} error(s)";
         }
+    }
+
+    /// <summary>
+    /// Per-program breakdown of a full ProcessGroup run, for a human-readable job summary.
+    /// </summary>
+    public class ProgramRunSummary
+    {
+        public string ProgramName { get; set; }
+        public int Enrollees { get; set; }
+        public List<StageRunSummary> Stages { get; set; } = new List<StageRunSummary>();
+        public bool HasRollup { get; set; }
+        public string RollupAttributeName { get; set; }
+        public int RollupCompleted { get; set; }   // people who passed every stage
+        public int RollupWritten { get; set; }      // rollup attribute values written this run
+    }
+
+    /// <summary>
+    /// Per-stage breakdown within a program run. Written/Unchanged count only this stage's
+    /// own calc writes — the program rollup is reported separately on ProgramRunSummary.
+    /// </summary>
+    public class StageRunSummary
+    {
+        public int Order { get; set; }
+        public string Name { get; set; }
+        public int CalcCount { get; set; }
+        public int Evaluated { get; set; }   // working population entering the stage
+        public int Passers { get; set; }     // people who passed the stage gate
+        public int Written { get; set; }     // attribute values written by this stage's calcs
+        public int Unchanged { get; set; }   // people this stage's calcs left unchanged
+        public bool Skipped { get; set; }    // stage skipped because nobody reached it
     }
 
     /// <summary>

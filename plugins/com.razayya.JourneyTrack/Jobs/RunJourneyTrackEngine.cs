@@ -70,7 +70,32 @@ namespace com.razayya.JourneyTrack.Jobs
                 }
             }
 
-            Result += $"Completed.\n{result.Updated:N0} updated · {result.Skipped:N0} skipped · {result.Errors.Count} error(s).";
+            // Per-program, per-stage breakdown so "written" vs "unchanged" is unambiguous:
+            // each stage's own calc writes are reported separately from the program completion
+            // rollup (the rollup is what writes the "Completed" flag for everyone).
+            var sb = new System.Text.StringBuilder();
+            foreach ( var prog in result.ProgramSummaries )
+            {
+                sb.AppendLine( $"{prog.ProgramName} — {prog.Enrollees:N0} enrollees" );
+                foreach ( var st in prog.Stages )
+                {
+                    var calcs = $"{st.CalcCount} calc{( st.CalcCount == 1 ? "" : "s" )}";
+                    if ( st.Skipped )
+                    {
+                        sb.AppendLine( $"  {st.Name} ({calcs}): skipped — nobody reached this stage" );
+                    }
+                    else
+                    {
+                        sb.AppendLine( $"  {st.Name} ({calcs}): {st.Passers:N0} of {st.Evaluated:N0} passed · {st.Written:N0} written, {st.Unchanged:N0} unchanged" );
+                    }
+                }
+                if ( prog.HasRollup )
+                {
+                    sb.AppendLine( $"  Completion rollup ({prog.RollupAttributeName}): {prog.RollupCompleted:N0} of {prog.Enrollees:N0} finished all stages — wrote the flag for {prog.RollupWritten:N0}" );
+                }
+            }
+            sb.Append( $"Totals: {result.Updated:N0} value(s) written, {result.Skipped:N0} left unchanged, {result.Errors.Count} error(s)." );
+            Result += sb.ToString();
 
             // Optimization O9: Run-history retention. Drop JourneyCalculationRun rows older
             // than 90 days so the table doesn't grow unbounded.
