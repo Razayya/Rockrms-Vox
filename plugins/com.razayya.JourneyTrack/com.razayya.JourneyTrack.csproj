@@ -112,6 +112,7 @@
     <Compile Include="Migrations\011_RenameAttendanceCalcTitle.cs" />
     <Compile Include="Migrations\012_RegisterGroupAttendanceCalc.cs" />
     <Compile Include="Migrations\013_AddStageMediaGroups.cs" />
+    <Compile Include="Migrations\014_AddSkipFilter.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
