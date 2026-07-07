@@ -159,6 +159,54 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         }
 
         /// <inheritdoc/>
+        // The per-MediaElement aggregate cache holds every person's unioned WatchMap
+        // regardless of the threshold — the MinWatchedPercent filter is only applied
+        // at lookup — so partial progress ("80% of 95%") is a straight map lookup.
+        public override Dictionary<string, object> DescribeProgress(
+            RockContext rockContext,
+            JourneyCalculation calc,
+            int personId )
+        {
+            var mediaGuid = calc.GetAttributeValue( "MediaElement" ).AsGuidOrNull();
+            var minPercent = calc.GetAttributeValue( "MinWatchedPercent" ).AsIntegerOrNull() ?? 95;
+
+            double percent = 0;
+            double maxSingleSession = 0;
+            int watchedSeconds = 0;
+            int mapLength = 0;
+            int sessionCount = 0;
+
+            if ( mediaGuid.HasValue )
+            {
+                var mediaElement = new MediaElementService( rockContext ).Get( mediaGuid.Value );
+                if ( mediaElement != null )
+                {
+                    var aggregates = GetWatchAggregates( mediaElement.Id, rockContext );
+                    if ( aggregates.TryGetValue( personId, out var agg ) )
+                    {
+                        watchedSeconds = agg.UnionBits.Count( v => v > 0 );
+                        mapLength = agg.UnionBits.Length;
+                        percent = mapLength > 0 ? ( watchedSeconds * 100.0 / mapLength ) : 0;
+                        maxSingleSession = agg.MaxSingleSession;
+                        sessionCount = agg.SessionCount;
+                    }
+                }
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "Matched", percent >= minPercent },
+                { "Current", ( decimal ) Math.Round( percent, 2 ) },
+                { "Target", ( decimal ) minPercent },
+                { "WatchedPercentage", Math.Round( percent, 2 ) },
+                { "MaxSingleSessionPercentage", Math.Round( maxSingleSession, 2 ) },
+                { "WatchedSeconds", watchedSeconds },
+                { "MapLength", mapLength },
+                { "SessionCount", sessionCount }
+            };
+        }
+
+        /// <inheritdoc/>
         public override List<MergeFieldInfo> GetMergeFields()
         {
             return new List<MergeFieldInfo>

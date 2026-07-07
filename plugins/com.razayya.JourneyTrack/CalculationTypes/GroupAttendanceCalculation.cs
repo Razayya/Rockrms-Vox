@@ -133,6 +133,46 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         }
 
         /// <inheritdoc/>
+        // The summary cache holds counts for everyone with >=1 attendance — the
+        // MinimumCount filter is only applied at lookup — so partial progress
+        // ("3 of 4") is a straight map lookup, no extra query.
+        public override Dictionary<string, object> DescribeProgress(
+            RockContext rockContext,
+            JourneyCalculation calc,
+            int personId )
+        {
+            var groupGuids = calc.GetAttributeValue( AttributeKey.Groups_GroupAttendance )
+                .SplitDelimitedValues()
+                .AsGuidList();
+            var minimumCount = calc.GetAttributeValue( AttributeKey.MinimumCount ).AsIntegerOrNull() ?? 1;
+            var withinDays = calc.GetAttributeValue( AttributeKey.WithinDays ).AsIntegerOrNull() ?? 90;
+
+            int count = 0;
+            System.DateTime? lastAttendance = null;
+
+            if ( groupGuids.Any() )
+            {
+                var attMap = GetAttendanceSummaries( groupGuids, withinDays, rockContext );
+                if ( attMap.TryGetValue( personId, out var summary ) )
+                {
+                    count = summary.AttendanceCount;
+                    lastAttendance = summary.LastAttendanceDate;
+                }
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "Matched", count >= minimumCount },
+                { "Current", ( decimal ) count },
+                { "Target", ( decimal ) minimumCount },
+                { "AttendanceCount", count },
+                { "Remaining", System.Math.Max( 0, minimumCount - count ) },
+                { "WithinDays", withinDays },
+                { "LastAttendanceDate", lastAttendance }
+            };
+        }
+
+        /// <inheritdoc/>
         public override List<MergeFieldInfo> GetMergeFields()
         {
             return new List<MergeFieldInfo>

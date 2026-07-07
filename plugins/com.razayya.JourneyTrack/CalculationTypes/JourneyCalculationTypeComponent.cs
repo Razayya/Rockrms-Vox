@@ -62,6 +62,44 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// </summary>
         public abstract List<MergeFieldInfo> GetMergeFields();
 
+        /// <summary>
+        /// Describes one person's progress toward this JourneyCalculation's requirement.
+        /// Unlike <see cref="Evaluate"/> — which omits non-matching persons entirely — this
+        /// always returns a result, including partial progress for someone who has not yet
+        /// met the requirement (e.g. 3 of 4 attendances). Read-only; never writes sinks.
+        ///
+        /// The returned dictionary always contains:
+        ///   Matched (bool)     - whether the requirement is currently met
+        ///   Current (decimal)  - progress so far, in the requirement's own unit
+        ///   Target  (decimal)  - the configured requirement threshold
+        /// plus any type-specific merge fields (see <see cref="GetMergeFields"/>).
+        ///
+        /// The default implementation evaluates a 1-person population and reports a
+        /// boolean-shaped requirement (Current = Matched ? 1 : 0, Target = 1). Override
+        /// where partial progress is quantifiable (attendance counts, watch percentages).
+        /// </summary>
+        public virtual Dictionary<string, object> DescribeProgress(
+            RockContext rockContext,
+            Model.JourneyCalculation calc,
+            int personId )
+        {
+            var evaluated = Evaluate( rockContext, calc, new HashSet<int> { personId } );
+
+            var progress = evaluated != null && evaluated.TryGetValue( personId, out var mergeFields )
+                ? new Dictionary<string, object>( mergeFields )
+                : new Dictionary<string, object>();
+
+            bool matched = progress.TryGetValue( "Matched", out var matchedValue )
+                && matchedValue is bool matchedBool
+                && matchedBool;
+
+            progress["Matched"] = matched;
+            progress["Current"] = matched ? 1m : 0m;
+            progress["Target"] = 1m;
+
+            return progress;
+        }
+
         #region Static Factory
 
         private static readonly Dictionary<string, Lazy<JourneyCalculationTypeComponent>> _componentsByTypeName =

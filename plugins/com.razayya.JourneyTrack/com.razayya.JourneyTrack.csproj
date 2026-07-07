@@ -94,6 +94,8 @@
     <!-- Lava -->
     <Compile Include="Lava\SyncPersonJourneyTag.cs" />
     <Compile Include="Lava\StageVideosTag.cs" />
+    <Compile Include="Lava\PersonJourneyProgressTag.cs" />
+    <Compile Include="Lava\JourneyCalcProgressTag.cs" />
     <!-- REST -->
     <Compile Include="Rest\JourneyProgramsController.cs" />
     <!-- Migrations -->

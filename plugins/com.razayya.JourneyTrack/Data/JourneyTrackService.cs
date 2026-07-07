@@ -1534,6 +1534,214 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
             return result;
         }
 
+        /// <summary>
+        /// Read-only, per-calculation progress for one person — a uniform merge-field
+        /// dictionary covering every calc type (see JourneyCalculationTypeComponent
+        /// .DescribeProgress for the Matched/Current/Target contract). Unlike a sync,
+        /// this never writes sink attributes, and unlike Evaluate it reports partial
+        /// progress ("3 of 4 attendances") for persons who have not matched yet.
+        /// Consumed by the {% journeycalcprogress %} Lava tag.
+        /// </summary>
+        /// <returns>The progress dictionary, or null when the calculation doesn't exist.</returns>
+        public Dictionary<string, object> GetCalcProgressForPerson( int calculationId, int personId, bool includeStageStatus = false )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var calc = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                    .Include( c => c.CalculationTypeEntityType )
+                    .Include( c => c.Stage )
+                    .FirstOrDefault( c => c.Id == calculationId );
+
+                if ( calc == null )
+                {
+                    return null;
+                }
+
+                var stageStatus = includeStageStatus ? GetStageStatusEntry( calc.Stage, personId ) : null;
+                return BuildCalcProgressEntry( calc, personId, stageStatus, rockContext );
+            }
+        }
+
+        /// <summary>
+        /// Read-only progress for every active calculation in a Stage, ordered by
+        /// calc Order. Same per-entry shape as <see cref="GetCalcProgressForPerson"/>.
+        /// </summary>
+        public List<Dictionary<string, object>> GetStageCalcProgressForPerson( int stageId, int personId, bool includeStageStatus = false )
+        {
+            var entries = new List<Dictionary<string, object>>();
+
+            using ( var rockContext = new RockContext() )
+            {
+                var calcs = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                    .Include( c => c.CalculationTypeEntityType )
+                    .Include( c => c.Stage )
+                    .Where( c => c.StageId == stageId && c.IsActive )
+                    .OrderBy( c => c.Order )
+                    .ThenBy( c => c.Id )
+                    .ToList();
+
+                var stageStatus = includeStageStatus && calcs.Count > 0
+                    ? GetStageStatusEntry( calcs[0].Stage, personId )
+                    : null;
+
+                foreach ( var calc in calcs )
+                {
+                    // Per-calc isolation: one failing component (e.g. a cold-cache SQL
+                    // timeout on a MediaWatched Interaction query) must not kill the
+                    // whole stage list. The failed entry keeps its identity fields and
+                    // carries the innermost error message in "Error".
+                    try
+                    {
+                        entries.Add( BuildCalcProgressEntry( calc, personId, stageStatus, rockContext ) );
+                    }
+                    catch ( Exception ex )
+                    {
+                        entries.Add( new Dictionary<string, object>
+                        {
+                            { "CalcId", calc.Id },
+                            { "CalcGuid", calc.Guid },
+                            { "CalcName", calc.Name },
+                            { "CalcIsActive", calc.IsActive },
+                            { "CalcOrder", calc.Order },
+                            { "StageId", calc.StageId },
+                            { "StageGuid", calc.Stage?.Guid },
+                            { "StageName", calc.Stage?.Name },
+                            { "StageOrder", calc.Stage?.Order ?? 0 },
+                            { "Matched", false },
+                            { "Current", 0m },
+                            { "Target", 1m },
+                            { "ProgressPercent", 0m },
+                            { "Error", GetInnermostMessage( ex ) }
+                        } );
+                    }
+                }
+            }
+
+            return entries;
+        }
+
+        /// <summary>
+        /// Walks to the innermost exception message — EF wraps SQL errors in
+        /// EntityCommandExecutionException whose own message is useless.
+        /// </summary>
+        internal static string GetInnermostMessage( Exception ex )
+        {
+            while ( ex.InnerException != null )
+            {
+                ex = ex.InnerException;
+            }
+            return ex.Message;
+        }
+
+        /// <summary>
+        /// Evaluates the person's whole program (read-only) and picks out the one
+        /// Stage's pass/current entry. Costs a full program evaluation — only run
+        /// when the caller asked for stage status.
+        /// </summary>
+        private StageProgressEntry GetStageStatusEntry( Stage stage, int personId )
+        {
+            if ( stage == null )
+            {
+                return null;
+            }
+
+            var programProgress = GetProgramProgressForPerson( stage.JourneyProgramId, personId );
+            return programProgress.Stages.FirstOrDefault( s => s.StageId == stage.Id );
+        }
+
+        /// <summary>
+        /// Assembles the uniform progress dictionary for one calc + person: calc/stage
+        /// identity, the component's DescribeProgress fields, a clamped ProgressPercent,
+        /// and the sink attribute's current value (when the calc writes one).
+        /// </summary>
+        private Dictionary<string, object> BuildCalcProgressEntry(
+            JourneyCalculation calc,
+            int personId,
+            StageProgressEntry stageStatus,
+            RockContext rockContext )
+        {
+            var entry = new Dictionary<string, object>
+            {
+                { "CalcId", calc.Id },
+                { "CalcGuid", calc.Guid },
+                { "CalcName", calc.Name },
+                { "CalcIsActive", calc.IsActive },
+                { "CalcOrder", calc.Order },
+                { "StageId", calc.StageId },
+                { "StageGuid", calc.Stage?.Guid },
+                { "StageName", calc.Stage?.Name },
+                { "StageOrder", calc.Stage?.Order ?? 0 },
+                { "Matched", false },
+                { "Current", 0m },
+                { "Target", 1m }
+            };
+
+            var component = CalculationTypes.JourneyCalculationTypeComponent.GetComponent( calc.CalculationTypeEntityType?.Name );
+            entry["CalcType"] = component?.Title ?? calc.CalculationTypeEntityType?.FriendlyName;
+
+            if ( component != null )
+            {
+                if ( calc.Attributes == null )
+                {
+                    calc.LoadAttributes( rockContext );
+                }
+
+                var progress = component.DescribeProgress( rockContext, calc, personId );
+                if ( progress != null )
+                {
+                    foreach ( var field in progress )
+                    {
+                        entry[field.Key] = field.Value;
+                    }
+                }
+            }
+
+            // Progress toward the requirement, clamped to 0-100. Matched always
+            // reads 100 even if the component's Current has since drifted below
+            // Target-shaped math (e.g. sticky-skip semantics).
+            bool matched = entry["Matched"] is bool matchedBool && matchedBool;
+            decimal current = ToDecimalSafe( entry["Current"] );
+            decimal target = ToDecimalSafe( entry["Target"] );
+            entry["ProgressPercent"] = matched
+                ? 100m
+                : ( target > 0 ? Math.Min( 100m, Math.Round( current * 100m / target, 1 ) ) : 0m );
+
+            // Current sink attribute value (null for transient calcs).
+            string sinkKey = null;
+            string sinkValue = null;
+            string sinkTextValue = null;
+            if ( calc.PersonAttributeId.HasValue )
+            {
+                sinkKey = AttributeCache.Get( calc.PersonAttributeId.Value )?.Key;
+                var av = new AttributeValueService( rockContext ).GetByAttributeIdAndEntityId( calc.PersonAttributeId.Value, personId );
+                sinkValue = av?.Value;
+                sinkTextValue = string.IsNullOrWhiteSpace( av?.PersistedTextValue ) ? av?.Value : av.PersistedTextValue;
+            }
+            entry["SinkAttributeKey"] = sinkKey;
+            entry["SinkValue"] = sinkValue;
+            entry["SinkTextValue"] = sinkTextValue;
+
+            if ( stageStatus != null )
+            {
+                entry["StagePassed"] = stageStatus.Passed;
+                entry["StageIsCurrent"] = stageStatus.IsCurrent;
+            }
+
+            return entry;
+        }
+
+        private static decimal ToDecimalSafe( object value )
+        {
+            try
+            {
+                return Convert.ToDecimal( value );
+            }
+            catch
+            {
+                return 0m;
+            }
+        }
+
         #endregion
 
         #region Program-level rollup + housekeeping
