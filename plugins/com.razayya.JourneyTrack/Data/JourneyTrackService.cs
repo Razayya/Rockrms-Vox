@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Data.Entity;
 using System.Linq;
 
+using Newtonsoft.Json;
+
 using com.razayya.JourneyTrack.CalculationTypes;
 using com.razayya.JourneyTrack.Logic;
 using com.razayya.JourneyTrack.Model;
@@ -170,6 +172,7 @@ namespace com.razayya.JourneyTrack.Data
                     .ToList();
 
                 var subGroupPassers = new Dictionary<int, HashSet<int>>();
+                var erroredStageIds = new HashSet<int>();
 
                 foreach ( var subGroup in subGroups )
                 {
@@ -178,13 +181,24 @@ namespace com.razayya.JourneyTrack.Data
                         var subResult = ProcessSubGroupInternal( subGroup, singlePersonPopulation, subGroupPassers, rockContext );
                         result.Merge( subResult.Result );
                         subGroupPassers[subGroup.Id] = subResult.Passers;
+                        if ( subResult.EvaluationFailed )
+                        {
+                            erroredStageIds.Add( subGroup.Id );
+                        }
                     }
                     catch ( Exception ex )
                     {
                         result.Errors.Add( $"SubGroup '{subGroup.Name}': {ex.Message}" );
                         subGroupPassers[subGroup.Id] = singlePersonPopulation;
+                        erroredStageIds.Add( subGroup.Id );
                     }
                 }
+
+                // Persist the evaluated stages' pass state onto the enrollment row so read
+                // surfaces (personjourneyprogress) serve stored state instead of re-running
+                // the engine. Stage-scoped syncs merge only the stages they evaluated;
+                // errored stages are excluded (their passer sets are fail-open).
+                WriteEnrollmentStageStatusForPerson( group.Id, personId, subGroupPassers, erroredStageIds, result, rockContext );
 
                 // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries).
                 // Only safe when every Stage has been evaluated — a partial stagePassers map would
@@ -239,6 +253,7 @@ namespace com.razayya.JourneyTrack.Data
                     .ToList();
 
                 var subGroupPassers = new Dictionary<int, HashSet<int>>();
+                var erroredStageIds = new HashSet<int>();
                 var progSummary = new ProgramRunSummary { ProgramName = group.Name, Enrollees = basePopulation.Count };
 
                 int stageIndex = 0;
@@ -250,6 +265,10 @@ namespace com.razayya.JourneyTrack.Data
                         var subResult = ProcessSubGroupInternal( subGroup, basePopulation, subGroupPassers, rockContext, stageIndex, subGroups.Count );
                         result.Merge( subResult.Result );
                         subGroupPassers[subGroup.Id] = subResult.Passers;
+                        if ( subResult.EvaluationFailed )
+                        {
+                            erroredStageIds.Add( subGroup.Id );
+                        }
                         if ( subResult.Summary != null )
                         {
                             progSummary.Stages.Add( subResult.Summary );
@@ -259,11 +278,17 @@ namespace com.razayya.JourneyTrack.Data
                     {
                         result.Errors.Add( $"SubGroup '{subGroup.Name}': {ex.Message}" );
                         subGroupPassers[subGroup.Id] = basePopulation;
+                        erroredStageIds.Add( subGroup.Id );
                     }
                 }
 
                 // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries)
                 WriteProgramRollup( group, basePopulation, subGroupPassers, result, rockContext, progSummary );
+
+                // Persist per-stage state for the whole population so render-path reads
+                // (personjourneyprogress) stay a single-row lookup for every enrollee.
+                Report( $"Program '{group.Name}': persisting enrollment stage status" );
+                WriteEnrollmentStageStatusBulk( group, basePopulation, subGroupPassers, erroredStageIds, result, rockContext );
                 result.ProgramSummaries.Add( progSummary );
 
                 group.LastRunDateTime = RockDateTime.Now;
@@ -565,7 +590,8 @@ namespace com.razayya.JourneyTrack.Data
                         return new SubGroupProcessResult
                         {
                             Result = result,
-                            Passers = basePopulation
+                            Passers = basePopulation,
+                            EvaluationFailed = true
                         };
                     }
                 }
@@ -1523,6 +1549,12 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
             public SyncResult Result { get; set; }
             public HashSet<int> Passers { get; set; }
             public StageRunSummary Summary { get; set; }
+            /// <summary>
+            /// True when the stage's evaluation failed and Passers is a fail-open
+            /// placeholder (kept so prerequisites don't hard-block). Callers must
+            /// not persist these passer sets as real state.
+            /// </summary>
+            public bool EvaluationFailed { get; set; }
         }
 
         private class AttributeWrite
@@ -1542,7 +1574,7 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
         /// AttributeValues. Designed for the Person Profile progress block (WP9) - a
         /// single page-load should clock well under 50ms even with 10 Stages.
         /// </summary>
-        public ProgramProgressResult GetProgramProgressForPerson( int programId, int personId )
+        public ProgramProgressResult GetProgramProgressForPerson( int programId, int personId, bool forceLive = false )
         {
             var result = new ProgramProgressResult { PersonId = personId, ProgramId = programId };
             _suppressNoChangeRunLogs = true;
@@ -1564,7 +1596,49 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                     .ThenBy( s => s.Name )
                     .ToList();
 
+                // Fast path: serve the engine-maintained enrollment state (one indexed row
+                // read) instead of re-running every calc. Only complete state is served —
+                // a stage added since the person's last sync forces one live pass, which
+                // then persists the fuller map below (self-healing).
+                if ( !forceLive )
+                {
+                    var storedJson = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                        .Where( e => e.JourneyProgramId == program.Id && e.IsActive && e.PersonAlias.PersonId == personId )
+                        .OrderBy( e => e.Id )
+                        .Select( e => e.StageStatusJson )
+                        .FirstOrDefault();
+
+                    var storedState = ParseStageStatus( storedJson );
+                    if ( storedState.Count > 0 && stages.All( s => storedState.ContainsKey( s.Id ) ) )
+                    {
+                        bool sawIncompleteStored = false;
+                        foreach ( var stage in stages )
+                        {
+                            var entry = new StageProgressEntry
+                            {
+                                StageId = stage.Id,
+                                StageName = stage.Name,
+                                Order = stage.Order,
+                                Passed = storedState[stage.Id]
+                            };
+                            if ( !entry.Passed && !sawIncompleteStored )
+                            {
+                                entry.IsCurrent = true;
+                                sawIncompleteStored = true;
+                            }
+                            result.Stages.Add( entry );
+                        }
+
+                        result.AllPassed = result.Stages.Count > 0 && result.Stages.All( s => s.Passed );
+                        result.FromStoredState = true;
+                        return result;
+                    }
+                }
+
+                // Live path (no or incomplete stored state): evaluate every stage, then
+                // persist what was computed so the next render takes the fast path.
                 var stagePassers = new Dictionary<int, HashSet<int>>();
+                var erroredStageIds = new HashSet<int>();
                 bool sawIncomplete = false;
 
                 foreach ( var stage in stages )
@@ -1576,12 +1650,17 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                         var subResult = ProcessSubGroupInternal( stage, population, stagePassers, rockContext );
                         stagePassers[stage.Id] = subResult.Passers;
                         stageEntry.Passed = subResult.Passers.Contains( personId );
+                        if ( subResult.EvaluationFailed )
+                        {
+                            erroredStageIds.Add( stage.Id );
+                        }
                     }
                     catch ( Exception ex )
                     {
                         stageEntry.Passed = false;
                         stageEntry.ErrorMessage = ex.Message;
                         stagePassers[stage.Id] = population;
+                        erroredStageIds.Add( stage.Id );
                     }
 
                     if ( !stageEntry.Passed && !sawIncomplete )
@@ -1594,6 +1673,8 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                 }
 
                 result.AllPassed = result.Stages.Count > 0 && result.Stages.All( s => s.Passed );
+
+                WriteEnrollmentStageStatusForPerson( program.Id, personId, stagePassers, erroredStageIds, new SyncResult(), rockContext );
             }
 
             return result;
@@ -1921,6 +2002,160 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
         }
 
         /// <summary>
+        /// Merges the given per-stage passer sets into the person's enrollment
+        /// StageStatusJson ({stageId: passed} map). Presence-gated: a person with no
+        /// active enrollment row gets nothing persisted, and read surfaces fall back
+        /// to a live evaluation. Stages in <paramref name="erroredStageIds"/> are
+        /// skipped — their passer sets are fail-open placeholders, not real passes.
+        /// </summary>
+        private void WriteEnrollmentStageStatusForPerson(
+            int programId,
+            int personId,
+            Dictionary<int, HashSet<int>> stagePassers,
+            HashSet<int> erroredStageIds,
+            SyncResult result,
+            RockContext rockContext )
+        {
+            if ( stagePassers == null || stagePassers.Count == 0 )
+            {
+                return;
+            }
+
+            try
+            {
+                var enrollment = new JourneyProgramEnrollmentService( rockContext ).Queryable()
+                    .Where( e => e.JourneyProgramId == programId && e.IsActive && e.PersonAlias.PersonId == personId )
+                    .OrderBy( e => e.Id )
+                    .FirstOrDefault();
+                if ( enrollment == null )
+                {
+                    return;
+                }
+
+                var state = ParseStageStatus( enrollment.StageStatusJson );
+                foreach ( var kv in stagePassers )
+                {
+                    if ( erroredStageIds != null && erroredStageIds.Contains( kv.Key ) )
+                    {
+                        continue;
+                    }
+                    state[kv.Key] = kv.Value != null && kv.Value.Contains( personId );
+                }
+
+                var newJson = JsonConvert.SerializeObject( state );
+                if ( !string.Equals( newJson, enrollment.StageStatusJson ) )
+                {
+                    enrollment.StageStatusJson = newJson;
+                    enrollment.StageStatusModifiedDateTime = RockDateTime.Now;
+                    rockContext.SaveChanges();
+                }
+            }
+            catch ( Exception ex )
+            {
+                result.Errors.Add( $"Failed to persist enrollment stage status: {ex.Message}" );
+                ExceptionLogService.LogException( ex );
+            }
+        }
+
+        /// <summary>
+        /// Full-population variant: merges the run's stage passer sets into every
+        /// enrolled person's StageStatusJson. Diff-gated (only changed rows written)
+        /// and chunked as VALUES-join UPDATEs — the JSON differs per person, so
+        /// there's no value-grouping to exploit like the attribute bulk writer has.
+        /// </summary>
+        private void WriteEnrollmentStageStatusBulk(
+            JourneyProgram program,
+            HashSet<int> basePopulation,
+            Dictionary<int, HashSet<int>> stagePassers,
+            HashSet<int> erroredStageIds,
+            SyncResult result,
+            RockContext rockContext )
+        {
+            if ( stagePassers == null || stagePassers.Count == 0 || basePopulation.Count == 0 )
+            {
+                return;
+            }
+
+            try
+            {
+                // One row per person: lowest active row Id wins (mirrors the single-person path).
+                var rows = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                    .Where( e => e.JourneyProgramId == program.Id && e.IsActive )
+                    .Select( e => new { e.Id, e.PersonAlias.PersonId, e.StageStatusJson } )
+                    .ToList()
+                    .GroupBy( r => r.PersonId )
+                    .Select( g => g.OrderBy( r => r.Id ).First() )
+                    .ToList();
+
+                var pending = new List<(int Id, string Json)>();
+                foreach ( var row in rows )
+                {
+                    if ( !basePopulation.Contains( row.PersonId ) )
+                    {
+                        continue;
+                    }
+
+                    var state = ParseStageStatus( row.StageStatusJson );
+                    foreach ( var kv in stagePassers )
+                    {
+                        if ( erroredStageIds != null && erroredStageIds.Contains( kv.Key ) )
+                        {
+                            continue;
+                        }
+                        state[kv.Key] = kv.Value != null && kv.Value.Contains( row.PersonId );
+                    }
+
+                    var newJson = JsonConvert.SerializeObject( state );
+                    if ( !string.Equals( newJson, row.StageStatusJson ) )
+                    {
+                        pending.Add( (row.Id, newJson) );
+                    }
+                }
+
+                int written = 0;
+                var stamp = RockDateTime.Now.ToString( "yyyy-MM-ddTHH:mm:ss.fff" );
+                const int chunkSize = 500;
+                for ( int i = 0; i < pending.Count; i += chunkSize )
+                {
+                    var chunk = pending.Skip( i ).Take( chunkSize );
+                    var values = string.Join( ",", chunk.Select( p => $"({p.Id}, N'{p.Json.Replace( "'", "''" )}')" ) );
+                    var sql = $@"
+UPDATE e SET [StageStatusJson] = v.[Json], [StageStatusModifiedDateTime] = '{stamp}'
+FROM [_com_razayya_JourneyTrack_JourneyProgramEnrollment] e
+INNER JOIN ( VALUES {values} ) AS v ([Id], [Json]) ON v.[Id] = e.[Id]";
+                    written += rockContext.Database.ExecuteSqlCommand( sql );
+                }
+
+                if ( pending.Count > 0 )
+                {
+                    result.Log.Add( $"  Enrollment stage status '{program.Name}': {written}/{rows.Count} row(s) updated." );
+                }
+            }
+            catch ( Exception ex )
+            {
+                result.Errors.Add( $"Failed to persist enrollment stage status (bulk): {ex.Message}" );
+                ExceptionLogService.LogException( ex );
+            }
+        }
+
+        /// <summary>Parses a StageStatusJson map, returning an empty map for null/invalid input.</summary>
+        private static Dictionary<int, bool> ParseStageStatus( string json )
+        {
+            if ( string.IsNullOrWhiteSpace( json ) )
+            {
+                return new Dictionary<int, bool>();
+            }
+            try
+            {
+                return JsonConvert.DeserializeObject<Dictionary<int, bool>>( json ) ?? new Dictionary<int, bool>();
+            }
+            catch
+            {
+                return new Dictionary<int, bool>();
+            }
+        }
+
+        /// <summary>
         /// Invalidates the AttributeValue side of Rock's cache so the freshly written values
         /// surface immediately. Optimization O8 - one call at end of run.
         ///
@@ -2066,6 +2301,8 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
         public int PersonId { get; set; }
         public bool NotFound { get; set; }
         public bool AllPassed { get; set; }
+        /// <summary>True when served from persisted enrollment stage status; false = live engine evaluation.</summary>
+        public bool FromStoredState { get; set; }
         public List<StageProgressEntry> Stages { get; set; } = new List<StageProgressEntry>();
     }
 

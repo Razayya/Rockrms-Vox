@@ -43,6 +43,8 @@ namespace com.razayya.JourneyTrack.Lava
             public const string PersonId        = "personid";
             public const string PersonAliasGuid = "personaliasguid";
             public const string Capture         = "capture";
+            /// <summary>live:'true' bypasses the persisted enrollment state and forces a full engine evaluation (debug/validation).</summary>
+            public const string Live            = "live";
         }
 
         public override void OnRender( ILavaRenderContext context, TextWriter result )
@@ -114,7 +116,8 @@ namespace com.razayya.JourneyTrack.Lava
                 }
 
                 var service = new JourneyTrackService();
-                var progress = service.GetProgramProgressForPerson( program.Id, personId.Value );
+                var forceLive = parms.GetValueOrNull( P.Live ).AsBoolean();
+                var progress = service.GetProgramProgressForPerson( program.Id, personId.Value, forceLive );
 
                 // Bind an ordered list of plain dictionaries (Fluid renders these directly;
                 // mirrors the capture shape used by {% syncpersonjourney %}).
@@ -133,6 +136,9 @@ namespace com.razayya.JourneyTrack.Lava
                 }
 
                 context.SetMergeField( captureVar, items );
+                // Debug aid: was this served from persisted enrollment state or a live
+                // engine evaluation? Render <captureVar>Source in the perf panel.
+                context.SetMergeField( captureVar + "Source", progress.FromStoredState ? "stored" : "live" );
             }
             catch ( System.Exception ex )
             {

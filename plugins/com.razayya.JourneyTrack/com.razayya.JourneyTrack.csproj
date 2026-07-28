@@ -113,6 +113,7 @@
     <Compile Include="Migrations\012_RegisterGroupAttendanceCalc.cs" />
     <Compile Include="Migrations\013_AddStageMediaGroups.cs" />
     <Compile Include="Migrations\014_AddSkipFilter.cs" />
+    <Compile Include="Migrations\015_AddEnrollmentStageStatus.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
