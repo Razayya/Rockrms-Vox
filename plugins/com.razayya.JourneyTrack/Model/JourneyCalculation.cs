@@ -105,6 +105,25 @@ namespace com.razayya.JourneyTrack.Model
         [DataMember]
         public bool SkipIfTargetHasValue { get; set; }
 
+        /// <summary>
+        /// Optional PersonFilter-style "Skip If" conditions (same FilterConditions JSON shape as
+        /// <see cref="com.razayya.JourneyTrack.CalculationTypes.PersonFilterCalculation"/>). When a
+        /// person matches, this calculation is SKIPPED for them: they are folded into the matched
+        /// set (so they pass for stage completion and all downstream set-based gating), are excluded
+        /// from the component evaluation (performance), and the sink attribute is left blank. Null /
+        /// blank = no skip logic at all — the engine presence-gates on this, so unconfigured calcs
+        /// incur zero extra work.
+        /// </summary>
+        [DataMember]
+        public string SkipFilterJson { get; set; }
+
+        /// <summary>
+        /// When true (default) ALL <see cref="SkipFilterJson"/> conditions must match to skip (AND);
+        /// when false ANY matching condition skips (OR). Mirrors PersonFilter's "Match All".
+        /// </summary>
+        [DataMember]
+        public bool SkipFilterMatchAll { get; set; } = true;
+
         #endregion
 
         #region Navigation Properties

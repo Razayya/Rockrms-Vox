@@ -133,6 +133,19 @@
                         <jt:GroupAttendancePicker    ID="gaEditor" runat="server" Visible="false" />
                     </asp:Panel>
 
+                    <%-- Skip If: optional PersonFilter-style override, applies to EVERY calc type. People
+                         matching these conditions are skipped — counted as passed for stage completion,
+                         shown as "Skipped" in the progress block, with the target attribute left blank. --%>
+                    <asp:Panel ID="pnlSkipIf" runat="server" CssClass="well">
+                        <h5><i class="fa fa-forward"></i> Skip If <small class="text-muted">(optional)</small></h5>
+                        <p class="help-block">
+                            People matching these conditions are <strong>skipped</strong> for this calculation:
+                            they count as completed for stage progress (shown as &ldquo;Skipped&rdquo;), are not
+                            re-evaluated, and their target attribute is left blank. Leave empty for no skip logic.
+                        </p>
+                        <jt:FilterConditionsEditor ID="fcSkip" runat="server" />
+                    </asp:Panel>
+
                     <hr />
                     <h4>Result Configuration</h4>
 

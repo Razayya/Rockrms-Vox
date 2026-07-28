@@ -831,17 +831,49 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
-            // Short-circuit when sticky-skip drained the population entirely.
-            if ( workingPopulationForEval.Count == 0 && skippedCount > 0 )
+            // Skip Logic: presence-gated per-calc "Skip If" (PersonFilter-style). People matching the
+            // skip conditions are removed from the component evaluation (perf) and folded into the matched
+            // set below — so they PASS for stage completion and all set-based downstream gating — while
+            // their sink attribute is left blank. Only calcs with a non-empty SkipFilterJson do any work,
+            // so unconfigured calcs (the vast majority) are byte-for-byte the previous behavior.
+            HashSet<int> skipFilterMatchedIds = null;
+            if ( !string.IsNullOrWhiteSpace( calc.SkipFilterJson ) && workingPopulationForEval.Count > 0 )
             {
-                result.Log.Add( $"    JourneyCalculation '{calc.Name}': 0/{workingPopulation.Count} evaluated (sticky-skipped {skippedCount} already-set)" );
-                RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, 0, result );
+                var skipMatched = PersonFilterCalculation.EvaluatePopulation(
+                    calc.SkipFilterJson, calc.SkipFilterMatchAll, workingPopulationForEval, rockContext );
+                if ( skipMatched.Count > 0 )
+                {
+                    skipFilterMatchedIds = skipMatched;
+                    if ( ReferenceEquals( workingPopulationForEval, workingPopulation ) )
+                    {
+                        workingPopulationForEval = new HashSet<int>( workingPopulation );
+                    }
+                    workingPopulationForEval.ExceptWith( skipFilterMatchedIds );
+                }
+            }
+
+            // Short-circuit when sticky-skip / skip-filter drained the population entirely. Skip-filtered
+            // people still count as passed, so fold them into the matched set before returning.
+            if ( workingPopulationForEval.Count == 0 && ( skippedCount > 0 || skipFilterMatchedIds != null ) )
+            {
+                if ( skipFilterMatchedIds != null )
+                {
+                    result.MatchedPersonIds = new HashSet<int>( skipFilterMatchedIds );
+                }
+                result.Log.Add( $"    JourneyCalculation '{calc.Name}': 0/{workingPopulation.Count} evaluated (sticky-skipped {skippedCount}, skip-filtered {( skipFilterMatchedIds?.Count ?? 0 )})" );
+                RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, ( skipFilterMatchedIds?.Count ?? 0 ), result );
                 return result;
             }
 
             var matchedResults = component.Evaluate( rockContext, calc, workingPopulationForEval );
 
             result.MatchedPersonIds = new HashSet<int>( matchedResults.Keys );
+
+            // Fold skip-filtered people into the matched set (they pass without a sink write).
+            if ( skipFilterMatchedIds != null )
+            {
+                result.MatchedPersonIds.UnionWith( skipFilterMatchedIds );
+            }
             if ( skippedCount > 0 )
             {
                 result.Log.Add( $"    JourneyCalculation '{calc.Name}': {matchedResults.Count}/{workingPopulationForEval.Count} matched (sticky-skipped {skippedCount} already-set)" );
@@ -891,6 +923,12 @@ namespace com.razayya.JourneyTrack.Data
 
             foreach ( var personId in workingPopulation )
             {
+                // Skip-filtered people pass via the matched set but get NO sink write (left blank).
+                if ( skipFilterMatchedIds != null && skipFilterMatchedIds.Contains( personId ) )
+                {
+                    continue;
+                }
+
                 string newValue = null;
 
                 if ( matchedResults.TryGetValue( personId, out var mergeFields ) )

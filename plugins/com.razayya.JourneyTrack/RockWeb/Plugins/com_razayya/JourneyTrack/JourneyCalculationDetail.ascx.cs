@@ -155,6 +155,12 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 calc.SkipIfTargetHasValue = cbSkipIfTargetHasValue.Checked;
                 calc.OnMatchSystemCommunicationId = ddlOnMatchCommunication.SelectedValueAsInt();
 
+                // Skip If (optional, all calc types). Blank → null so the engine's presence-gate treats
+                // the calc as having no skip logic (zero overhead). Stored on the model, not an attribute.
+                var skipJson = fcSkip.Value;
+                calc.SkipFilterJson = ( string.IsNullOrWhiteSpace( skipJson ) || skipJson.Trim() == "[]" ) ? null : skipJson;
+                calc.SkipFilterMatchAll = fcSkip.GetMatchAll();
+
                 if ( calc.NoMatchBehavior == NoMatchBehavior.WriteLava && string.IsNullOrWhiteSpace( calc.NoMatchLavaTemplate ) )
                 {
                     nbWarning.Text = "A No Match Lava Template is required when No Match Behavior is set to 'Write Lava Value'.";
@@ -197,6 +203,15 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 {
                     editorErrors = gaEditor.GetValidationErrors();
                 }
+
+                // The Skip If editor is present for every calc type — validate it too.
+                var skipErrors = fcSkip.GetValidationErrors();
+                if ( skipErrors != null && skipErrors.Count > 0 )
+                {
+                    editorErrors = editorErrors ?? new List<string>();
+                    foreach ( var s in skipErrors ) { editorErrors.Add( "Skip If: " + s ); }
+                }
+
                 if ( editorErrors != null && editorErrors.Count > 0 )
                 {
                     nbWarning.Text = "<strong>Please fix the following before saving:</strong><ul><li>"
@@ -731,6 +746,14 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     {
                         gaEditor.Value = calc.GetAttributeValue( "Groups_GroupAttendance" );
                     }
+                }
+
+                // Skip If (all calc types). Seed from the model unless the editor already holds
+                // in-session rows (preserve user edits across calc-type toggles, like the others).
+                if ( !fcSkip.HasInSessionState )
+                {
+                    fcSkip.Value = calc.SkipFilterJson;
+                    fcSkip.SetMatchAll( calc.SkipFilterMatchAll );
                 }
 
                 Rock.Attribute.Helper.AddEditControls( calc, phComponentAttributes, true, BlockValidationGroup, excludeKeys );

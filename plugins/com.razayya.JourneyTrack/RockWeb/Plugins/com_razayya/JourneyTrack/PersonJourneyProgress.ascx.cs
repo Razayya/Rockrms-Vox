@@ -286,7 +286,22 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     // value (incl. "True"/"False") shows the attribute's PersistedTextValue — generic on
                     // presence, not field type (falls back to the raw value if no persisted text yet).
                     string valueCell = string.Empty;
-                    if ( calc.PersonAttributeId.HasValue
+
+                    // Skipped? If this calc has a "Skip If" filter and the person matches it, show
+                    // "Skipped" — the calc passed via the skip and the sink was left blank. Presence-
+                    // gated: unconfigured calcs do no work here.
+                    if ( !string.IsNullOrWhiteSpace( calc.SkipFilterJson ) )
+                    {
+                        var skipMatch = com.razayya.JourneyTrack.CalculationTypes.PersonFilterCalculation.EvaluatePopulation(
+                            calc.SkipFilterJson, calc.SkipFilterMatchAll, new System.Collections.Generic.HashSet<int> { Person.Id }, rockContext );
+                        if ( skipMatch.Contains( Person.Id ) )
+                        {
+                            valueCell = "<span class='jp-skipped'>Skipped</span>";
+                        }
+                    }
+
+                    if ( string.IsNullOrWhiteSpace( valueCell )
+                        && calc.PersonAttributeId.HasValue
                         && avValue.TryGetValue( calc.PersonAttributeId.Value, out var v )
                         && !string.IsNullOrWhiteSpace( v ) )
                     {
@@ -393,6 +408,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 .jp-target{color:#374151;}
 .jp-target.transient{color:#9ca3af;font-style:italic;}
 .jp-val{font-weight:700;color:#111827;}
+.jp-skipped{display:inline-block;font-size:.66rem;font-weight:700;padding:.15rem .55rem;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;background:#fde68a;color:#92400e;}
 </style>";
         }
     }
