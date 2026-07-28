@@ -90,8 +90,12 @@ namespace com.razayya.JourneyTrack.Data
         /// <paramref name="groupRef"/> (optional) narrows the result to a single Media Group
         /// sequence, addressed by the group's Name or Key (or the literal "default" for the
         /// ungrouped sequence). Blank returns every sequence.
+        ///
+        /// <paramref name="showCompletedOnly"/> (optional) keeps only the videos the person has
+        /// completed (<see cref="StageVideoItem.Matched"/> — watched to the calc's threshold),
+        /// e.g. for a "completed" carousel. Default (false) returns the full active/sequenced set.
         /// </summary>
-        public static List<StageVideoItem> GetForStageAndPerson( Guid stageGuid, int personId, RockContext rockContext, string groupRef = null )
+        public static List<StageVideoItem> GetForStageAndPerson( Guid stageGuid, int personId, RockContext rockContext, string groupRef = null, bool showCompletedOnly = false )
         {
             var output = new List<StageVideoItem>();
             if ( rockContext == null )
@@ -276,7 +280,18 @@ namespace com.razayya.JourneyTrack.Data
             // Optional: narrow to a single sequence, addressed by group Name or Key. Lock
             // state is computed per-sequence, so post-filtering the already-sequenced list
             // keeps each kept item's correct lock/availability.
-            return FilterToGroup( sequenced, groupRef );
+            var filtered = FilterToGroup( sequenced, groupRef );
+
+            // Optional: keep only the videos the person has completed (Matched == watched to the
+            // calc threshold) — e.g. for a "completed" carousel. Default returns the full set so
+            // existing callers (and the "Up Next" surface, which picks the first available item)
+            // are unaffected.
+            if ( showCompletedOnly )
+            {
+                filtered = filtered.Where( it => it.Matched ).ToList();
+            }
+
+            return filtered;
         }
 
         /// <summary>Sequence key used for every video that isn't in a named Media Group.</summary>
