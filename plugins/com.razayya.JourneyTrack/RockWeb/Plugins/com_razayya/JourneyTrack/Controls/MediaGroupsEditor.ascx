@@ -31,8 +31,12 @@
             <%-- Media item drawer (right) --%>
             <div class="col-md-5">
                 <div class="panel panel-default jt-mg-palette-panel">
-                    <div class="panel-heading">
-                        <h4 class="panel-title"><i class="fa fa-film"></i> Media Items</h4>
+                    <div class="panel-heading clearfix">
+                        <h4 class="panel-title" style="display:inline-block;"><i class="fa fa-film"></i> Media Items</h4>
+                        <button type="button" class="btn btn-default btn-xs js-mg-copy-shortcode pull-right" data-group="default"
+                            title="Copy the stagevideos shortcode for the default (ungrouped) sequence">
+                            <i class="fa fa-clipboard"></i> Copy Shortcode
+                        </button>
                     </div>
                     <div class="panel-body">
                         <ul class="jt-mg-list js-mg-palette">

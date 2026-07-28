@@ -77,6 +77,19 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             return _calcs;
         }
 
+        /// <summary>The Stage's Guid (for the copy-shortcode buttons). Empty when unset.</summary>
+        private Guid GetStageGuid()
+        {
+            if ( StageId <= 0 ) return Guid.Empty;
+            using ( var rockContext = new RockContext() )
+            {
+                return new StageService( rockContext ).Queryable().AsNoTracking()
+                    .Where( s => s.Id == StageId )
+                    .Select( s => s.Guid )
+                    .FirstOrDefault();
+            }
+        }
+
         #endregion
 
         protected override void OnPreRender( EventArgs e )
@@ -90,6 +103,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
 
         private void RenderEditor()
         {
+            // Stamp the editor with its Stage Guid so the copy-shortcode buttons can build a
+            // ready-to-paste {[ stagevideos ]} for this Stage (read client-side from data-stage-guid).
+            pnlEditor.Attributes["data-stage-guid"] = GetStageGuid().ToString();
+
             var calcs = GetMediaCalcs();
             var calcById = calcs.ToDictionary( c => c.Id );
             var config = StageMediaGroups.Parse( hfLayout.Value );
@@ -122,7 +139,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         {
             return string.Format(
                 "<li class=\"jt-mg-item\" data-calc-id=\"{0}\">" +
-                  "<i class=\"ti ti-menu-2 jt-mg-item-handle\"></i>" +
+                  "<i class=\"fa fa-bars jt-mg-item-handle\"></i>" +
                   "<i class=\"fa fa-video jt-mg-item-icon\"></i>" +
                   "<span class=\"jt-mg-item-name\">{1}</span>" +
                 "</li>",
@@ -144,8 +161,9 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             return string.Format(
                 "<div class=\"panel panel-widget js-mg-group jt-mg-group\" data-key=\"{0}\">" +
                   "<div class=\"panel-heading jt-mg-group-head\">" +
-                    "<i class=\"ti ti-menu-2 jt-mg-group-handle\" title=\"Reorder group\"></i>" +
+                    "<i class=\"fa fa-bars jt-mg-group-handle\" title=\"Reorder group\"></i>" +
                     "<input type=\"text\" class=\"js-mg-group-name jt-mg-group-name\" placeholder=\"Group name\" value=\"{1}\" />" +
+                    "<button type=\"button\" class=\"btn btn-default btn-xs js-mg-copy-shortcode\" title=\"Copy the stagevideos shortcode for this group\"><i class=\"fa fa-clipboard\"></i></button>" +
                     "<button type=\"button\" class=\"btn btn-danger btn-xs js-mg-remove-group\" title=\"Remove group\"><i class=\"fa fa-times\"></i></button>" +
                   "</div>" +
                   "<div class=\"panel-body\"><ul class=\"jt-mg-list\">{2}</ul></div>" +
@@ -218,8 +236,9 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
         var key = 'g' + (new Date().getTime());
         var $panel = $('<div>').addClass('panel panel-widget js-mg-group jt-mg-group').attr('data-key', key);
         var $head = $('<div>').addClass('panel-heading jt-mg-group-head');
-        $head.append($('<i>').addClass('ti ti-menu-2 jt-mg-group-handle').attr('title', 'Reorder group'));
+        $head.append($('<i>').addClass('fa fa-bars jt-mg-group-handle').attr('title', 'Reorder group'));
         $head.append($('<input>').attr('type', 'text').addClass('js-mg-group-name jt-mg-group-name').attr('placeholder', 'Group name'));
+        $head.append($('<button>').attr('type', 'button').addClass('btn btn-default btn-xs js-mg-copy-shortcode').attr('title', 'Copy the stagevideos shortcode for this group').append($('<i>').addClass('fa fa-clipboard')));
         $head.append($('<button>').attr('type', 'button').addClass('btn btn-danger btn-xs js-mg-remove-group').attr('title', 'Remove group').append($('<i>').addClass('fa fa-times')));
         var $body = $('<div>').addClass('panel-body').append($('<ul>').addClass('jt-mg-list'));
         $panel.append($head).append($body);
@@ -245,6 +264,37 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack.Controls
             })
             .on('keyup.jtmg change.jtmg', '.js-mg-group-name', function () {
                 window.jtMgSerialize($(this).closest('.jt-mg-editor'));
+            })
+            .on('click.jtmg', '.js-mg-copy-shortcode', function (e) {
+                e.preventDefault();
+                var $btn = $(this);
+                var $ed = $btn.closest('.jt-mg-editor');
+                var q = String.fromCharCode(39);
+                var stageGuid = $ed.attr('data-stage-guid') || '';
+                var grp = $btn.attr('data-group');
+                if (!grp) {
+                    var $g = $btn.closest('.js-mg-group');
+                    grp = ($g.find('.js-mg-group-name').val() || $g.attr('data-key') || '').replace(/^\s+|\s+$/g, '');
+                }
+                var sc = '{[ stagevideos stage:' + q + stageGuid + q
+                    + ' personid:' + q + '{{ CurrentPerson.Id }}' + q
+                    + ' personaliasguid:' + q + q
+                    + ' group:' + q + grp + q
+                    + ' showcompleted:' + q + 'false' + q + ' ]}';
+                var done = function () {
+                    var html = $btn.html();
+                    $btn.html('<i class=' + q + 'fa fa-check' + q + '></i> Copied');
+                    setTimeout(function () { $btn.html(html); }, 1500);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(sc).then(done, done);
+                } else {
+                    var $t = $('<textarea>').css({ position: 'absolute', left: '-9999px' }).val(sc).appendTo('body');
+                    $t[0].select();
+                    try { document.execCommand('copy'); } catch (err) {}
+                    $t.remove();
+                    done();
+                }
             });
         if (window.Sys && Sys.Application) {
             Sys.Application.add_load(function () { window.jtMgInit(); });
