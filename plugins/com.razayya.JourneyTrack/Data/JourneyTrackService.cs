@@ -141,7 +141,95 @@ namespace com.razayya.JourneyTrack.Data
                     r.Errors.Add( $"Stage Id {stageId} ('{stage.Name}') is inactive." );
                     return r;
                 }
+
+                // Fast path: seed prerequisite gating from the person's stored stage
+                // status and evaluate ONLY the target stage — the upstream cascade is
+                // exactly what the stored state already answers. Falls back to the full
+                // cascade when stored state is missing/incomplete (which also warms it).
+                var seeded = TryProcessStageSeededForPerson( stage, personId );
+                if ( seeded != null )
+                {
+                    return seeded;
+                }
+
                 return ProcessProgramForPersonInternal( stage.JourneyProgramId, personId, maxStageOrder: stage.Order );
+            }
+        }
+
+        /// <summary>
+        /// Stage-scoped single-person sync that seeds every earlier stage's pass state
+        /// from the enrollment's StageStatusJson instead of re-evaluating the cascade,
+        /// then evaluates just the target stage and merges its result back into the
+        /// stored state. Earlier-stage staleness is bounded by the nightly full run and
+        /// by each stage page syncing its own stage on open. Returns null when the
+        /// person has no stored state covering every earlier active stage — the caller
+        /// falls back to the full cascade.
+        /// </summary>
+        private SyncResult TryProcessStageSeededForPerson( Stage targetStage, int personId )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var storedJson = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                    .Where( e => e.JourneyProgramId == targetStage.JourneyProgramId && e.IsActive && e.PersonAlias.PersonId == personId )
+                    .OrderBy( e => e.Id )
+                    .Select( e => e.StageStatusJson )
+                    .FirstOrDefault();
+
+                var state = ParseStageStatus( storedJson );
+                if ( state.Count == 0 )
+                {
+                    return null;
+                }
+
+                // Every earlier active stage (cascade order: Order, then Name) must be
+                // covered by stored state, or we can't seed prerequisite gating.
+                var earlierStages = new StageService( rockContext ).Queryable().AsNoTracking()
+                    .Where( s => s.JourneyProgramId == targetStage.JourneyProgramId && s.IsActive
+                        && s.Order <= targetStage.Order && s.Id != targetStage.Id )
+                    .Select( s => s.Id )
+                    .ToList();
+                if ( earlierStages.Any( id => !state.ContainsKey( id ) ) )
+                {
+                    return null;
+                }
+
+                _suppressNoChangeRunLogs = true;
+                var result = new SyncResult();
+                var population = new HashSet<int> { personId };
+
+                var seededPassers = new Dictionary<int, HashSet<int>>();
+                foreach ( var stageIdEarlier in earlierStages )
+                {
+                    seededPassers[stageIdEarlier] = state[stageIdEarlier]
+                        ? new HashSet<int> { personId }
+                        : new HashSet<int>();
+                }
+
+                result.Log.Add( $"Stage '{targetStage.Name}': single-person seeded sync for PersonId {personId} — prerequisites from stored state ({earlierStages.Count} stage(s) seeded)" );
+
+                SubGroupProcessResult subResult;
+                try
+                {
+                    subResult = ProcessSubGroupInternal( targetStage, population, seededPassers, rockContext );
+                }
+                catch ( Exception ex )
+                {
+                    result.Errors.Add( $"SubGroup '{targetStage.Name}': {ex.Message}" );
+                    return result;
+                }
+                result.Merge( subResult.Result );
+
+                // Merge just the target stage back into stored state (never fail-open results).
+                var stagePassers = new Dictionary<int, HashSet<int>> { [targetStage.Id] = subResult.Passers };
+                var erroredStageIds = subResult.EvaluationFailed ? new HashSet<int> { targetStage.Id } : null;
+                WriteEnrollmentStageStatusForPerson( targetStage.JourneyProgramId, personId, stagePassers, erroredStageIds, result, rockContext );
+
+                if ( result.Updated > 0 )
+                {
+                    FlushAttributeCache();
+                }
+
+                return result;
             }
         }
 
