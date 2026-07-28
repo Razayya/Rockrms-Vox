@@ -106,11 +106,11 @@ namespace com.razayya.JourneyTrack.Lava
                 }
 
                 // Bust the MediaWatched 30s cache when the caller has just written an Interaction
-                // and needs immediate fresh state (test pages, "I just watched it" flows). Production
-                // paths should leave this off and rely on the TTL.
+                // and needs immediate fresh state (test pages, "I just watched it" flows). Scoped
+                // to this person — other concurrent users keep their warm cache entries.
                 if ( parms.GetValueOrNull( P.BypassCache ).AsBoolean() )
                 {
-                    MediaWatchedCalculation.InvalidateAllWatchCache();
+                    MediaWatchedCalculation.InvalidateWatchCacheForPerson( personId.Value );
                 }
 
                 var service = new JourneyTrackService();

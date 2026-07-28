@@ -36,6 +36,15 @@ namespace com.razayya.JourneyTrack.Data
         public Action<string> OnProgress { get; set; }
 
         /// <summary>
+        /// When true (set by the single-person render-path entry points), per-calc
+        /// JourneyCalculationRun rows are only recorded for calcs that actually wrote
+        /// a value or errored. A page render otherwise INSERTs one row per active calc
+        /// (~60 per pathway page open) — pure overhead that had the run-log table
+        /// growing from renders, not engine work. Job / admin runs keep full logging.
+        /// </summary>
+        private bool _suppressNoChangeRunLogs = false;
+
+        /// <summary>
         /// Emits a progress message if a sink is wired. Never throws into the engine.
         /// </summary>
         private void Report( string message )
@@ -137,6 +146,7 @@ namespace com.razayya.JourneyTrack.Data
         private SyncResult ProcessProgramForPersonInternal( int programId, int personId, int maxStageOrder )
         {
             var result = new SyncResult();
+            _suppressNoChangeRunLogs = true;
 
             using ( var rockContext = new RockContext() )
             {
@@ -189,7 +199,15 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
-            FlushAttributeCache();
+            // Only pay the cache flush when this sync actually wrote something. The
+            // previous unconditional call cleared the ENTIRE RockCache on every
+            // pathway page open — including the ~99% of renders that write nothing —
+            // degrading every other page on the site and forcing the very next tag
+            // in the render (personjourneyprogress) to rebuild cold caches.
+            if ( result.Updated > 0 )
+            {
+                FlushAttributeCache();
+            }
             return result;
         }
 
@@ -1457,6 +1475,14 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
 
         private void RecordJourneyCalculationRun( int calculationId, DateTime runStart, int populationCount, int matchedCount, SyncResult result )
         {
+            // Render-path (single-person) evaluations only log calcs that actually changed
+            // something or errored — a no-change render row is noise, and each row costs a
+            // fresh RockContext + INSERT round trip inside the page render.
+            if ( _suppressNoChangeRunLogs && result.Updated == 0 && !result.Errors.Any() )
+            {
+                return;
+            }
+
             try
             {
                 using ( var runContext = new RockContext() )
@@ -1519,6 +1545,7 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
         public ProgramProgressResult GetProgramProgressForPerson( int programId, int personId )
         {
             var result = new ProgramProgressResult { PersonId = personId, ProgramId = programId };
+            _suppressNoChangeRunLogs = true;
 
             using ( var rockContext = new RockContext() )
             {
