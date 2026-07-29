@@ -28,5 +28,15 @@
                 </div>
             </ItemTemplate>
         </asp:Repeater>
+
+        <%-- Manual skip (7038): confirm + optional note. Opened by the drawer's
+             Skip / Skip-remaining postback links; guarded by the ManageSkips
+             block security action. --%>
+        <Rock:ModalDialog ID="mdSkip" runat="server" Title="Skip Step" SaveButtonText="Skip" OnSaveClick="mdSkip_SaveClick" ValidationGroup="vgSkip">
+            <Content>
+                <asp:Literal ID="lSkipPrompt" runat="server" />
+                <Rock:RockTextBox ID="tbSkipNote" runat="server" Label="Note (optional)" TextMode="MultiLine" Rows="2" ValidationGroup="vgSkip" />
+            </Content>
+        </Rock:ModalDialog>
     </ContentTemplate>
 </asp:UpdatePanel>

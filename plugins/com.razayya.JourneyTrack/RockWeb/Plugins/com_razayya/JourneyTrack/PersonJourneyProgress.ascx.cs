@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Data.Entity;
 using System.Linq;
 using System.Text;
+using System.Web.UI;
 using System.Web.UI.WebControls;
 
 using com.razayya.JourneyTrack.Data;
@@ -13,6 +14,7 @@ using Rock;
 using Rock.Attribute;
 using Rock.Data;
 using Rock.Model;
+using Rock.Security;
 using Rock.Web.Cache;
 using Rock.Web.UI;
 
@@ -36,12 +38,19 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
         Order = 1,
         Key = AttributeKey.EmptyMessage )]
 
-    public partial class PersonJourneyProgress : PersonBlock
+    [SecurityAction( SecurityActionKey.ManageSkips, "The roles and/or users that can manually skip or restore Pathway steps for the displayed person." )]
+
+    public partial class PersonJourneyProgress : PersonBlock, IPostBackEventHandler
     {
         private static class AttributeKey
         {
             public const string JourneyProgramGuids = "JourneyProgramGuids";
             public const string EmptyMessage = "EmptyMessage";
+        }
+
+        public static class SecurityActionKey
+        {
+            public const string ManageSkips = "ManageSkips";
         }
 
         protected override void OnLoad( EventArgs e )
@@ -202,6 +211,238 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             public string ProgramName { get; set; }
         }
 
+        #region Manual skip actions (7038)
+
+        /// <summary>
+        /// Routes the drawer's Skip / Restore / Skip-remaining links (rendered as
+        /// __doPostBack hyperlinks inside the literal) to their handlers. Arguments:
+        /// "skip:&lt;calcId&gt;", "skipstage:&lt;stageId&gt;", "restore:&lt;calcId&gt;".
+        /// </summary>
+        public void RaisePostBackEvent( string eventArgument )
+        {
+            if ( Person == null || !IsUserAuthorized( SecurityActionKey.ManageSkips ) )
+            {
+                return;
+            }
+
+            var parts = ( eventArgument ?? string.Empty ).Split( new[] { ':' }, 2 );
+            if ( parts.Length != 2 )
+            {
+                return;
+            }
+
+            var targetId = parts[1].AsInteger();
+            if ( targetId <= 0 )
+            {
+                return;
+            }
+
+            using ( var rockContext = new RockContext() )
+            {
+                if ( parts[0] == "skip" )
+                {
+                    var calc = new JourneyCalculationService( rockContext ).Get( targetId );
+                    if ( calc == null )
+                    {
+                        return;
+                    }
+                    ViewState["PendingSkipCalcId"] = calc.Id;
+                    ViewState["PendingSkipStageId"] = null;
+                    lSkipPrompt.Text = string.Format(
+                        "<p>Skip <strong>{0}</strong> for {1}? The step will count as passed without being completed, and can be restored later.</p>",
+                        System.Web.HttpUtility.HtmlEncode( calc.Name ?? string.Empty ),
+                        System.Web.HttpUtility.HtmlEncode( Person.NickName ?? string.Empty ) );
+                    tbSkipNote.Text = string.Empty;
+                    mdSkip.Show();
+                }
+                else if ( parts[0] == "skipstage" )
+                {
+                    var stage = new StageService( rockContext ).Get( targetId );
+                    if ( stage == null )
+                    {
+                        return;
+                    }
+                    ViewState["PendingSkipStageId"] = stage.Id;
+                    ViewState["PendingSkipCalcId"] = null;
+                    lSkipPrompt.Text = string.Format(
+                        "<p>Skip all remaining steps in <strong>{0}</strong> for {1}? Each incomplete step will count as passed without being completed, and can be restored individually later.</p>",
+                        System.Web.HttpUtility.HtmlEncode( stage.Name ?? string.Empty ),
+                        System.Web.HttpUtility.HtmlEncode( Person.NickName ?? string.Empty ) );
+                    tbSkipNote.Text = string.Empty;
+                    mdSkip.Show();
+                }
+                else if ( parts[0] == "restore" )
+                {
+                    RestoreSkips( targetId, rockContext );
+                }
+            }
+        }
+
+        /// <summary>
+        /// Creates the pending skip row(s) from the modal. Single-calc skips create one
+        /// row; stage skips create a row per active calc that isn't already skipped and
+        /// whose sink is still blank (a present sink value means the step is effectively
+        /// complete). Then re-syncs the stage so the drawer + persisted stage status
+        /// reflect the change immediately.
+        /// </summary>
+        protected void mdSkip_SaveClick( object sender, EventArgs e )
+        {
+            var pendingCalcId = ViewState["PendingSkipCalcId"] as int?;
+            var pendingStageId = ViewState["PendingSkipStageId"] as int?;
+            ViewState["PendingSkipCalcId"] = null;
+            ViewState["PendingSkipStageId"] = null;
+            mdSkip.Hide();
+
+            if ( Person == null || !IsUserAuthorized( SecurityActionKey.ManageSkips )
+                || ( !pendingCalcId.HasValue && !pendingStageId.HasValue ) )
+            {
+                Render();
+                return;
+            }
+
+            int? syncStageId = null;
+            using ( var rockContext = new RockContext() )
+            {
+                var aliasId = new PersonAliasService( rockContext ).Queryable()
+                    .Where( pa => pa.PersonId == Person.Id && pa.AliasPersonId == Person.Id )
+                    .Select( pa => ( int? ) pa.Id ).FirstOrDefault();
+                if ( !aliasId.HasValue )
+                {
+                    nbMessage.NotificationBoxType = Rock.Web.UI.Controls.NotificationBoxType.Danger;
+                    nbMessage.Text = "Could not resolve a primary PersonAlias for the displayed person.";
+                    nbMessage.Visible = true;
+                    return;
+                }
+
+                var skipService = new JourneyCalculationSkipService( rockContext );
+                var calcService = new JourneyCalculationService( rockContext );
+                var note = string.IsNullOrWhiteSpace( tbSkipNote.Text ) ? null : tbSkipNote.Text.Trim();
+
+                if ( pendingCalcId.HasValue )
+                {
+                    var calc = calcService.Get( pendingCalcId.Value );
+                    if ( calc == null )
+                    {
+                        Render();
+                        return;
+                    }
+                    syncStageId = calc.StageId;
+
+                    bool alreadySkipped = skipService.Queryable().AsNoTracking()
+                        .Any( s => s.JourneyCalculationId == calc.Id && s.IsActive && s.PersonAlias.PersonId == Person.Id );
+                    if ( !alreadySkipped )
+                    {
+                        skipService.Add( new JourneyCalculationSkip
+                        {
+                            JourneyCalculationId = calc.Id,
+                            PersonAliasId = aliasId.Value,
+                            IsActive = true,
+                            Note = note
+                        } );
+                    }
+                }
+                else
+                {
+                    syncStageId = pendingStageId.Value;
+                    var stageCalcs = calcService.Queryable().AsNoTracking()
+                        .Where( c => c.StageId == pendingStageId.Value && c.IsActive )
+                        .Select( c => new { c.Id, c.PersonAttributeId } )
+                        .ToList();
+                    var stageCalcIds = stageCalcs.Select( c => c.Id ).ToList();
+
+                    var alreadySkippedIds = new HashSet<int>( skipService.Queryable().AsNoTracking()
+                        .Where( s => s.IsActive && stageCalcIds.Contains( s.JourneyCalculationId ) && s.PersonAlias.PersonId == Person.Id )
+                        .Select( s => s.JourneyCalculationId )
+                        .ToList() );
+
+                    var sinkAttrIds = stageCalcs.Where( c => c.PersonAttributeId.HasValue )
+                        .Select( c => c.PersonAttributeId.Value ).Distinct().ToList();
+                    var presentAttrIds = new HashSet<int>();
+                    if ( sinkAttrIds.Count > 0 )
+                    {
+                        presentAttrIds = new HashSet<int>( new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                            .Where( av => sinkAttrIds.Contains( av.AttributeId ) && av.EntityId == Person.Id && !string.IsNullOrEmpty( av.Value ) )
+                            .Select( av => av.AttributeId )
+                            .ToList() );
+                    }
+
+                    foreach ( var calc in stageCalcs )
+                    {
+                        if ( alreadySkippedIds.Contains( calc.Id ) )
+                        {
+                            continue;
+                        }
+                        if ( calc.PersonAttributeId.HasValue && presentAttrIds.Contains( calc.PersonAttributeId.Value ) )
+                        {
+                            continue;
+                        }
+                        skipService.Add( new JourneyCalculationSkip
+                        {
+                            JourneyCalculationId = calc.Id,
+                            PersonAliasId = aliasId.Value,
+                            IsActive = true,
+                            Note = note
+                        } );
+                    }
+                }
+
+                rockContext.SaveChanges();
+            }
+
+            if ( syncStageId.HasValue )
+            {
+                new JourneyTrackService().ProcessStageForPerson( syncStageId.Value, Person.Id );
+            }
+
+            Render();
+        }
+
+        /// <summary>
+        /// Deactivates the person's active skip row(s) for the calc (audit preserved via
+        /// RemovedDateTime / RemovedByPersonAliasId), then re-syncs the stage so the pass
+        /// state regresses immediately if the skip was load-bearing.
+        /// </summary>
+        private void RestoreSkips( int calcId, RockContext rockContext )
+        {
+            var skipService = new JourneyCalculationSkipService( rockContext );
+            var rows = skipService.Queryable()
+                .Where( s => s.JourneyCalculationId == calcId && s.IsActive && s.PersonAlias.PersonId == Person.Id )
+                .ToList();
+
+            var stageId = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                .Where( c => c.Id == calcId )
+                .Select( c => ( int? ) c.StageId )
+                .FirstOrDefault();
+
+            if ( rows.Count > 0 )
+            {
+                foreach ( var row in rows )
+                {
+                    row.IsActive = false;
+                    row.RemovedDateTime = RockDateTime.Now;
+                    row.RemovedByPersonAliasId = CurrentPersonAliasId;
+                }
+                rockContext.SaveChanges();
+
+                if ( stageId.HasValue )
+                {
+                    new JourneyTrackService().ProcessStageForPerson( stageId.Value, Person.Id );
+                }
+            }
+
+            Render();
+        }
+
+        // Active manual-skip display info for the displayed person, keyed by calc Id.
+        private class SkipInfo
+        {
+            public string ByName { get; set; }
+            public DateTime? CreatedDateTime { get; set; }
+            public string Note { get; set; }
+        }
+
+        #endregion
+
         /// <summary>
         /// Per-stage expandable drawers listing every active calculation in the
         /// Stage and the current value of its target Person Attribute for the
@@ -250,6 +491,35 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
             var calcsByStage = calcs.GroupBy( c => c.StageId ).ToDictionary( g => g.Key, g => g.ToList() );
 
+            // Manual-skip context: the viewer's ManageSkips grant plus the displayed
+            // person's active skips across the program's calcs (one query).
+            bool canManage = IsUserAuthorized( SecurityActionKey.ManageSkips );
+            var manualSkips = new Dictionary<int, SkipInfo>();
+            if ( calcs.Count > 0 )
+            {
+                var calcIdList = calcs.Select( c => c.Id ).ToList();
+                var skipRows = new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
+                    .Where( s => s.IsActive && calcIdList.Contains( s.JourneyCalculationId ) && s.PersonAlias.PersonId == Person.Id )
+                    .Select( s => new
+                    {
+                        s.JourneyCalculationId,
+                        s.Note,
+                        s.CreatedDateTime,
+                        ByNick = s.CreatedByPersonAlias.Person.NickName,
+                        ByLast = s.CreatedByPersonAlias.Person.LastName
+                    } )
+                    .ToList();
+                foreach ( var row in skipRows )
+                {
+                    manualSkips[row.JourneyCalculationId] = new SkipInfo
+                    {
+                        ByName = ( ( row.ByNick ?? string.Empty ) + " " + ( row.ByLast ?? string.Empty ) ).Trim(),
+                        CreatedDateTime = row.CreatedDateTime,
+                        Note = row.Note
+                    };
+                }
+            }
+
             var sb = new StringBuilder();
             sb.Append( "<div class='jp-drawers'>" );
             foreach ( var stage in progress.Stages )
@@ -266,14 +536,24 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
                 var openAttr = stage.IsCurrent ? " open" : string.Empty;
 
+                string stageActionsHtml = string.Empty;
+                if ( canManage && !stage.Passed )
+                {
+                    stageActionsHtml = "<div class='jp-stage-actions'><a href=\"" +
+                        Page.ClientScript.GetPostBackClientHyperlink( this, "skipstage:" + stage.StageId ) +
+                        "\">Skip remaining steps</a></div>";
+                }
+
                 sb.AppendFormat(
                     "<details class='jp-drawer'{0}>" +
                     "<summary><span class='jp-drawer-name'>{1}</span><span class='jp-badge {2}'>{3}</span></summary>" +
-                    "<div class='jp-drawer-body'>" +
-                    "<table class='jp-table'><thead><tr><th>Calculation</th><th>Type</th><th>Target Attribute</th><th class='jp-th-val'>Current Value</th></tr></thead><tbody>",
+                    "<div class='jp-drawer-body'>{4}" +
+                    "<table class='jp-table'><thead><tr><th>Calculation</th><th>Type</th><th>Target Attribute</th><th class='jp-th-val'>Current Value</th>{5}</tr></thead><tbody>",
                     openAttr,
                     System.Web.HttpUtility.HtmlEncode( stage.StageName ?? string.Empty ),
-                    badgeClass, badgeText );
+                    badgeClass, badgeText,
+                    stageActionsHtml,
+                    canManage ? "<th class='jp-th-act'></th>" : string.Empty );
 
                 foreach ( var calc in stageCalcs )
                 {
@@ -287,10 +567,31 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     // presence, not field type (falls back to the raw value if no persisted text yet).
                     string valueCell = string.Empty;
 
+                    // Manual skip (7038) takes display precedence — the chip's tooltip carries
+                    // the who/when/note audit, and the row offers Restore instead of Skip.
+                    manualSkips.TryGetValue( calc.Id, out var manualSkip );
+                    if ( manualSkip != null )
+                    {
+                        var tooltip = "Manually skipped";
+                        if ( !string.IsNullOrWhiteSpace( manualSkip.ByName ) )
+                        {
+                            tooltip += " by " + manualSkip.ByName;
+                        }
+                        if ( manualSkip.CreatedDateTime.HasValue )
+                        {
+                            tooltip += " on " + manualSkip.CreatedDateTime.Value.ToShortDateString();
+                        }
+                        if ( !string.IsNullOrWhiteSpace( manualSkip.Note ) )
+                        {
+                            tooltip += " - " + manualSkip.Note;
+                        }
+                        valueCell = "<span class='jp-skipped' title=\"" + System.Web.HttpUtility.HtmlAttributeEncode( tooltip ) + "\">Skipped</span>";
+                    }
+
                     // Skipped? If this calc has a "Skip If" filter and the person matches it, show
                     // "Skipped" — the calc passed via the skip and the sink was left blank. Presence-
                     // gated: unconfigured calcs do no work here.
-                    if ( !string.IsNullOrWhiteSpace( calc.SkipFilterJson ) )
+                    if ( string.IsNullOrWhiteSpace( valueCell ) && !string.IsNullOrWhiteSpace( calc.SkipFilterJson ) )
                     {
                         var skipMatch = com.razayya.JourneyTrack.CalculationTypes.PersonFilterCalculation.EvaluatePopulation(
                             calc.SkipFilterJson, calc.SkipFilterMatchAll, new System.Collections.Generic.HashSet<int> { Person.Id }, rockContext );
@@ -310,12 +611,29 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                         valueCell = "<span class='jp-val'>" + System.Web.HttpUtility.HtmlEncode( text ) + "</span>";
                     }
 
+                    string actionCell = string.Empty;
+                    if ( canManage )
+                    {
+                        if ( manualSkip != null )
+                        {
+                            actionCell = "<a class='jp-action' href=\"" +
+                                Page.ClientScript.GetPostBackClientHyperlink( this, "restore:" + calc.Id ) +
+                                "\" onclick=\"return confirm('Restore this step? It will need to be completed normally.');\">Restore</a>";
+                        }
+                        else if ( string.IsNullOrWhiteSpace( valueCell ) )
+                        {
+                            actionCell = "<a class='jp-action' href=\"" +
+                                Page.ClientScript.GetPostBackClientHyperlink( this, "skip:" + calc.Id ) + "\">Skip</a>";
+                        }
+                    }
+
                     sb.AppendFormat(
-                        "<tr><td class='jp-calc'>{0}</td><td><span class='jp-type'>{1}</span></td><td>{2}</td><td class='jp-td-val'>{3}</td></tr>",
+                        "<tr><td class='jp-calc'>{0}</td><td><span class='jp-type'>{1}</span></td><td>{2}</td><td class='jp-td-val'>{3}</td>{4}</tr>",
                         System.Web.HttpUtility.HtmlEncode( calc.Name ?? string.Empty ),
                         System.Web.HttpUtility.HtmlEncode( calcTypeFriendly ),
                         targetCell,
-                        valueCell );
+                        valueCell,
+                        canManage ? "<td class='jp-td-act'>" + actionCell + "</td>" : string.Empty );
                 }
 
                 sb.Append( "</tbody></table></div></details>" );
@@ -409,6 +727,9 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 .jp-target.transient{color:#9ca3af;font-style:italic;}
 .jp-val{font-weight:700;color:#111827;}
 .jp-skipped{display:inline-block;font-size:.66rem;font-weight:700;padding:.15rem .55rem;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;background:#fde68a;color:#92400e;}
+.jp-th-act,.jp-td-act{text-align:right;white-space:nowrap;}
+.jp-action{font-size:.72rem;font-weight:700;}
+.jp-stage-actions{text-align:right;padding:.5rem .65rem 0;font-size:.75rem;}
 </style>";
         }
     }
