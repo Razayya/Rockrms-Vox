@@ -95,11 +95,11 @@ namespace com.razayya.RSVPReminders.Services
         }
 
         /// <summary>
-        /// Adds exclusions for every meeting occurrence inside the (inclusive) date
-        /// range, converting Weekly to Custom first when needed. Only real occurrence
-        /// dates are excluded — unlike Rock's admin ScheduleBuilder, which EXDATEs every
-        /// calendar day in a range — so the leader's skipped-dates list stays a list of
-        /// actual meetings. Returns the number of newly-excluded dates.
+        /// Adds an exclusion for EVERY calendar day in the (inclusive) range — the same
+        /// shape Rock's admin ScheduleBuilder writes — so leaders can black out a
+        /// stretch regardless of whether occurrences can be enumerated that far out,
+        /// and the blackout survives later schedule changes inside the range.
+        /// Returns the number of newly-excluded days.
         /// </summary>
         public static int AddExclusionRange( Schedule schedule, DateTime start, DateTime end )
         {
@@ -111,18 +111,9 @@ namespace com.razayya.RSVPReminders.Services
                 return 0;
             }
 
-            var occurrenceDates = schedule.GetScheduledStartTimes( start.Date, end.Date.AddDays( 1 ).AddSeconds( -1 ) )
-                .Select( d => d.Date )
-                .Distinct()
-                .ToList();
-            if ( occurrenceDates.Count == 0 )
-            {
-                return 0;
-            }
-
             var dates = ReadExclusionDates( calendarEvent );
             int added = 0;
-            foreach ( var date in occurrenceDates )
+            for ( var date = start.Date; date <= end.Date; date = date.AddDays( 1 ) )
             {
                 if ( !dates.Contains( date ) )
                 {
@@ -137,6 +128,33 @@ namespace com.razayya.RSVPReminders.Services
                 schedule.iCalendarContent = InetCalendarHelper.SerializeToCalendarString( calendarEvent );
             }
             return added;
+        }
+
+        /// <summary>
+        /// Removes every exclusion date inside the (inclusive) range. Returns the
+        /// number of dates removed.
+        /// </summary>
+        public static int RemoveExclusionRange( Schedule schedule, DateTime start, DateTime end )
+        {
+            if ( schedule == null || string.IsNullOrWhiteSpace( schedule.iCalendarContent ) )
+            {
+                return 0;
+            }
+
+            var calendarEvent = InetCalendarHelper.CreateCalendarEvent( schedule.iCalendarContent );
+            if ( calendarEvent == null )
+            {
+                return 0;
+            }
+
+            var dates = ReadExclusionDates( calendarEvent );
+            var removed = dates.RemoveAll( d => d >= start.Date && d <= end.Date );
+            if ( removed > 0 )
+            {
+                WriteExclusionDates( calendarEvent, dates );
+                schedule.iCalendarContent = InetCalendarHelper.SerializeToCalendarString( calendarEvent );
+            }
+            return removed;
         }
 
         /// <summary>
