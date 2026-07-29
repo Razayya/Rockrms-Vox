@@ -110,6 +110,11 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 .Select( c => new { c.Id, c.PersonAttributeId } )
                 .ToList();
 
+            // Manual skips (7038): a person manually skipped on a referenced sibling calc
+            // satisfies that criterion outright — their sink stays blank by design, so the
+            // attribute comparison below would otherwise fail them forever.
+            var manualSkipLookup = LoadManualSkips( rockContext, calculationIds );
+
             // Map JourneyCalculationId => AttributeCache (skip siblings that are transient — no sink to read).
             var attributeMap = new Dictionary<int, Rock.Web.Cache.AttributeCache>();
             foreach ( var sibling in siblingCalculations )
@@ -148,6 +153,15 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
                 foreach ( var criterion in requiredCriteria )
                 {
+                    // Manual skip on the referenced sibling satisfies the criterion (checked
+                    // before the transient-sibling guard so skips work on sink-less calcs too).
+                    if ( manualSkipLookup.TryGetValue( criterion.JourneyCalculationId, out var skippedPersonIds )
+                        && skippedPersonIds.Contains( personId ) )
+                    {
+                        completedCount++;
+                        continue;
+                    }
+
                     if ( !attributeMap.TryGetValue( criterion.JourneyCalculationId, out var targetAttribute ) )
                     {
                         allRequiredMet = false;
@@ -212,6 +226,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             // Resolve each referenced sibling calc's target attribute (skip transient siblings).
             var calculationService = new JourneyCalculationService( rockContext );
             var calculationIds = leaves.Select( c => c.JourneyCalculationId ).Distinct().ToList();
+
+            // Manual skips (7038): a skipped sibling leaf evaluates as satisfied.
+            var manualSkipLookup = LoadManualSkips( rockContext, calculationIds );
             var siblingCalculations = calculationService.Queryable().AsNoTracking()
                 .Where( c => calculationIds.Contains( c.Id ) )
                 .Select( c => new { c.Id, c.PersonAttributeId } )
@@ -251,6 +268,12 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
                 Func<CompletionCriterion, bool> leafEval = criterion =>
                 {
+                    if ( manualSkipLookup.TryGetValue( criterion.JourneyCalculationId, out var skippedPersonIds )
+                        && skippedPersonIds.Contains( personId ) )
+                    {
+                        return true;
+                    }
+
                     if ( !attributeMap.TryGetValue( criterion.JourneyCalculationId, out var targetAttribute ) )
                     {
                         return false;
@@ -276,6 +299,36 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             }
 
             return results;
+        }
+
+        /// <summary>
+        /// Loads active manual skips for the referenced sibling calcs as a
+        /// calcId → personId-set map. Skip rows are inherently few (staff-created,
+        /// one person at a time), so this loads by calc Id only — no population filter.
+        /// </summary>
+        private static Dictionary<int, HashSet<int>> LoadManualSkips( RockContext rockContext, List<int> calculationIds )
+        {
+            var lookup = new Dictionary<int, HashSet<int>>();
+            if ( calculationIds == null || calculationIds.Count == 0 )
+            {
+                return lookup;
+            }
+
+            var rows = new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
+                .Where( s => s.IsActive && calculationIds.Contains( s.JourneyCalculationId ) )
+                .Select( s => new { s.JourneyCalculationId, s.PersonAlias.PersonId } )
+                .ToList();
+
+            foreach ( var row in rows )
+            {
+                if ( !lookup.TryGetValue( row.JourneyCalculationId, out var set ) )
+                {
+                    set = new HashSet<int>();
+                    lookup[row.JourneyCalculationId] = set;
+                }
+                set.Add( row.PersonId );
+            }
+            return lookup;
         }
 
         /// <inheritdoc/>

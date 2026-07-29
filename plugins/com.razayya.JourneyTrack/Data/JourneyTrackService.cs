@@ -984,16 +984,45 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
-            // Short-circuit when sticky-skip / skip-filter drained the population entirely. Skip-filtered
-            // people still count as passed, so fold them into the matched set before returning.
-            if ( workingPopulationForEval.Count == 0 && ( skippedCount > 0 || skipFilterMatchedIds != null ) )
+            // Manual skips (7038): staff-created per-person skips ride the same path as a
+            // "Skip If" filter match — excluded from evaluation, folded into the matched set
+            // below, sink left blank. Intersected against the FULL calc population (not the
+            // post-sticky eval set) so a manually-skipped person always lands in the matched
+            // set regardless of sticky-skip state. One indexed lookup per calc.
+            HashSet<int> manualSkipIds = null;
+            if ( workingPopulation.Count > 0 )
+            {
+                var manualSkips = new HashSet<int>( new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
+                    .Where( s => s.JourneyCalculationId == calc.Id && s.IsActive )
+                    .Select( s => s.PersonAlias.PersonId )
+                    .ToList() );
+                manualSkips.IntersectWith( workingPopulation );
+                if ( manualSkips.Count > 0 )
+                {
+                    manualSkipIds = manualSkips;
+                    if ( ReferenceEquals( workingPopulationForEval, workingPopulation ) )
+                    {
+                        workingPopulationForEval = new HashSet<int>( workingPopulation );
+                    }
+                    workingPopulationForEval.ExceptWith( manualSkipIds );
+                }
+            }
+
+            // Short-circuit when sticky-skip / skip-filter / manual skips drained the population
+            // entirely. Skipped people still count as passed, so fold them into the matched set
+            // before returning.
+            if ( workingPopulationForEval.Count == 0 && ( skippedCount > 0 || skipFilterMatchedIds != null || manualSkipIds != null ) )
             {
                 if ( skipFilterMatchedIds != null )
                 {
-                    result.MatchedPersonIds = new HashSet<int>( skipFilterMatchedIds );
+                    result.MatchedPersonIds.UnionWith( skipFilterMatchedIds );
                 }
-                result.Log.Add( $"    JourneyCalculation '{calc.Name}': 0/{workingPopulation.Count} evaluated (sticky-skipped {skippedCount}, skip-filtered {( skipFilterMatchedIds?.Count ?? 0 )})" );
-                RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, ( skipFilterMatchedIds?.Count ?? 0 ), result );
+                if ( manualSkipIds != null )
+                {
+                    result.MatchedPersonIds.UnionWith( manualSkipIds );
+                }
+                result.Log.Add( $"    JourneyCalculation '{calc.Name}': 0/{workingPopulation.Count} evaluated (sticky-skipped {skippedCount}, skip-filtered {( skipFilterMatchedIds?.Count ?? 0 )}, manually-skipped {( manualSkipIds?.Count ?? 0 )})" );
+                RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, result.MatchedPersonIds.Count, result );
                 return result;
             }
 
@@ -1001,14 +1030,18 @@ namespace com.razayya.JourneyTrack.Data
 
             result.MatchedPersonIds = new HashSet<int>( matchedResults.Keys );
 
-            // Fold skip-filtered people into the matched set (they pass without a sink write).
+            // Fold skipped people into the matched set (they pass without a sink write).
             if ( skipFilterMatchedIds != null )
             {
                 result.MatchedPersonIds.UnionWith( skipFilterMatchedIds );
             }
-            if ( skippedCount > 0 )
+            if ( manualSkipIds != null )
             {
-                result.Log.Add( $"    JourneyCalculation '{calc.Name}': {matchedResults.Count}/{workingPopulationForEval.Count} matched (sticky-skipped {skippedCount} already-set)" );
+                result.MatchedPersonIds.UnionWith( manualSkipIds );
+            }
+            if ( skippedCount > 0 || manualSkipIds != null )
+            {
+                result.Log.Add( $"    JourneyCalculation '{calc.Name}': {matchedResults.Count}/{workingPopulationForEval.Count} matched (sticky-skipped {skippedCount} already-set, manually-skipped {( manualSkipIds?.Count ?? 0 )})" );
             }
             else
             {
@@ -1055,8 +1088,9 @@ namespace com.razayya.JourneyTrack.Data
 
             foreach ( var personId in workingPopulation )
             {
-                // Skip-filtered people pass via the matched set but get NO sink write (left blank).
-                if ( skipFilterMatchedIds != null && skipFilterMatchedIds.Contains( personId ) )
+                // Skipped people (filter or manual) pass via the matched set but get NO sink write (left blank).
+                if ( ( skipFilterMatchedIds != null && skipFilterMatchedIds.Contains( personId ) )
+                    || ( manualSkipIds != null && manualSkipIds.Contains( personId ) ) )
                 {
                     continue;
                 }
