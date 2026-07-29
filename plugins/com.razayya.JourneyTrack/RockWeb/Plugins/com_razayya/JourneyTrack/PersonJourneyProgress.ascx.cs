@@ -7,7 +7,9 @@ using System.Text;
 using System.Web.UI;
 using System.Web.UI.WebControls;
 
+using com.razayya.JourneyTrack.CalculationTypes;
 using com.razayya.JourneyTrack.Data;
+using com.razayya.JourneyTrack.Logic;
 using com.razayya.JourneyTrack.Model;
 
 using Rock;
@@ -17,6 +19,8 @@ using Rock.Model;
 using Rock.Security;
 using Rock.Web.Cache;
 using Rock.Web.UI;
+
+using ComparisonType = com.razayya.JourneyTrack.Model.ComparisonType;
 
 namespace RockWeb.Plugins.com_razayya.JourneyTrack
 {
@@ -443,6 +447,180 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
         #endregion
 
+        #region Skip rule description (Auto-Skipped tooltip)
+
+        /// <summary>
+        /// Renders a Skip If condition tree as a short human-readable phrase for the
+        /// Auto-Skipped chip tooltip, e.g. "Connection Status is Member". Returns null
+        /// on empty/unparseable JSON — callers fall back to generic wording.
+        /// </summary>
+        private string DescribeSkipRule( string skipFilterJson, bool matchAll, RockContext rockContext )
+        {
+            try
+            {
+                var tree = LogicTree.Parse<FilterCondition>( skipFilterJson, matchAll ? LogicGroupType.All : LogicGroupType.Any );
+                if ( LogicTree.IsEmpty( tree ) )
+                {
+                    return null;
+                }
+
+                var text = DescribeRuleNode( tree, rockContext );
+                if ( string.IsNullOrWhiteSpace( text ) )
+                {
+                    return null;
+                }
+                // The generator fully wraps a multi-part root — strip that outermost pair.
+                if ( text.StartsWith( "(" ) && text.EndsWith( ")" ) )
+                {
+                    text = text.Substring( 1, text.Length - 2 );
+                }
+                return text;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string DescribeRuleNode( LogicNode<FilterCondition> node, RockContext rockContext )
+        {
+            if ( node == null )
+            {
+                return string.Empty;
+            }
+            if ( node.Leaf != null )
+            {
+                return DescribeRuleLeaf( node.Leaf, rockContext );
+            }
+
+            var parts = ( node.Children ?? new List<LogicNode<FilterCondition>>() )
+                .Select( c => DescribeRuleNode( c, rockContext ) )
+                .Where( s => !string.IsNullOrWhiteSpace( s ) )
+                .ToList();
+            if ( parts.Count == 0 )
+            {
+                return string.Empty;
+            }
+
+            switch ( node.Type ?? LogicGroupType.All )
+            {
+                case LogicGroupType.Any:
+                    return parts.Count == 1 ? parts[0] : "(" + string.Join( " OR ", parts ) + ")";
+                case LogicGroupType.AllFalse:
+                    return "NONE OF (" + string.Join( "; ", parts ) + ")";
+                case LogicGroupType.AnyFalse:
+                    return "NOT ALL OF (" + string.Join( "; ", parts ) + ")";
+                default:
+                    return parts.Count == 1 ? parts[0] : "(" + string.Join( " AND ", parts ) + ")";
+            }
+        }
+
+        private string DescribeRuleLeaf( FilterCondition condition, RockContext rockContext )
+        {
+            if ( condition == null || string.IsNullOrWhiteSpace( condition.Key ) )
+            {
+                return string.Empty;
+            }
+
+            string label;
+            if ( condition.Source == FilterSource.Attribute )
+            {
+                var personEntityTypeId = EntityTypeCache.Get( typeof( Person ) ).Id;
+                label = new AttributeService( rockContext ).GetByEntityTypeId( personEntityTypeId )
+                    .Where( a => a.Key == condition.Key )
+                    .Select( a => a.Name )
+                    .FirstOrDefault() ?? SpaceCamelCase( condition.Key );
+            }
+            else
+            {
+                // Person property: "ConnectionStatusValueId" reads as "Connection Status".
+                var key = condition.Key;
+                if ( key.EndsWith( "ValueId", StringComparison.OrdinalIgnoreCase ) )
+                {
+                    key = key.Substring( 0, key.Length - "ValueId".Length );
+                }
+                else if ( key.Length > 2 && key.EndsWith( "Id", StringComparison.Ordinal ) )
+                {
+                    key = key.Substring( 0, key.Length - 2 );
+                }
+                label = SpaceCamelCase( key );
+            }
+
+            switch ( condition.Comparison )
+            {
+                case ComparisonType.IsNotBlank:
+                    return label + " has a value";
+                case ComparisonType.IsBlank:
+                    return label + " is blank";
+            }
+
+            string op;
+            switch ( condition.Comparison )
+            {
+                case ComparisonType.EqualTo: op = "is"; break;
+                case ComparisonType.NotEqualTo: op = "is not"; break;
+                case ComparisonType.GreaterThan: op = "is greater than"; break;
+                case ComparisonType.LessThan: op = "is less than"; break;
+                case ComparisonType.GreaterThanOrEqualTo: op = "is at least"; break;
+                case ComparisonType.LessThanOrEqualTo: op = "is at most"; break;
+                case ComparisonType.Contains: op = "contains"; break;
+                default: op = "matches"; break;
+            }
+
+            return label + " " + op + " " + ResolveRuleValue( condition );
+        }
+
+        /// <summary>
+        /// Resolves a rule condition's stored value to display text: Id-bearing person
+        /// properties resolve through the caches (Defined Value / Campus), attribute
+        /// values holding a Defined Value guid resolve to its text, everything else raw.
+        /// </summary>
+        private static string ResolveRuleValue( FilterCondition condition )
+        {
+            var raw = condition.Value ?? string.Empty;
+
+            if ( condition.Source == FilterSource.Property )
+            {
+                if ( condition.Key.EndsWith( "ValueId", StringComparison.OrdinalIgnoreCase ) && raw.AsIntegerOrNull().HasValue )
+                {
+                    var dv = DefinedValueCache.Get( raw.AsInteger() );
+                    if ( dv != null )
+                    {
+                        return dv.Value;
+                    }
+                }
+                if ( string.Equals( condition.Key, "CampusId", StringComparison.OrdinalIgnoreCase ) && raw.AsIntegerOrNull().HasValue )
+                {
+                    var campus = CampusCache.Get( raw.AsInteger() );
+                    if ( campus != null )
+                    {
+                        return campus.Name;
+                    }
+                }
+            }
+            else
+            {
+                var guid = raw.AsGuidOrNull();
+                if ( guid.HasValue )
+                {
+                    var dv = DefinedValueCache.Get( guid.Value );
+                    if ( dv != null )
+                    {
+                        return dv.Value;
+                    }
+                }
+            }
+
+            return raw;
+        }
+
+        private static string SpaceCamelCase( string value )
+        {
+            return System.Text.RegularExpressions.Regex.Replace( value ?? string.Empty, "(?<=[a-z])([A-Z])", " $1" );
+        }
+
+        #endregion
+
         /// <summary>
         /// Per-stage expandable drawers listing every active calculation in the
         /// Stage and the current value of its target Person Attribute for the
@@ -572,14 +750,15 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     manualSkips.TryGetValue( calc.Id, out var manualSkip );
                     if ( manualSkip != null )
                     {
-                        var tooltip = "Manually skipped";
+                        var tooltip = "Skipped";
                         if ( !string.IsNullOrWhiteSpace( manualSkip.ByName ) )
                         {
                             tooltip += " by " + manualSkip.ByName;
                         }
                         if ( manualSkip.CreatedDateTime.HasValue )
                         {
-                            tooltip += " on " + manualSkip.CreatedDateTime.Value.ToShortDateString();
+                            tooltip += " on " + manualSkip.CreatedDateTime.Value.ToShortDateString()
+                                + " at " + manualSkip.CreatedDateTime.Value.ToShortTimeString();
                         }
                         if ( !string.IsNullOrWhiteSpace( manualSkip.Note ) )
                         {
@@ -588,16 +767,22 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                         valueCell = "<span class='jp-skipped' title=\"" + System.Web.HttpUtility.HtmlAttributeEncode( tooltip ) + "\">Skipped</span>";
                     }
 
-                    // Skipped? If this calc has a "Skip If" filter and the person matches it, show
-                    // "Skipped" — the calc passed via the skip and the sink was left blank. Presence-
-                    // gated: unconfigured calcs do no work here.
+                    // Rule-based skip: the person matches this calc's "Skip If" filter. Rendered
+                    // as a distinct "Auto-Skipped" chip (vs. the manual amber "Skipped") because
+                    // there's no per-person record to restore — undoing it means editing the
+                    // step's Skip Logic or the person no longer matching. Presence-gated:
+                    // unconfigured calcs do no work here.
                     if ( string.IsNullOrWhiteSpace( valueCell ) && !string.IsNullOrWhiteSpace( calc.SkipFilterJson ) )
                     {
                         var skipMatch = com.razayya.JourneyTrack.CalculationTypes.PersonFilterCalculation.EvaluatePopulation(
                             calc.SkipFilterJson, calc.SkipFilterMatchAll, new System.Collections.Generic.HashSet<int> { Person.Id }, rockContext );
                         if ( skipMatch.Contains( Person.Id ) )
                         {
-                            valueCell = "<span class='jp-skipped'>Skipped</span>";
+                            var rule = DescribeSkipRule( calc.SkipFilterJson, calc.SkipFilterMatchAll, rockContext );
+                            var autoTooltip = rule != null
+                                ? "Skipped by rule: " + rule
+                                : "Skipped by this step's Skip If rule";
+                            valueCell = "<span class='jp-autoskipped' title=\"" + System.Web.HttpUtility.HtmlAttributeEncode( autoTooltip ) + "\">Auto-Skipped</span>";
                         }
                     }
 
@@ -727,6 +912,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 .jp-target.transient{color:#9ca3af;font-style:italic;}
 .jp-val{font-weight:700;color:#111827;}
 .jp-skipped{display:inline-block;font-size:.66rem;font-weight:700;padding:.15rem .55rem;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;background:#fde68a;color:#92400e;}
+.jp-autoskipped{display:inline-block;font-size:.66rem;font-weight:700;padding:.15rem .55rem;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;background:#dbeafe;color:#1e40af;}
 .jp-th-act,.jp-td-act{text-align:right;white-space:nowrap;}
 .jp-action{font-size:.72rem;font-weight:700;}
 .jp-stage-actions{text-align:right;padding:.5rem .65rem 0;font-size:.75rem;}
