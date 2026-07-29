@@ -1964,6 +1964,17 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                 }
             }
 
+            // Manual skip (7038): an active skip reads as satisfied on every progress
+            // surface — the member's app stops prompting for the item — and is flagged
+            // separately so UIs can render "Skipped" distinctly from earned completion.
+            bool manuallySkipped = new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
+                .Any( s => s.JourneyCalculationId == calc.Id && s.IsActive && s.PersonAlias.PersonId == personId );
+            entry["ManuallySkipped"] = manuallySkipped;
+            if ( manuallySkipped )
+            {
+                entry["Matched"] = true;
+            }
+
             // Progress toward the requirement, clamped to 0-100. Matched always
             // reads 100 even if the component's Current has since drifted below
             // Target-shaped math (e.g. sticky-skip semantics).
