@@ -26,4 +26,14 @@ namespace com.razayya.RSVPReminders.SystemGuid
     {
         public const string RSVP_INVITATION = "8A001F97-7B72-441E-A678-88D09E1BE7F8";
     }
+
+    public static class BlockType
+    {
+        public const string RSVP_GROUP_EXCLUSIONS = "BC50C1BC-95C9-4B0F-B5E0-03DDD23F0DFD";
+    }
+
+    public static class Block
+    {
+        public const string RSVP_GROUP_EXCLUSIONS_GROUP_TOOLBOX = "5FCF668A-2E5B-4CF6-BA10-0E89FA8DBC4E";
+    }
 }
