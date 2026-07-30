@@ -35,16 +35,18 @@ CROSS JOIN [Page] p
 WHERE b.[Guid] = '{SystemGuid.Block.RSVP_GROUP_EXCLUSIONS_GROUP_TOOLBOX}'
   AND p.[Guid] = '{SystemGuid.Page.MEETING_EXCLUSIONS}'" );
 
-            // Compact link instance at the top of the toolbox's Main zone.
+            // Compact link instance in the toolbox sidebar, just under the group list
+            // (Main-zone placement lost the visual tie-break against Group Detail Lava
+            // and rendered at the bottom - 6919 feedback).
             RockMigrationHelper.AddBlock(
                 PAGE_GROUP_TOOLBOX,
                 null,
                 SystemGuid.BlockType.RSVP_GROUP_EXCLUSIONS,
                 "RSVP Meeting Exclusions Link",
-                "Main",
+                "Sidebar1",
                 string.Empty,
                 string.Empty,
-                0,
+                1,
                 SystemGuid.Block.RSVP_GROUP_EXCLUSIONS_LINK );
         }
 
