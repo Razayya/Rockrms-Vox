@@ -46,6 +46,22 @@ namespace com.razayya.JourneyTrack.Model
         [DataMember]
         public string Note { get; set; }
 
+        /// <summary>
+        /// Persisted per-stage progress: a JSON {stageId: passed} map maintained by
+        /// the engine on every sync that evaluates this person (single-person page
+        /// syncs merge the stages they evaluated; full program runs rewrite all).
+        /// Read surfaces (personjourneyprogress) serve this instead of re-running
+        /// the engine. Null = never evaluated; readers fall back to a live pass.
+        /// </summary>
+        [DataMember]
+        public string StageStatusJson { get; set; }
+
+        /// <summary>
+        /// When <see cref="StageStatusJson"/> was last written.
+        /// </summary>
+        [DataMember]
+        public System.DateTime? StageStatusModifiedDateTime { get; set; }
+
         #endregion
 
         #region Navigation

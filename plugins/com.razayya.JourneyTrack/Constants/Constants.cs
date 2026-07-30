@@ -25,6 +25,11 @@ namespace com.razayya.JourneyTrack.Constants
         public const string GroupRole = "GroupRole";
         public const string ActiveMembersOnly = "ActiveMembersOnly";
 
+        // Group attendance JourneyCalculation (attendance against specific groups).
+        // MinimumCount / WithinDays are shared keys — they resolve to distinct Attribute
+        // rows because each calc type qualifies by its own CalculationTypeEntityTypeId.
+        public const string Groups_GroupAttendance = "Groups_GroupAttendance";
+
         // Group membership JourneyCalculation
         public const string Group = "Group";
         public const string IncludeChildGroups = "IncludeChildGroups";
@@ -48,6 +53,7 @@ namespace com.razayya.JourneyTrack.Constants
         public const string JourneyCalculationRun = "_com_razayya_JourneyTrack_JourneyCalculationRun";
         public const string JourneyCommunicationLog = "_com_razayya_JourneyTrack_JourneyCommunicationLog";
         public const string JourneyProgramEnrollment = "_com_razayya_JourneyTrack_JourneyProgramEnrollment";
+        public const string JourneyCalculationSkip = "_com_razayya_JourneyTrack_JourneyCalculationSkip";
     }
 
     public static class CRON

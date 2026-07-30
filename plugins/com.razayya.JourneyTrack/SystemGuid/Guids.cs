@@ -12,6 +12,7 @@ namespace com.razayya.JourneyTrack.SystemGuid
         public const string JOURNEY_COMMUNICATION_LOG    = "1F0E2D3C-4B5A-6987-8765-4321FEDCBA09";
         public const string JOURNEY_PROGRAM_ENROLLMENT   = "B4C5D6E7-F809-4A1B-9C2D-E3F4A5B6C7D8";
         public const string ENROLL_PERSON_WORKFLOW_ACTION = "C5D6E7F8-091A-4B2C-AD3E-F4A5B6C7D8E9";
+        public const string JOURNEY_CALCULATION_SKIP     = "1202F5EF-0177-460F-9CDC-69F7635B4B6A";
 
         // Calculation Type components
         public const string CALCULATION_TYPE_ATTENDANCE              = "C3D4E5F6-A7B8-4C9D-0E1F-3A4B5C6D7E8F";
@@ -22,6 +23,7 @@ namespace com.razayya.JourneyTrack.SystemGuid
         public const string CALCULATION_TYPE_COMPLETION              = "A7B8C9D0-E1F2-4A3B-4C5D-7E8F9A0B1C2D";
         public const string CALCULATION_TYPE_STEP_COMPLETION         = "2C3D4E5F-6789-4ABC-DEF0-123456789ABC";
         public const string CALCULATION_TYPE_MEDIA_WATCHED            = "3D4E5F60-789A-4BCD-EF01-23456789ABCD";
+        public const string CALCULATION_TYPE_GROUP_ATTENDANCE         = "C1A2B3D4-5E6F-4071-8293-A4B5C6D7E8F9";
     }
 
     public static class ServiceJob

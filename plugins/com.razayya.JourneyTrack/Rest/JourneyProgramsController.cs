@@ -48,6 +48,33 @@ namespace com.razayya.JourneyTrack.Rest
         }
 
         /// <summary>
+        /// Sync a single person against a single Stage. Runs the prerequisite cascade
+        /// through the target Stage (inclusive) and skips later Stages — cheaper than
+        /// the program-scoped sync when mobile only needs the open Stage refreshed.
+        /// Does not write the program rollup; a full program sync owns that write.
+        /// </summary>
+        [Authenticate, Secured]
+        [HttpPost]
+        [System.Web.Http.Route( "api/com_razayya_JourneyTrack/JourneyPrograms/Sync/Stage/{stageId}/{personId}" )]
+        [Rock.SystemGuid.RestActionGuid( "B0E1A2C3-D4E5-4F67-89AB-CDEF0123456E" )]
+        public SyncSummary SyncStageForPerson( int stageId, int personId )
+        {
+            var service = new JourneyTrackService();
+            var result = service.ProcessStageForPerson( stageId, personId );
+
+            return new SyncSummary
+            {
+                PersonId = personId,
+                StageId = stageId,
+                Matched = result.MatchedPersonIds?.Count ?? 0,
+                Updated = result.Updated,
+                Skipped = result.Skipped,
+                Errors = result.Errors?.ToList() ?? new List<string>(),
+                Log = result.Log?.ToList() ?? new List<string>()
+            };
+        }
+
+        /// <summary>
         /// Sync a list of people against a single Journey Program.
         /// </summary>
         [Authenticate, Secured]
@@ -233,6 +260,20 @@ namespace com.razayya.JourneyTrack.Rest
         {
             return new JourneyTrackService().ReconcileEnrollments( programId );
         }
+
+        /// <summary>
+        /// Reset enrollment: removes manually-added enrollees (keeping the auto-enrolled set)
+        /// when the program auto-enrolls, or removes all enrollees when it doesn't. Touches
+        /// only the enrollment table — no attributes or calc data are changed.
+        /// </summary>
+        [Authenticate, Secured]
+        [HttpPost]
+        [System.Web.Http.Route( "api/com_razayya_JourneyTrack/JourneyPrograms/ResetEnrollment/{programId}" )]
+        [Rock.SystemGuid.RestActionGuid( "7E3B9C12-4A5D-4E6F-8B90-1C2D3E4F5A6B" )]
+        public ResetEnrollmentResult ResetEnrollment( int programId )
+        {
+            return new JourneyTrackService().ResetEnrollment( programId );
+        }
     }
 
     public class EnrollmentSummary
@@ -247,10 +288,18 @@ namespace com.razayya.JourneyTrack.Rest
         public string Status { get; set; }
     }
 
+    /// <summary>
+    /// Returned by both program-scoped (<see cref="JourneyProgramsController.SyncProgramForPerson"/>)
+    /// and stage-scoped (<see cref="JourneyProgramsController.SyncStageForPerson"/>) endpoints.
+    /// Exactly one of <see cref="ProgramId"/> / <see cref="StageId"/> is populated per call
+    /// (the other defaults to 0 — the caller already knows the scope from the route they hit).
+    /// </summary>
     public class SyncSummary
     {
         public int PersonId { get; set; }
         public int ProgramId { get; set; }
+        /// <summary>Set on stage-scoped sync responses; 0 on program-scoped responses.</summary>
+        public int StageId { get; set; }
         public int Matched { get; set; }
         public int Updated { get; set; }
         public int Skipped { get; set; }

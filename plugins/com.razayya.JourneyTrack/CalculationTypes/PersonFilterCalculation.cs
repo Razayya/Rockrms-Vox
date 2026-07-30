@@ -5,6 +5,7 @@ using System.Data.Entity;
 using System.Linq;
 
 using com.razayya.JourneyTrack.Constants;
+using com.razayya.JourneyTrack.Logic;
 using com.razayya.JourneyTrack.Model;
 
 using Newtonsoft.Json;
@@ -60,26 +61,45 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             JourneyCalculation calc,
             HashSet<int> populationPersonIds )
         {
-            var results = new Dictionary<int, Dictionary<string, object>>();
-
             var conditionsJson = calc.GetAttributeValue( AttributeKey.FilterConditions );
             var matchAll = calc.GetAttributeValue( AttributeKey.MatchAll ).AsBoolean();
 
-            List<FilterCondition> conditions;
-            try
+            var results = new Dictionary<int, Dictionary<string, object>>();
+            foreach ( var personId in EvaluatePopulation( conditionsJson, matchAll, populationPersonIds, rockContext ) )
             {
-                conditions = JsonConvert.DeserializeObject<List<FilterCondition>>( conditionsJson );
+                results[personId] = new Dictionary<string, object> { { "Matched", true } };
             }
-            catch
+            return results;
+        }
+
+        /// <summary>
+        /// Evaluates a FilterConditions JSON (the same shape this component reads from its config)
+        /// against a population and returns the matched Person Ids. Shared so other features —
+        /// notably the per-calculation "Skip If" logic — reuse the exact same property/attribute
+        /// comparison engine instead of re-implementing it. A blank/empty conditions JSON matches
+        /// no one.
+        /// </summary>
+        public static HashSet<int> EvaluatePopulation( string conditionsJson, bool matchAll, HashSet<int> populationPersonIds, RockContext rockContext )
+        {
+            var matched = new HashSet<int>();
+            if ( populationPersonIds == null || populationPersonIds.Count == 0 )
             {
-                return results;
+                return matched;
             }
 
-            if ( conditions == null || conditions.Count == 0 )
+            // Parse into a nested ANY/ALL logic tree. A legacy flat array wraps in a
+            // single root group whose type follows the "Match All" toggle (All when on,
+            // Any when off) — so old configs evaluate exactly as before.
+            var tree = LogicTree.Parse<FilterCondition>(
+                conditionsJson,
+                matchAll ? LogicGroupType.All : LogicGroupType.Any );
+
+            if ( LogicTree.IsEmpty( tree ) )
             {
-                return results;
+                return matched;
             }
 
+            var conditions = LogicTree.GetLeaves( tree ).ToList();
             bool needsProperties = conditions.Any( c => c.Source == FilterSource.Property );
             bool needsAttributes = conditions.Any( c => c.Source == FilterSource.Attribute );
 
@@ -110,28 +130,17 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             // Only load Person entities if we have Property conditions
             if ( needsProperties )
             {
-                var personService = new PersonService( rockContext );
-                var personsQuery = personService.Queryable().AsNoTracking();
-
-                if ( populationPersonIds != null && populationPersonIds.Count > 0 )
-                {
-                    personsQuery = personsQuery.Where( p => populationPersonIds.Contains( p.Id ) );
-                }
-
-                var persons = personsQuery.ToList();
+                var persons = new PersonService( rockContext ).Queryable().AsNoTracking()
+                    .Where( p => populationPersonIds.Contains( p.Id ) )
+                    .ToList();
 
                 foreach ( var person in persons )
                 {
-                    bool matched = matchAll
-                        ? conditions.All( c => EvaluateCondition( person, c, attributeLookup ) )
-                        : conditions.Any( c => EvaluateCondition( person, c, attributeLookup ) );
-
-                    if ( matched )
+                    // EvaluateCondition handles both Property and Attribute leaves, so a
+                    // mixed tree evaluates correctly in the property-bearing path.
+                    if ( LogicTree.Evaluate( tree, c => EvaluateCondition( person, c, attributeLookup ) ) )
                     {
-                        results[person.Id] = new Dictionary<string, object>
-                        {
-                            { "Matched", true }
-                        };
+                        matched.Add( person.Id );
                     }
                 }
             }
@@ -140,24 +149,17 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 // Attribute-only conditions — no need to load Person entities at all
                 foreach ( var personId in populationPersonIds )
                 {
-                    bool matched = matchAll
-                        ? conditions.All( c => EvaluateAttributeCondition( personId, c, attributeLookup ) )
-                        : conditions.Any( c => EvaluateAttributeCondition( personId, c, attributeLookup ) );
-
-                    if ( matched )
+                    if ( LogicTree.Evaluate( tree, c => EvaluateAttributeCondition( personId, c, attributeLookup ) ) )
                     {
-                        results[personId] = new Dictionary<string, object>
-                        {
-                            { "Matched", true }
-                        };
+                        matched.Add( personId );
                     }
                 }
             }
 
-            return results;
+            return matched;
         }
 
-        private bool EvaluateCondition( Person person, FilterCondition condition, Dictionary<int, Dictionary<string, string>> attributeLookup )
+        private static bool EvaluateCondition( Person person, FilterCondition condition, Dictionary<int, Dictionary<string, string>> attributeLookup )
         {
             string actualValue;
 
@@ -180,7 +182,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             return CompareValues( actualValue, condition.Comparison, condition.Value );
         }
 
-        private bool EvaluateAttributeCondition( int personId, FilterCondition condition, Dictionary<int, Dictionary<string, string>> attributeLookup )
+        private static bool EvaluateAttributeCondition( int personId, FilterCondition condition, Dictionary<int, Dictionary<string, string>> attributeLookup )
         {
             var actualValue = GetAttributeValueFromLookup( personId, condition.Key, attributeLookup );
             return CompareValues( actualValue, condition.Comparison, condition.Value );

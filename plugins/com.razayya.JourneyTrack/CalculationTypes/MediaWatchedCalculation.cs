@@ -52,10 +52,55 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             = new System.Collections.Concurrent.ConcurrentDictionary<int, (System.DateTime, Dictionary<int, PersonWatchAggregate>)>();
         private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
 
-        private static Dictionary<int, PersonWatchAggregate> GetWatchAggregates( int mediaElementId, RockContext rockContext )
+        // Per-person bust epochs: a person's single-person evaluation treats any entry
+        // cached before their epoch as a miss (forcing one re-query that refreshes the
+        // shared entry for everyone). Lets "I just watched it" flows get fresh state
+        // without clearing the cache under every other concurrent user.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime> _personBustEpoch
+            = new System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime>();
+
+        /// <summary>
+        /// Clears the per-MediaElement watch aggregate cache for every person. Prefer
+        /// <see cref="InvalidateWatchCacheForPerson"/> on render paths — a global clear
+        /// under concurrent app traffic makes every user repay the Interaction re-union.
+        /// </summary>
+        public static void InvalidateAllWatchCache()
+        {
+            _watchCache.Clear();
+        }
+
+        /// <summary>
+        /// Person-scoped cache bust for "I just wrote an Interaction; show me fresh
+        /// state now" surfaces. Only this person's next single-person evaluation
+        /// re-queries; entries stay warm for everyone else.
+        /// </summary>
+        public static void InvalidateWatchCacheForPerson( int personId )
+        {
+            _personBustEpoch[personId] = System.DateTime.UtcNow;
+        }
+
+        private static bool IsBustedFor( int? personId, System.DateTime cachedAt )
+        {
+            if ( !personId.HasValue || !_personBustEpoch.TryGetValue( personId.Value, out var bustedAt ) )
+            {
+                return false;
+            }
+
+            // Self-clean: an epoch older than the TTL can't outlive any cache entry.
+            if ( ( System.DateTime.UtcNow - bustedAt ) > _cacheTtl )
+            {
+                _personBustEpoch.TryRemove( personId.Value, out _ );
+                return false;
+            }
+
+            return cachedAt < bustedAt;
+        }
+
+        private static Dictionary<int, PersonWatchAggregate> GetWatchAggregates( int mediaElementId, RockContext rockContext, int? forPersonId = null )
         {
             if ( _watchCache.TryGetValue( mediaElementId, out var cached )
-                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl
+                && !IsBustedFor( forPersonId, cached.CachedAt ) )
             {
                 return cached.Map;
             }
@@ -123,7 +168,10 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var mediaElement = new MediaElementService( rockContext ).Get( mediaGuid.Value );
             if ( mediaElement == null ) return results;
 
-            var aggregates = GetWatchAggregates( mediaElement.Id, rockContext );
+            // Single-person evaluations (render-path syncs) honor that person's bust epoch;
+            // population runs always take the shared entry.
+            int? forPersonId = populationPersonIds.Count == 1 ? populationPersonIds.First() : ( int? ) null;
+            var aggregates = GetWatchAggregates( mediaElement.Id, rockContext, forPersonId );
             if ( aggregates.Count == 0 ) return results;
 
             foreach ( var personId in populationPersonIds )
@@ -146,6 +194,54 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             }
 
             return results;
+        }
+
+        /// <inheritdoc/>
+        // The per-MediaElement aggregate cache holds every person's unioned WatchMap
+        // regardless of the threshold — the MinWatchedPercent filter is only applied
+        // at lookup — so partial progress ("80% of 95%") is a straight map lookup.
+        public override Dictionary<string, object> DescribeProgress(
+            RockContext rockContext,
+            JourneyCalculation calc,
+            int personId )
+        {
+            var mediaGuid = calc.GetAttributeValue( "MediaElement" ).AsGuidOrNull();
+            var minPercent = calc.GetAttributeValue( "MinWatchedPercent" ).AsIntegerOrNull() ?? 95;
+
+            double percent = 0;
+            double maxSingleSession = 0;
+            int watchedSeconds = 0;
+            int mapLength = 0;
+            int sessionCount = 0;
+
+            if ( mediaGuid.HasValue )
+            {
+                var mediaElement = new MediaElementService( rockContext ).Get( mediaGuid.Value );
+                if ( mediaElement != null )
+                {
+                    var aggregates = GetWatchAggregates( mediaElement.Id, rockContext, personId );
+                    if ( aggregates.TryGetValue( personId, out var agg ) )
+                    {
+                        watchedSeconds = agg.UnionBits.Count( v => v > 0 );
+                        mapLength = agg.UnionBits.Length;
+                        percent = mapLength > 0 ? ( watchedSeconds * 100.0 / mapLength ) : 0;
+                        maxSingleSession = agg.MaxSingleSession;
+                        sessionCount = agg.SessionCount;
+                    }
+                }
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "Matched", percent >= minPercent },
+                { "Current", ( decimal ) Math.Round( percent, 2 ) },
+                { "Target", ( decimal ) minPercent },
+                { "WatchedPercentage", Math.Round( percent, 2 ) },
+                { "MaxSingleSessionPercentage", Math.Round( maxSingleSession, 2 ) },
+                { "WatchedSeconds", watchedSeconds },
+                { "MapLength", mapLength },
+                { "SessionCount", sessionCount }
+            };
         }
 
         /// <inheritdoc/>

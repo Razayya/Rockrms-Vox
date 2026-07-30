@@ -15,18 +15,19 @@ using Rock.Model;
 namespace com.razayya.JourneyTrack.CalculationTypes
 {
     /// <summary>
-    /// Evaluates whether persons attended any group of the selected group type(s)
-    /// a minimum number of times within a given number of days. For attendance scoped
-    /// to specific, individually-chosen groups rather than whole group types, see
-    /// GroupAttendanceCalculation.
+    /// Evaluates whether persons attended specific, individually-chosen groups a minimum
+    /// number of times within a given number of days. Unlike Group Type Attendance (which
+    /// matches any group belonging to a whole group type), this matches attendance only in
+    /// the explicitly selected groups. The group selection is captured by the cascading
+    /// Group Type → Groups picker on the detail page and stored as a list of Group Guids.
     /// </summary>
-    [Description( "Evaluates attendance against group type(s), a minimum count, and a date range." )]
+    [Description( "Evaluates attendance against specific groups, a minimum count, and a date range." )]
 
-    [GroupTypesField( "Group Types",
-        Description = "The group types to check attendance for.",
-        IsRequired = true,
+    [TextField( "Groups",
+        Description = "The specific groups whose attendance is checked. Managed by the Group Type / Groups picker; stored as a comma-delimited list of Group Guids.",
+        IsRequired = false,
         Order = 0,
-        Key = AttributeKey.GroupTypes )]
+        Key = AttributeKey.Groups_GroupAttendance )]
 
     [IntegerField( "Minimum Count",
         Description = "The minimum number of times a person must have attended.",
@@ -42,16 +43,15 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         Order = 2,
         Key = AttributeKey.WithinDays )]
 
-    public class AttendanceCalculation : JourneyCalculationTypeComponent
+    public class GroupAttendanceCalculation : JourneyCalculationTypeComponent
     {
         /// <inheritdoc/>
-        public override string Title => "Group Type Attendance";
+        public override string Title => "Group Attendance";
 
         /// <inheritdoc/>
         public override string IconCssClass => "fa fa-calendar-check";
 
-        /// <inheritdoc/>
-        // Per-(groupTypeGuids set, withinDays) cache. Stores all candidate persons +
+        // Per-(group guids set, withinDays) cache. Stores all candidate persons +
         // their attendance counts; the per-calc MinimumCount filter is applied at lookup.
         private struct AttendanceSummary
         {
@@ -62,9 +62,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             = new System.Collections.Concurrent.ConcurrentDictionary<string, (System.DateTime, Dictionary<int, AttendanceSummary>)>();
         private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
 
-        private static Dictionary<int, AttendanceSummary> GetAttendanceSummaries( List<System.Guid> groupTypeGuids, int withinDays, RockContext rockContext )
+        private static Dictionary<int, AttendanceSummary> GetAttendanceSummaries( List<System.Guid> groupGuids, int withinDays, RockContext rockContext )
         {
-            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + withinDays;
+            var key = string.Join( ",", groupGuids.OrderBy( g => g ) ) + "|" + withinDays;
             if ( _attCache.TryGetValue( key, out var cached )
                 && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
             {
@@ -77,7 +77,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                     a.DidAttend == true &&
                     a.StartDateTime >= sinceDate &&
                     a.Occurrence.Group != null &&
-                    groupTypeGuids.Contains( a.Occurrence.Group.GroupType.Guid ) &&
+                    groupGuids.Contains( a.Occurrence.Group.Guid ) &&
                     a.PersonAlias != null )
                 .GroupBy( a => a.PersonAlias.PersonId )
                 .Select( g => new
@@ -96,6 +96,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             return map;
         }
 
+        /// <inheritdoc/>
         public override Dictionary<int, Dictionary<string, object>> Evaluate(
             RockContext rockContext,
             JourneyCalculation calc,
@@ -103,16 +104,16 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         {
             var results = new Dictionary<int, Dictionary<string, object>>();
 
-            var groupTypeGuids = calc.GetAttributeValue( AttributeKey.GroupTypes )
+            var groupGuids = calc.GetAttributeValue( AttributeKey.Groups_GroupAttendance )
                 .SplitDelimitedValues()
                 .AsGuidList();
             var minimumCount = calc.GetAttributeValue( AttributeKey.MinimumCount ).AsIntegerOrNull() ?? 1;
             var withinDays = calc.GetAttributeValue( AttributeKey.WithinDays ).AsIntegerOrNull() ?? 90;
 
-            if ( !groupTypeGuids.Any() ) return results;
+            if ( !groupGuids.Any() ) return results;
             if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
 
-            var attMap = GetAttendanceSummaries( groupTypeGuids, withinDays, rockContext );
+            var attMap = GetAttendanceSummaries( groupGuids, withinDays, rockContext );
             if ( attMap.Count == 0 ) return results;
 
             foreach ( var personId in populationPersonIds )
@@ -140,7 +141,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             JourneyCalculation calc,
             int personId )
         {
-            var groupTypeGuids = calc.GetAttributeValue( AttributeKey.GroupTypes )
+            var groupGuids = calc.GetAttributeValue( AttributeKey.Groups_GroupAttendance )
                 .SplitDelimitedValues()
                 .AsGuidList();
             var minimumCount = calc.GetAttributeValue( AttributeKey.MinimumCount ).AsIntegerOrNull() ?? 1;
@@ -149,9 +150,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             int count = 0;
             System.DateTime? lastAttendance = null;
 
-            if ( groupTypeGuids.Any() )
+            if ( groupGuids.Any() )
             {
-                var attMap = GetAttendanceSummaries( groupTypeGuids, withinDays, rockContext );
+                var attMap = GetAttendanceSummaries( groupGuids, withinDays, rockContext );
                 if ( attMap.TryGetValue( personId, out var summary ) )
                 {
                     count = summary.AttendanceCount;

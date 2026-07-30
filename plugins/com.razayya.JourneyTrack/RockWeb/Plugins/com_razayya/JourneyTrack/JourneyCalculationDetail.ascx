@@ -4,6 +4,8 @@
     Src="~/Plugins/com_razayya/JourneyTrack/Controls/FilterConditionsEditor.ascx" %>
 <%@ Register TagPrefix="jt" TagName="CompletionCriteriaEditor"
     Src="~/Plugins/com_razayya/JourneyTrack/Controls/CompletionCriteriaEditor.ascx" %>
+<%@ Register TagPrefix="jt" TagName="GroupAttendancePicker"
+    Src="~/Plugins/com_razayya/JourneyTrack/Controls/GroupAttendancePicker.ascx" %>
 
 <asp:UpdatePanel ID="upnlContent" runat="server">
     <ContentTemplate>
@@ -51,6 +53,9 @@
                         <asp:LinkButton ID="btnCopy" runat="server" Text="Copy" CssClass="btn btn-default btn-sm"
                             OnClick="btnCopy_Click" CausesValidation="false"
                             ToolTip="Create a copy of this Calculation." />
+                        <asp:LinkButton ID="btnDelete" runat="server" Text="Delete" CssClass="btn btn-link"
+                            OnClick="btnDelete_Click" CausesValidation="false"
+                            OnClientClick="return Rock.dialogs.confirmDelete(event, 'Calculation');" />
                         <asp:LinkButton ID="btnBack" runat="server" Text="Back" CssClass="btn btn-link"
                             OnClick="btnBack_Click" CausesValidation="false" />
                     </div>
@@ -125,6 +130,20 @@
                         <%-- Visual editors that replace the JSON textarea for known JSON-input attrs --%>
                         <jt:FilterConditionsEditor   ID="fcEditor" runat="server" Visible="false" />
                         <jt:CompletionCriteriaEditor ID="ccEditor" runat="server" Visible="false" />
+                        <jt:GroupAttendancePicker    ID="gaEditor" runat="server" Visible="false" />
+                    </asp:Panel>
+
+                    <%-- Skip If: optional PersonFilter-style override, applies to EVERY calc type. People
+                         matching these conditions are skipped — counted as passed for stage completion,
+                         shown as "Skipped" in the progress block, with the target attribute left blank. --%>
+                    <asp:Panel ID="pnlSkipIf" runat="server" CssClass="well">
+                        <h5><i class="fa fa-forward"></i> Skip If <small class="text-muted">(optional)</small></h5>
+                        <p class="help-block">
+                            People matching these conditions are <strong>skipped</strong> for this calculation:
+                            they count as completed for stage progress (shown as &ldquo;Skipped&rdquo;), are not
+                            re-evaluated, and their target attribute is left blank. Leave empty for no skip logic.
+                        </p>
+                        <jt:FilterConditionsEditor ID="fcSkip" runat="server" />
                     </asp:Panel>
 
                     <hr />

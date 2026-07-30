@@ -7,6 +7,7 @@ using System.Linq;
 using com.razayya.JourneyTrack.CalculationTypes;
 using com.razayya.JourneyTrack.Data;
 using com.razayya.JourneyTrack.Model;
+using com.razayya.JourneyTrack.UI;
 using System.Web.UI.WebControls;
 
 using Rock;
@@ -75,6 +76,29 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 PopulateValidCategoriesPanel();
                 ShowDetail( calcId );
             }
+            else if ( pnlEdit.Visible )
+            {
+                // Re-add dynamically-rendered component-attribute editors on every postback
+                // while in edit mode. Without this, the MediaElement picker's inner AJAX
+                // postback (account → folder cascade) loses its parent controls because they
+                // weren't recreated this lifecycle. Any FieldType with internal postback
+                // behaviour (MediaElement, Schedule, Group hierarchy, ...) had the same bug.
+                var typeGuid = cpCalculationType.SelectedValue.AsGuidOrNull();
+                if ( typeGuid.HasValue )
+                {
+                    var entityType = EntityTypeCache.Get( typeGuid.Value );
+                    if ( entityType != null )
+                    {
+                        var calc = new JourneyCalculation
+                        {
+                            Id = JourneyCalculationId,
+                            CalculationTypeEntityTypeId = entityType.Id,
+                            StageId = ParentSubGroupId
+                        };
+                        LoadComponentAttributes( calc );
+                    }
+                }
+            }
         }
 
         #endregion
@@ -131,6 +155,12 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 calc.SkipIfTargetHasValue = cbSkipIfTargetHasValue.Checked;
                 calc.OnMatchSystemCommunicationId = ddlOnMatchCommunication.SelectedValueAsInt();
 
+                // Skip If (optional, all calc types). Blank → null so the engine's presence-gate treats
+                // the calc as having no skip logic (zero overhead). Stored on the model, not an attribute.
+                var skipJson = fcSkip.Value;
+                calc.SkipFilterJson = ( string.IsNullOrWhiteSpace( skipJson ) || skipJson.Trim() == "[]" ) ? null : skipJson;
+                calc.SkipFilterMatchAll = fcSkip.GetMatchAll();
+
                 if ( calc.NoMatchBehavior == NoMatchBehavior.WriteLava && string.IsNullOrWhiteSpace( calc.NoMatchLavaTemplate ) )
                 {
                     nbWarning.Text = "A No Match Lava Template is required when No Match Behavior is set to 'Write Lava Value'.";
@@ -169,6 +199,19 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 {
                     editorErrors = ccEditor.GetValidationErrors();
                 }
+                else if ( componentTypeName.EndsWith( ".GroupAttendanceCalculation" ) && gaEditor.Visible )
+                {
+                    editorErrors = gaEditor.GetValidationErrors();
+                }
+
+                // The Skip If editor is present for every calc type — validate it too.
+                var skipErrors = fcSkip.GetValidationErrors();
+                if ( skipErrors != null && skipErrors.Count > 0 )
+                {
+                    editorErrors = editorErrors ?? new List<string>();
+                    foreach ( var s in skipErrors ) { editorErrors.Add( "Skip If: " + s ); }
+                }
+
                 if ( editorErrors != null && editorErrors.Count > 0 )
                 {
                     nbWarning.Text = "<strong>Please fix the following before saving:</strong><ul><li>"
@@ -205,6 +248,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 {
                     calc.SetAttributeValue( "CompletionCriteria", ccEditor.Value );
                 }
+                else if ( componentName.EndsWith( ".GroupAttendanceCalculation" ) && gaEditor.Visible )
+                {
+                    calc.SetAttributeValue( "Groups_GroupAttendance", gaEditor.Value );
+                }
 
                 calc.SaveAttributeValues( rockContext );
 
@@ -235,6 +282,28 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             {
                 NavigateToCurrentPageReference( new Dictionary<string, string> { { "JourneyCalculationId", newId.ToString() } } );
             }
+        }
+
+        protected void btnDelete_Click( object sender, EventArgs e )
+        {
+            int parentStageId = ParentSubGroupId;
+
+            using ( var rockContext = new RockContext() )
+            {
+                var service = new JourneyCalculationService( rockContext );
+                var calc = service.Get( JourneyCalculationId );
+                if ( calc != null )
+                {
+                    // Capture the parent before delete so we can navigate back to it.
+                    // The DB cascades JourneyCalculationRun history (ON DELETE CASCADE);
+                    // orphaned component AttributeValues are reaped by the Rock Cleanup job.
+                    parentStageId = calc.StageId;
+                    service.Delete( calc );
+                    rockContext.SaveChanges();
+                }
+            }
+
+            NavigateToLinkedPage( "ParentPage", "StageId", parentStageId );
         }
 
         protected void btnBack_Click( object sender, EventArgs e )
@@ -318,33 +387,6 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
         #endregion
 
         #region Methods
-
-        /// <summary>
-        /// Shared helper: load all active SystemCommunication templates into a
-        /// dropdown (alphabetical), preserve a "(none)" empty option, and select
-        /// the current Id if one is configured.
-        /// </summary>
-        internal static void PopulateSystemCommunicationPicker( Rock.Web.UI.Controls.RockDropDownList ddl, int? selectedId )
-        {
-            ddl.Items.Clear();
-            ddl.Items.Add( new System.Web.UI.WebControls.ListItem( "(none)", string.Empty ) );
-            using ( var rockContext = new RockContext() )
-            {
-                var comms = new SystemCommunicationService( rockContext ).Queryable().AsNoTracking()
-                    .Where( c => c.IsActive == true )
-                    .OrderBy( c => c.Title )
-                    .Select( c => new { c.Id, c.Title } )
-                    .ToList();
-                foreach ( var c in comms )
-                {
-                    ddl.Items.Add( new System.Web.UI.WebControls.ListItem( c.Title, c.Id.ToString() ) );
-                }
-            }
-            if ( selectedId.HasValue && selectedId.Value > 0 )
-            {
-                ddl.SetValue( selectedId.Value );
-            }
-        }
 
         private void PopulateDropDowns()
         {
@@ -531,6 +573,13 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                         calc.Id );
                     configHtml += string.Format( "<dt>Completion Criteria</dt><dd>{0}</dd>", summary );
                 }
+                else if ( componentNameForView.EndsWith( ".GroupAttendanceCalculation" ) )
+                {
+                    excludeKeys.Add( "Groups_GroupAttendance" );
+                    var summary = JtControls.GroupAttendancePicker.FormatSummaryHtml(
+                        calc.GetAttributeValue( "Groups_GroupAttendance" ) );
+                    configHtml += string.Format( "<dt>Groups</dt><dd>{0}</dd>", summary );
+                }
 
                 foreach ( var attr in calc.Attributes )
                 {
@@ -584,7 +633,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             pnlNoMatchLava.Visible = calc.NoMatchBehavior == NoMatchBehavior.WriteLava;
             ceNoMatchLava.Text = calc.NoMatchLavaTemplate;
             cbSkipIfTargetHasValue.Checked = calc.SkipIfTargetHasValue;
-            PopulateSystemCommunicationPicker( ddlOnMatchCommunication, calc.OnMatchSystemCommunicationId );
+            JourneyTrackUiHelper.PopulateSystemCommunicationPicker( ddlOnMatchCommunication, calc.OnMatchSystemCommunicationId );
 
             // Load component attributes
             LoadComponentAttributes( calc, rockContext );
@@ -661,6 +710,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 var componentName = entityType.Name ?? string.Empty;
                 fcEditor.Visible = false;
                 ccEditor.Visible = false;
+                gaEditor.Visible = false;
 
                 if ( componentName.EndsWith( ".PersonFilterCalculation" ) )
                 {
@@ -687,6 +737,23 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     {
                         ccEditor.Value = calc.GetAttributeValue( "CompletionCriteria" );
                     }
+                }
+                else if ( componentName.EndsWith( ".GroupAttendanceCalculation" ) )
+                {
+                    excludeKeys.Add( "Groups_GroupAttendance" );
+                    gaEditor.Visible = true;
+                    if ( !gaEditor.HasInSessionState )
+                    {
+                        gaEditor.Value = calc.GetAttributeValue( "Groups_GroupAttendance" );
+                    }
+                }
+
+                // Skip If (all calc types). Seed from the model unless the editor already holds
+                // in-session rows (preserve user edits across calc-type toggles, like the others).
+                if ( !fcSkip.HasInSessionState )
+                {
+                    fcSkip.Value = calc.SkipFilterJson;
+                    fcSkip.SetMatchAll( calc.SkipFilterMatchAll );
                 }
 
                 Rock.Attribute.Helper.AddEditControls( calc, phComponentAttributes, true, BlockValidationGroup, excludeKeys );

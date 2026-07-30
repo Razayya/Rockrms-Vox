@@ -5,6 +5,7 @@ using System.Data.Entity;
 using System.Linq;
 
 using com.razayya.JourneyTrack.Constants;
+using com.razayya.JourneyTrack.Logic;
 using com.razayya.JourneyTrack.Model;
 
 using Newtonsoft.Json;
@@ -60,6 +61,15 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var results = new Dictionary<int, Dictionary<string, object>>();
 
             var criteriaJson = calc.GetAttributeValue( AttributeKey.CompletionCriteria );
+
+            // A nested ANY/ALL tree config (JSON object) routes to the tree evaluator.
+            // A legacy flat array keeps the original required-criteria-AND behavior
+            // below entirely untouched (including its "no required = everyone passes" rule).
+            if ( ( criteriaJson ?? string.Empty ).TrimStart().StartsWith( "{" ) )
+            {
+                return EvaluateTree( rockContext, criteriaJson, populationPersonIds );
+            }
+
             List<CompletionCriterion> criteria;
             try
             {
@@ -100,6 +110,11 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 .Select( c => new { c.Id, c.PersonAttributeId } )
                 .ToList();
 
+            // Manual skips (7038): a person manually skipped on a referenced sibling calc
+            // satisfies that criterion outright — their sink stays blank by design, so the
+            // attribute comparison below would otherwise fail them forever.
+            var manualSkipLookup = LoadManualSkips( rockContext, calculationIds );
+
             // Map JourneyCalculationId => AttributeCache (skip siblings that are transient — no sink to read).
             var attributeMap = new Dictionary<int, Rock.Web.Cache.AttributeCache>();
             foreach ( var sibling in siblingCalculations )
@@ -138,6 +153,15 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
                 foreach ( var criterion in requiredCriteria )
                 {
+                    // Manual skip on the referenced sibling satisfies the criterion (checked
+                    // before the transient-sibling guard so skips work on sink-less calcs too).
+                    if ( manualSkipLookup.TryGetValue( criterion.JourneyCalculationId, out var skippedPersonIds )
+                        && skippedPersonIds.Contains( personId ) )
+                    {
+                        completedCount++;
+                        continue;
+                    }
+
                     if ( !attributeMap.TryGetValue( criterion.JourneyCalculationId, out var targetAttribute ) )
                     {
                         allRequiredMet = false;
@@ -175,6 +199,136 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             }
 
             return results;
+        }
+
+        /// <summary>
+        /// Evaluates a nested ANY/ALL <see cref="LogicNode{CompletionCriterion}"/> tree.
+        /// Each leaf compares a sibling JourneyCalculation's target attribute value;
+        /// the tree combines those leaf results with All/Any/AllFalse/AnyFalse. The
+        /// per-leaf <c>IsRequired</c> flag is unused here — requiredness is expressed
+        /// by the tree shape (a leaf inside an All group is effectively required).
+        /// </summary>
+        private Dictionary<int, Dictionary<string, object>> EvaluateTree(
+            RockContext rockContext,
+            string criteriaJson,
+            HashSet<int> populationPersonIds )
+        {
+            var results = new Dictionary<int, Dictionary<string, object>>();
+
+            var tree = LogicTree.Parse<CompletionCriterion>( criteriaJson, LogicGroupType.All );
+            if ( LogicTree.IsEmpty( tree ) )
+            {
+                return results;
+            }
+
+            var leaves = LogicTree.GetLeaves( tree ).ToList();
+
+            // Resolve each referenced sibling calc's target attribute (skip transient siblings).
+            var calculationService = new JourneyCalculationService( rockContext );
+            var calculationIds = leaves.Select( c => c.JourneyCalculationId ).Distinct().ToList();
+
+            // Manual skips (7038): a skipped sibling leaf evaluates as satisfied.
+            var manualSkipLookup = LoadManualSkips( rockContext, calculationIds );
+            var siblingCalculations = calculationService.Queryable().AsNoTracking()
+                .Where( c => calculationIds.Contains( c.Id ) )
+                .Select( c => new { c.Id, c.PersonAttributeId } )
+                .ToList();
+
+            var attributeMap = new Dictionary<int, Rock.Web.Cache.AttributeCache>();
+            foreach ( var sibling in siblingCalculations )
+            {
+                if ( !sibling.PersonAttributeId.HasValue )
+                {
+                    continue;
+                }
+                var attrCache = Rock.Web.Cache.AttributeCache.Get( sibling.PersonAttributeId.Value );
+                if ( attrCache != null )
+                {
+                    attributeMap[sibling.Id] = attrCache;
+                }
+            }
+
+            // Batch-load only the specific attribute values needed — one query.
+            var neededAttributeIds = attributeMap.Values.Select( a => a.Id ).Distinct().ToList();
+            var attributeLookup = new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                .Where( av =>
+                    neededAttributeIds.Contains( av.AttributeId ) &&
+                    av.EntityId.HasValue &&
+                    populationPersonIds.Contains( av.EntityId.Value ) )
+                .Select( av => new { EntityId = av.EntityId.Value, av.AttributeId, av.Value } )
+                .ToList()
+                .GroupBy( av => av.EntityId )
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.ToDictionary( av => av.AttributeId, av => av.Value ?? string.Empty ) );
+
+            foreach ( var personId in populationPersonIds )
+            {
+                attributeLookup.TryGetValue( personId, out var personAttrs );
+
+                Func<CompletionCriterion, bool> leafEval = criterion =>
+                {
+                    if ( manualSkipLookup.TryGetValue( criterion.JourneyCalculationId, out var skippedPersonIds )
+                        && skippedPersonIds.Contains( personId ) )
+                    {
+                        return true;
+                    }
+
+                    if ( !attributeMap.TryGetValue( criterion.JourneyCalculationId, out var targetAttribute ) )
+                    {
+                        return false;
+                    }
+                    string attrValue = string.Empty;
+                    if ( personAttrs != null && personAttrs.TryGetValue( targetAttribute.Id, out var val ) )
+                    {
+                        attrValue = val;
+                    }
+                    return PersonFilterCalculation.CompareValues( attrValue, criterion.Comparison, criterion.Value );
+                };
+
+                if ( LogicTree.Evaluate( tree, leafEval ) )
+                {
+                    int completedCount = leaves.Count( leafEval );
+                    results[personId] = new Dictionary<string, object>
+                    {
+                        { "Matched", true },
+                        { "CompletedCount", completedCount },
+                        { "RequiredCount", leaves.Count }
+                    };
+                }
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Loads active manual skips for the referenced sibling calcs as a
+        /// calcId → personId-set map. Skip rows are inherently few (staff-created,
+        /// one person at a time), so this loads by calc Id only — no population filter.
+        /// </summary>
+        private static Dictionary<int, HashSet<int>> LoadManualSkips( RockContext rockContext, List<int> calculationIds )
+        {
+            var lookup = new Dictionary<int, HashSet<int>>();
+            if ( calculationIds == null || calculationIds.Count == 0 )
+            {
+                return lookup;
+            }
+
+            var rows = new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
+                .Where( s => s.IsActive && calculationIds.Contains( s.JourneyCalculationId ) )
+                .Select( s => new { s.JourneyCalculationId, s.PersonAlias.PersonId } )
+                .ToList();
+
+            foreach ( var row in rows )
+            {
+                if ( !lookup.TryGetValue( row.JourneyCalculationId, out var set ) )
+                {
+                    set = new HashSet<int>();
+                    lookup[row.JourneyCalculationId] = set;
+                }
+                set.Add( row.PersonId );
+            }
+            return lookup;
         }
 
         /// <inheritdoc/>

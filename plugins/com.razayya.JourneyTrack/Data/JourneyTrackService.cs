@@ -3,7 +3,10 @@ using System.Collections.Generic;
 using System.Data.Entity;
 using System.Linq;
 
+using Newtonsoft.Json;
+
 using com.razayya.JourneyTrack.CalculationTypes;
+using com.razayya.JourneyTrack.Logic;
 using com.razayya.JourneyTrack.Model;
 
 using Rock;
@@ -26,6 +29,36 @@ namespace com.razayya.JourneyTrack.Data
         public int? RunByPersonAliasId { get; set; }
 
         /// <summary>
+        /// Optional progress sink. When set (e.g. by the nightly job, which wires this
+        /// to RockJob.UpdateLastStatusMessage), the engine reports milestone-level
+        /// progress so a long full-population run is observable live on the Jobs
+        /// Administration page. Left null on the single-person / mobile sync paths, so
+        /// those carry zero overhead.
+        /// </summary>
+        public Action<string> OnProgress { get; set; }
+
+        /// <summary>
+        /// When true (set by the single-person render-path entry points), per-calc
+        /// JourneyCalculationRun rows are only recorded for calcs that actually wrote
+        /// a value or errored. A page render otherwise INSERTs one row per active calc
+        /// (~60 per pathway page open) — pure overhead that had the run-log table
+        /// growing from renders, not engine work. Job / admin runs keep full logging.
+        /// </summary>
+        private bool _suppressNoChangeRunLogs = false;
+
+        /// <summary>
+        /// Emits a progress message if a sink is wired. Never throws into the engine.
+        /// </summary>
+        private void Report( string message )
+        {
+            if ( OnProgress == null )
+            {
+                return;
+            }
+            try { OnProgress( message ); } catch { /* progress is best-effort */ }
+        }
+
+        /// <summary>
         /// Processes all active Journey Programs.
         /// </summary>
         public SyncResult ProcessAllGroups()
@@ -40,19 +73,25 @@ namespace com.razayya.JourneyTrack.Data
                     .ThenBy( g => g.Name )
                     .ToList();
 
+                int groupIndex = 0;
                 foreach ( var group in groups )
                 {
+                    groupIndex++;
                     try
                     {
+                        Report( $"Program {groupIndex}/{groups.Count} '{group.Name}': starting" );
+
                         // Reconcile enrollments from the population spec BEFORE processing,
                         // so the run iterates the freshly-materialized active set.
                         if ( group.RequiresEnrollment && group.AutoEnrollFromPopulation )
                         {
+                            Report( $"Program '{group.Name}': reconciling enrollments" );
                             var rec = ReconcileEnrollments( group.Id );
                             if ( rec.Added > 0 || rec.Reactivated > 0 || rec.SoftUnenrolled > 0 )
                             {
                                 result.Log.Add( $"Reconcile '{group.Name}': +{rec.Added} added, +{rec.Reactivated} reactivated, -{rec.SoftUnenrolled} soft-unenrolled (active now {rec.ActiveAfter})." );
                             }
+                            Report( $"Program '{group.Name}': enrollment reconciled (+{rec.Added} new, +{rec.Reactivated} reactivated, active {rec.ActiveAfter})" );
                             result.Errors.AddRange( rec.Errors );
                         }
 
@@ -74,27 +113,154 @@ namespace com.razayya.JourneyTrack.Data
         /// </summary>
         public SyncResult ProcessGroupForPerson( int calculationGroupId, int personId )
         {
+            return ProcessProgramForPersonInternal( calculationGroupId, personId, maxStageOrder: int.MaxValue );
+        }
+
+        /// <summary>
+        /// Processes a single Stage for a single person. Runs the cascade from Stage Order
+        /// 0 up through the target Stage (inclusive) so prerequisite gating remains correct,
+        /// then stops — later Stages are not evaluated. The per-calc-type cache (30s TTL)
+        /// keeps repeat upstream evaluation cheap when the mobile app opens nearby pages
+        /// in quick succession. Skips the program rollup write (intersection over a partial
+        /// stagePassers map would be wrong) — that's reserved for full-program syncs.
+        /// </summary>
+        public SyncResult ProcessStageForPerson( int stageId, int personId )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var stage = new StageService( rockContext ).Get( stageId );
+                if ( stage == null )
+                {
+                    var r = new SyncResult();
+                    r.Errors.Add( $"Stage Id {stageId} not found." );
+                    return r;
+                }
+                if ( !stage.IsActive )
+                {
+                    var r = new SyncResult();
+                    r.Errors.Add( $"Stage Id {stageId} ('{stage.Name}') is inactive." );
+                    return r;
+                }
+
+                // Fast path: seed prerequisite gating from the person's stored stage
+                // status and evaluate ONLY the target stage — the upstream cascade is
+                // exactly what the stored state already answers. Falls back to the full
+                // cascade when stored state is missing/incomplete (which also warms it).
+                var seeded = TryProcessStageSeededForPerson( stage, personId );
+                if ( seeded != null )
+                {
+                    return seeded;
+                }
+
+                return ProcessProgramForPersonInternal( stage.JourneyProgramId, personId, maxStageOrder: stage.Order );
+            }
+        }
+
+        /// <summary>
+        /// Stage-scoped single-person sync that seeds every earlier stage's pass state
+        /// from the enrollment's StageStatusJson instead of re-evaluating the cascade,
+        /// then evaluates just the target stage and merges its result back into the
+        /// stored state. Earlier-stage staleness is bounded by the nightly full run and
+        /// by each stage page syncing its own stage on open. Returns null when the
+        /// person has no stored state covering every earlier active stage — the caller
+        /// falls back to the full cascade.
+        /// </summary>
+        private SyncResult TryProcessStageSeededForPerson( Stage targetStage, int personId )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var storedJson = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                    .Where( e => e.JourneyProgramId == targetStage.JourneyProgramId && e.IsActive && e.PersonAlias.PersonId == personId )
+                    .OrderBy( e => e.Id )
+                    .Select( e => e.StageStatusJson )
+                    .FirstOrDefault();
+
+                var state = ParseStageStatus( storedJson );
+                if ( state.Count == 0 )
+                {
+                    return null;
+                }
+
+                // Every earlier active stage (cascade order: Order, then Name) must be
+                // covered by stored state, or we can't seed prerequisite gating.
+                var earlierStages = new StageService( rockContext ).Queryable().AsNoTracking()
+                    .Where( s => s.JourneyProgramId == targetStage.JourneyProgramId && s.IsActive
+                        && s.Order <= targetStage.Order && s.Id != targetStage.Id )
+                    .Select( s => s.Id )
+                    .ToList();
+                if ( earlierStages.Any( id => !state.ContainsKey( id ) ) )
+                {
+                    return null;
+                }
+
+                _suppressNoChangeRunLogs = true;
+                var result = new SyncResult();
+                var population = new HashSet<int> { personId };
+
+                var seededPassers = new Dictionary<int, HashSet<int>>();
+                foreach ( var stageIdEarlier in earlierStages )
+                {
+                    seededPassers[stageIdEarlier] = state[stageIdEarlier]
+                        ? new HashSet<int> { personId }
+                        : new HashSet<int>();
+                }
+
+                result.Log.Add( $"Stage '{targetStage.Name}': single-person seeded sync for PersonId {personId} — prerequisites from stored state ({earlierStages.Count} stage(s) seeded)" );
+
+                SubGroupProcessResult subResult;
+                try
+                {
+                    subResult = ProcessSubGroupInternal( targetStage, population, seededPassers, rockContext );
+                }
+                catch ( Exception ex )
+                {
+                    result.Errors.Add( $"SubGroup '{targetStage.Name}': {ex.Message}" );
+                    return result;
+                }
+                result.Merge( subResult.Result );
+
+                // Merge just the target stage back into stored state (never fail-open results).
+                var stagePassers = new Dictionary<int, HashSet<int>> { [targetStage.Id] = subResult.Passers };
+                var erroredStageIds = subResult.EvaluationFailed ? new HashSet<int> { targetStage.Id } : null;
+                WriteEnrollmentStageStatusForPerson( targetStage.JourneyProgramId, personId, stagePassers, erroredStageIds, result, rockContext );
+
+                if ( result.Updated > 0 )
+                {
+                    FlushAttributeCache();
+                }
+
+                return result;
+            }
+        }
+
+        private SyncResult ProcessProgramForPersonInternal( int programId, int personId, int maxStageOrder )
+        {
             var result = new SyncResult();
+            _suppressNoChangeRunLogs = true;
 
             using ( var rockContext = new RockContext() )
             {
-                var group = new JourneyProgramService( rockContext ).Get( calculationGroupId );
+                var group = new JourneyProgramService( rockContext ).Get( programId );
                 if ( group == null )
                 {
-                    result.Errors.Add( $"Journey Program Id {calculationGroupId} not found." );
+                    result.Errors.Add( $"Journey Program Id {programId} not found." );
                     return result;
                 }
 
                 var singlePersonPopulation = new HashSet<int> { personId };
-                result.Log.Add( $"Group '{group.Name}': single-person sync for PersonId {personId}" );
+                var scopeNote = maxStageOrder == int.MaxValue
+                    ? $"full program"
+                    : $"stage-scoped (Order <= {maxStageOrder})";
+                result.Log.Add( $"Group '{group.Name}': single-person sync for PersonId {personId} — {scopeNote}" );
 
                 var subGroups = new StageService( rockContext ).Queryable()
-                    .Where( sg => sg.JourneyProgramId == group.Id && sg.IsActive )
+                    .Where( sg => sg.JourneyProgramId == group.Id && sg.IsActive && sg.Order <= maxStageOrder )
                     .OrderBy( sg => sg.Order )
                     .ThenBy( sg => sg.Name )
                     .ToList();
 
                 var subGroupPassers = new Dictionary<int, HashSet<int>>();
+                var erroredStageIds = new HashSet<int>();
 
                 foreach ( var subGroup in subGroups )
                 {
@@ -103,19 +269,47 @@ namespace com.razayya.JourneyTrack.Data
                         var subResult = ProcessSubGroupInternal( subGroup, singlePersonPopulation, subGroupPassers, rockContext );
                         result.Merge( subResult.Result );
                         subGroupPassers[subGroup.Id] = subResult.Passers;
+                        if ( subResult.EvaluationFailed )
+                        {
+                            erroredStageIds.Add( subGroup.Id );
+                        }
                     }
                     catch ( Exception ex )
                     {
                         result.Errors.Add( $"SubGroup '{subGroup.Name}': {ex.Message}" );
                         subGroupPassers[subGroup.Id] = singlePersonPopulation;
+                        erroredStageIds.Add( subGroup.Id );
                     }
                 }
 
-                // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries)
-                WriteProgramRollup( group, singlePersonPopulation, subGroupPassers, result, rockContext );
+                // Persist the evaluated stages' pass state onto the enrollment row so read
+                // surfaces (personjourneyprogress) serve stored state instead of re-running
+                // the engine. Stage-scoped syncs merge only the stages they evaluated;
+                // errored stages are excluded (their passer sets are fail-open).
+                WriteEnrollmentStageStatusForPerson( group.Id, personId, subGroupPassers, erroredStageIds, result, rockContext );
+
+                // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries).
+                // Only safe when every Stage has been evaluated — a partial stagePassers map would
+                // make the AllStagesPass intersection report false completions.
+                if ( maxStageOrder == int.MaxValue )
+                {
+                    WriteProgramRollup( group, singlePersonPopulation, subGroupPassers, result, rockContext );
+                }
+                else
+                {
+                    result.Log.Add( $"  (program rollup skipped — partial stage scope)" );
+                }
             }
 
-            FlushAttributeCache();
+            // Only pay the cache flush when this sync actually wrote something. The
+            // previous unconditional call cleared the ENTIRE RockCache on every
+            // pathway page open — including the ~99% of renders that write nothing —
+            // degrading every other page on the site and forcing the very next tag
+            // in the render (personjourneyprogress) to rebuild cold caches.
+            if ( result.Updated > 0 )
+            {
+                FlushAttributeCache();
+            }
             return result;
         }
 
@@ -135,8 +329,10 @@ namespace com.razayya.JourneyTrack.Data
                     return result;
                 }
 
+                Report( $"Program '{group.Name}': building base population" );
                 var basePopulation = BuildBasePopulation( group, rockContext );
                 result.Log.Add( $"Group '{group.Name}': base population {basePopulation.Count}" );
+                Report( $"Program '{group.Name}': base population {basePopulation.Count:N0}" );
 
                 var subGroups = new StageService( rockContext ).Queryable()
                     .Where( sg => sg.JourneyProgramId == group.Id && sg.IsActive )
@@ -145,24 +341,43 @@ namespace com.razayya.JourneyTrack.Data
                     .ToList();
 
                 var subGroupPassers = new Dictionary<int, HashSet<int>>();
+                var erroredStageIds = new HashSet<int>();
+                var progSummary = new ProgramRunSummary { ProgramName = group.Name, Enrollees = basePopulation.Count };
 
+                int stageIndex = 0;
                 foreach ( var subGroup in subGroups )
                 {
+                    stageIndex++;
                     try
                     {
-                        var subResult = ProcessSubGroupInternal( subGroup, basePopulation, subGroupPassers, rockContext );
+                        var subResult = ProcessSubGroupInternal( subGroup, basePopulation, subGroupPassers, rockContext, stageIndex, subGroups.Count );
                         result.Merge( subResult.Result );
                         subGroupPassers[subGroup.Id] = subResult.Passers;
+                        if ( subResult.EvaluationFailed )
+                        {
+                            erroredStageIds.Add( subGroup.Id );
+                        }
+                        if ( subResult.Summary != null )
+                        {
+                            progSummary.Stages.Add( subResult.Summary );
+                        }
                     }
                     catch ( Exception ex )
                     {
                         result.Errors.Add( $"SubGroup '{subGroup.Name}': {ex.Message}" );
                         subGroupPassers[subGroup.Id] = basePopulation;
+                        erroredStageIds.Add( subGroup.Id );
                     }
                 }
 
                 // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries)
-                WriteProgramRollup( group, basePopulation, subGroupPassers, result, rockContext );
+                WriteProgramRollup( group, basePopulation, subGroupPassers, result, rockContext, progSummary );
+
+                // Persist per-stage state for the whole population so render-path reads
+                // (personjourneyprogress) stay a single-row lookup for every enrollee.
+                Report( $"Program '{group.Name}': persisting enrollment stage status" );
+                WriteEnrollmentStageStatusBulk( group, basePopulation, subGroupPassers, erroredStageIds, result, rockContext );
+                result.ProgramSummaries.Add( progSummary );
 
                 group.LastRunDateTime = RockDateTime.Now;
                 rockContext.SaveChanges();
@@ -405,9 +620,12 @@ namespace com.razayya.JourneyTrack.Data
             Stage subGroup,
             HashSet<int> basePopulation,
             Dictionary<int, HashSet<int>> subGroupPassers,
-            RockContext rockContext )
+            RockContext rockContext,
+            int stageIndex = 0,
+            int stageCount = 0 )
         {
             var result = new SyncResult();
+            var stageLabel = stageCount > 0 ? $"Stage {stageIndex}/{stageCount} '{subGroup.Name}'" : $"Stage '{subGroup.Name}'";
 
             HashSet<int> workingPopulation;
             var prerequisiteIds = ( subGroup.PrerequisiteStageIds ?? string.Empty )
@@ -460,7 +678,8 @@ namespace com.razayya.JourneyTrack.Data
                         return new SubGroupProcessResult
                         {
                             Result = result,
-                            Passers = basePopulation
+                            Passers = basePopulation,
+                            EvaluationFailed = true
                         };
                     }
                 }
@@ -474,10 +693,14 @@ namespace com.razayya.JourneyTrack.Data
             if ( workingPopulation.Count == 0 )
             {
                 result.Log.Add( $"    (skipping {subGroup.Name} calc evaluation — empty working population)" );
+                Report( $"{stageLabel}: skipped (no one reached this stage yet)" );
+                int skippedCalcCount = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                    .Count( c => c.StageId == subGroup.Id && c.IsActive );
                 return new SubGroupProcessResult
                 {
                     Result = result,
-                    Passers = new HashSet<int>()
+                    Passers = new HashSet<int>(),
+                    Summary = new StageRunSummary { Order = subGroup.Order, Name = subGroup.Name, CalcCount = skippedCalcCount, Skipped = true }
                 };
             }
 
@@ -488,15 +711,26 @@ namespace com.razayya.JourneyTrack.Data
                 .ThenBy( c => c.Name )
                 .ToList();
 
+            Report( $"{stageLabel}: evaluating {calculations.Count} calc(s) over {workingPopulation.Count:N0} people" );
+
             HashSet<int> completionPassers = null;
             var nonCompletionMatched = new List<HashSet<int>>();
+            // Matched set per calc Id — consumed by the optional Stage logic tree,
+            // which references calcs by Id and folds their sets with All/Any/…False.
+            var matchedByCalcId = new Dictionary<int, HashSet<int>>();
 
+            int calcIndex = 0;
             foreach ( var calc in calculations )
             {
+                calcIndex++;
                 try
                 {
+                    Report( $"{stageLabel}: calc {calcIndex}/{calculations.Count} '{calc.Name}'" );
                     var calcResult = ExecuteCalculation( calc, workingPopulation, rockContext );
                     result.Merge( calcResult );
+
+                    var matched = calcResult.MatchedPersonIds ?? new HashSet<int>();
+                    matchedByCalcId[calc.Id] = matched;
 
                     var componentName = calc.CalculationTypeEntityType?.Name ?? string.Empty;
                     if ( componentName.Contains( "CompletionCalculation" ) )
@@ -505,7 +739,7 @@ namespace com.razayya.JourneyTrack.Data
                     }
                     else
                     {
-                        nonCompletionMatched.Add( calcResult.MatchedPersonIds ?? new HashSet<int>() );
+                        nonCompletionMatched.Add( matched );
                     }
                 }
                 catch ( Exception ex )
@@ -514,21 +748,40 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
-            // Stage-gating fallback: when there's no Completion meta-calc, the Stage is
-            // "passed" by the intersection of every non-Completion calc's matched persons.
-            // This makes transient-only Stages (Shape A — e.g. a single StepCompletion calc
-            // with no Person Attr sink) actually gate prerequisites correctly. Previous
-            // behavior fail-opened to the full workingPopulation, which broke chained Stages.
-            if ( completionPassers == null && nonCompletionMatched.Count > 0 )
-            {
-                completionPassers = new HashSet<int>( nonCompletionMatched[0] );
-                for ( int i = 1; i < nonCompletionMatched.Count; i++ )
-                {
-                    completionPassers.IntersectWith( nonCompletionMatched[i] );
-                }
-            }
+            HashSet<int> finalPassers;
 
-            var finalPassers = completionPassers ?? workingPopulation;
+            // Stage logic tree (Option A): when configured, a nested ANY/ALL tree over
+            // the Stage's calcs defines the passer set. Leaves reference a calc by Id;
+            // All=Intersect, Any=Union, AllFalse/AnyFalse complement against the
+            // working population. This is the set-space analog of a DataView filter tree.
+            var stageTree = string.IsNullOrWhiteSpace( subGroup.LogicTreeJson )
+                ? null
+                : LogicTree.Parse<StageLogicLeaf>( subGroup.LogicTreeJson, LogicGroupType.All );
+
+            if ( stageTree != null && !LogicTree.IsEmpty( stageTree ) )
+            {
+                finalPassers = EvaluateStageLogic( stageTree, matchedByCalcId, workingPopulation );
+                result.Log.Add( $"    Stage logic tree → {finalPassers.Count} passers" );
+            }
+            else
+            {
+                // Legacy gate (unchanged): when there's no Completion meta-calc, the Stage
+                // is "passed" by the intersection of every non-Completion calc's matched
+                // persons. This makes transient-only Stages (Shape A — e.g. a single
+                // StepCompletion calc with no Person Attr sink) gate prerequisites
+                // correctly. Previous behavior fail-opened to the full workingPopulation,
+                // which broke chained Stages.
+                if ( completionPassers == null && nonCompletionMatched.Count > 0 )
+                {
+                    completionPassers = new HashSet<int>( nonCompletionMatched[0] );
+                    for ( int i = 1; i < nonCompletionMatched.Count; i++ )
+                    {
+                        completionPassers.IntersectWith( nonCompletionMatched[i] );
+                    }
+                }
+
+                finalPassers = completionPassers ?? workingPopulation;
+            }
 
             // Stage-level transition detection. A person newly entering this Stage's
             // passer set (vs prior runs) triggers OnCompleteSystemCommunication if set.
@@ -546,8 +799,121 @@ namespace com.razayya.JourneyTrack.Data
             return new SubGroupProcessResult
             {
                 Result = result,
-                Passers = finalPassers
+                Passers = finalPassers,
+                Summary = new StageRunSummary
+                {
+                    Order = subGroup.Order,
+                    Name = subGroup.Name,
+                    CalcCount = calculations.Count,
+                    Evaluated = workingPopulation.Count,
+                    Passers = finalPassers?.Count ?? 0,
+                    Written = result.Updated,
+                    Unchanged = result.Skipped,
+                    Skipped = false
+                }
             };
+        }
+
+        /// <summary>
+        /// Folds a Stage's logic tree into a passer set. Leaves resolve to a calc's
+        /// matched-person set; groups combine in set-space: All=Intersect, Any=Union,
+        /// AllFalse = population minus the union of children (in none), AnyFalse =
+        /// population minus the intersection of children (not in all). An unconfigured
+        /// or empty node matches nobody. Each call returns a fresh set, so the source
+        /// matched sets are never mutated.
+        /// </summary>
+        private static HashSet<int> EvaluateStageLogic(
+            LogicNode<StageLogicLeaf> node,
+            Dictionary<int, HashSet<int>> matchedByCalcId,
+            HashSet<int> population )
+        {
+            if ( node == null )
+            {
+                return new HashSet<int>();
+            }
+
+            if ( node.IsLeaf )
+            {
+                if ( node.Leaf != null && matchedByCalcId.TryGetValue( node.Leaf.CalcId, out var set ) )
+                {
+                    return new HashSet<int>( set );
+                }
+                return new HashSet<int>();
+            }
+
+            var children = node.Children ?? new List<LogicNode<StageLogicLeaf>>();
+            if ( children.Count == 0 )
+            {
+                return new HashSet<int>();
+            }
+
+            switch ( node.Type.Value )
+            {
+                case LogicGroupType.All:
+                {
+                    HashSet<int> acc = null;
+                    foreach ( var child in children )
+                    {
+                        var childSet = EvaluateStageLogic( child, matchedByCalcId, population );
+                        if ( acc == null )
+                        {
+                            acc = childSet;
+                        }
+                        else
+                        {
+                            acc.IntersectWith( childSet );
+                        }
+                    }
+                    return acc ?? new HashSet<int>();
+                }
+
+                case LogicGroupType.Any:
+                {
+                    var acc = new HashSet<int>();
+                    foreach ( var child in children )
+                    {
+                        acc.UnionWith( EvaluateStageLogic( child, matchedByCalcId, population ) );
+                    }
+                    return acc;
+                }
+
+                case LogicGroupType.AllFalse:
+                {
+                    // People in NONE of the children: population minus the union.
+                    var union = new HashSet<int>();
+                    foreach ( var child in children )
+                    {
+                        union.UnionWith( EvaluateStageLogic( child, matchedByCalcId, population ) );
+                    }
+                    var res = new HashSet<int>( population );
+                    res.ExceptWith( union );
+                    return res;
+                }
+
+                case LogicGroupType.AnyFalse:
+                {
+                    // People NOT in all children: population minus the intersection.
+                    HashSet<int> inter = null;
+                    foreach ( var child in children )
+                    {
+                        var childSet = EvaluateStageLogic( child, matchedByCalcId, population );
+                        if ( inter == null )
+                        {
+                            inter = childSet;
+                        }
+                        else
+                        {
+                            inter.IntersectWith( childSet );
+                        }
+                    }
+                    var res = new HashSet<int>( population );
+                    res.ExceptWith( inter ?? new HashSet<int>() );
+                    return res;
+                }
+
+                default:
+                    return new HashSet<int>();
+            }
         }
 
         private SyncResult ExecuteCalculation(
@@ -584,14 +950,11 @@ namespace com.razayya.JourneyTrack.Data
             int skippedCount = 0;
             if ( calc.SkipIfTargetHasValue && calc.PersonAttributeId.HasValue && workingPopulation.Count > 0 )
             {
-                var skipPersonIds = new HashSet<int>( new AttributeValueService( rockContext ).Queryable().AsNoTracking()
-                    .Where( av => av.AttributeId == calc.PersonAttributeId.Value
-                        && av.EntityId.HasValue
-                        && workingPopulation.Contains( av.EntityId.Value )
-                        && av.Value != null
-                        && av.Value != string.Empty )
-                    .Select( av => av.EntityId.Value )
-                    .ToList() );
+                // Size-aware read (avoids a large-IN clause), then keep only non-blank values.
+                var existingForSkip = ReadExistingAttributeValues( calc.PersonAttributeId.Value, workingPopulation, rockContext );
+                var skipPersonIds = new HashSet<int>( existingForSkip
+                    .Where( kv => !string.IsNullOrEmpty( kv.Value ) )
+                    .Select( kv => kv.Key ) );
                 if ( skipPersonIds.Count > 0 )
                 {
                     workingPopulationForEval = new HashSet<int>( workingPopulation );
@@ -600,20 +963,85 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
-            // Short-circuit when sticky-skip drained the population entirely.
-            if ( workingPopulationForEval.Count == 0 && skippedCount > 0 )
+            // Skip Logic: presence-gated per-calc "Skip If" (PersonFilter-style). People matching the
+            // skip conditions are removed from the component evaluation (perf) and folded into the matched
+            // set below — so they PASS for stage completion and all set-based downstream gating — while
+            // their sink attribute is left blank. Only calcs with a non-empty SkipFilterJson do any work,
+            // so unconfigured calcs (the vast majority) are byte-for-byte the previous behavior.
+            HashSet<int> skipFilterMatchedIds = null;
+            if ( !string.IsNullOrWhiteSpace( calc.SkipFilterJson ) && workingPopulationForEval.Count > 0 )
             {
-                result.Log.Add( $"    JourneyCalculation '{calc.Name}': 0/{workingPopulation.Count} evaluated (sticky-skipped {skippedCount} already-set)" );
-                RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, 0, result );
+                var skipMatched = PersonFilterCalculation.EvaluatePopulation(
+                    calc.SkipFilterJson, calc.SkipFilterMatchAll, workingPopulationForEval, rockContext );
+                if ( skipMatched.Count > 0 )
+                {
+                    skipFilterMatchedIds = skipMatched;
+                    if ( ReferenceEquals( workingPopulationForEval, workingPopulation ) )
+                    {
+                        workingPopulationForEval = new HashSet<int>( workingPopulation );
+                    }
+                    workingPopulationForEval.ExceptWith( skipFilterMatchedIds );
+                }
+            }
+
+            // Manual skips (7038): staff-created per-person skips ride the same path as a
+            // "Skip If" filter match — excluded from evaluation, folded into the matched set
+            // below, sink left blank. Intersected against the FULL calc population (not the
+            // post-sticky eval set) so a manually-skipped person always lands in the matched
+            // set regardless of sticky-skip state. One indexed lookup per calc.
+            HashSet<int> manualSkipIds = null;
+            if ( workingPopulation.Count > 0 )
+            {
+                var manualSkips = new HashSet<int>( new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
+                    .Where( s => s.JourneyCalculationId == calc.Id && s.IsActive )
+                    .Select( s => s.PersonAlias.PersonId )
+                    .ToList() );
+                manualSkips.IntersectWith( workingPopulation );
+                if ( manualSkips.Count > 0 )
+                {
+                    manualSkipIds = manualSkips;
+                    if ( ReferenceEquals( workingPopulationForEval, workingPopulation ) )
+                    {
+                        workingPopulationForEval = new HashSet<int>( workingPopulation );
+                    }
+                    workingPopulationForEval.ExceptWith( manualSkipIds );
+                }
+            }
+
+            // Short-circuit when sticky-skip / skip-filter / manual skips drained the population
+            // entirely. Skipped people still count as passed, so fold them into the matched set
+            // before returning.
+            if ( workingPopulationForEval.Count == 0 && ( skippedCount > 0 || skipFilterMatchedIds != null || manualSkipIds != null ) )
+            {
+                if ( skipFilterMatchedIds != null )
+                {
+                    result.MatchedPersonIds.UnionWith( skipFilterMatchedIds );
+                }
+                if ( manualSkipIds != null )
+                {
+                    result.MatchedPersonIds.UnionWith( manualSkipIds );
+                }
+                result.Log.Add( $"    JourneyCalculation '{calc.Name}': 0/{workingPopulation.Count} evaluated (sticky-skipped {skippedCount}, skip-filtered {( skipFilterMatchedIds?.Count ?? 0 )}, manually-skipped {( manualSkipIds?.Count ?? 0 )})" );
+                RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, result.MatchedPersonIds.Count, result );
                 return result;
             }
 
             var matchedResults = component.Evaluate( rockContext, calc, workingPopulationForEval );
 
             result.MatchedPersonIds = new HashSet<int>( matchedResults.Keys );
-            if ( skippedCount > 0 )
+
+            // Fold skipped people into the matched set (they pass without a sink write).
+            if ( skipFilterMatchedIds != null )
             {
-                result.Log.Add( $"    JourneyCalculation '{calc.Name}': {matchedResults.Count}/{workingPopulationForEval.Count} matched (sticky-skipped {skippedCount} already-set)" );
+                result.MatchedPersonIds.UnionWith( skipFilterMatchedIds );
+            }
+            if ( manualSkipIds != null )
+            {
+                result.MatchedPersonIds.UnionWith( manualSkipIds );
+            }
+            if ( skippedCount > 0 || manualSkipIds != null )
+            {
+                result.Log.Add( $"    JourneyCalculation '{calc.Name}': {matchedResults.Count}/{workingPopulationForEval.Count} matched (sticky-skipped {skippedCount} already-set, manually-skipped {( manualSkipIds?.Count ?? 0 )})" );
             }
             else
             {
@@ -647,15 +1075,12 @@ namespace com.razayya.JourneyTrack.Data
                 return result;
             }
 
-            // Batch-read all existing attribute values for this attribute + population in one query.
+            // Batch-read existing attribute values for this attribute, restricted to the
+            // population. Size-aware to avoid a large-IN clause on full-population syncs.
             Dictionary<int, string> existingValues;
             using ( var readContext = new RockContext() )
             {
-                var personIdList = workingPopulation.ToList();
-                existingValues = new AttributeValueService( readContext ).Queryable().AsNoTracking()
-                    .Where( av => av.AttributeId == targetAttribute.Id && personIdList.Contains( av.EntityId.Value ) )
-                    .Select( av => new { av.EntityId, av.Value } )
-                    .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+                existingValues = ReadExistingAttributeValues( targetAttribute.Id, workingPopulation, readContext );
             }
 
             // Build the list of writes needed (resolve Lava templates first, then diff against existing).
@@ -663,6 +1088,13 @@ namespace com.razayya.JourneyTrack.Data
 
             foreach ( var personId in workingPopulation )
             {
+                // Skipped people (filter or manual) pass via the matched set but get NO sink write (left blank).
+                if ( ( skipFilterMatchedIds != null && skipFilterMatchedIds.Contains( personId ) )
+                    || ( manualSkipIds != null && manualSkipIds.Contains( personId ) ) )
+                {
+                    continue;
+                }
+
                 string newValue = null;
 
                 if ( matchedResults.TryGetValue( personId, out var mergeFields ) )
@@ -722,46 +1154,10 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
-            // Execute writes in batches. On partial failure, record progress and continue
-            // with remaining batches so a single bad row doesn't block the entire population.
-            const int batchSize = 200;
-            int writtenCount = 0;
-
-            for ( int i = 0; i < pendingWrites.Count; i += batchSize )
-            {
-                var batch = pendingWrites.GetRange( i, Math.Min( batchSize, pendingWrites.Count - i ) );
-
-                try
-                {
-                    using ( var writeContext = new RockContext() )
-                    {
-                        foreach ( var write in batch )
-                        {
-                            if ( write.IsUpdate )
-                            {
-                                writeContext.Database.ExecuteSqlCommand(
-                                    "UPDATE [AttributeValue] SET [Value] = @p0, [ModifiedDateTime] = GETDATE(), [IsPersistedValueDirty] = 1 WHERE [AttributeId] = @p1 AND [EntityId] = @p2",
-                                    write.NewValue, targetAttribute.Id, write.PersonId );
-                            }
-                            else
-                            {
-                                writeContext.Database.ExecuteSqlCommand(
-                                    "INSERT INTO [AttributeValue] ([IsSystem], [AttributeId], [EntityId], [Value], [Guid], [CreatedDateTime], [ModifiedDateTime], [IsPersistedValueDirty]) VALUES (0, @p0, @p1, @p2, NEWID(), GETDATE(), GETDATE(), 1)",
-                                    targetAttribute.Id, write.PersonId, write.NewValue );
-                            }
-
-                            writtenCount++;
-                        }
-                    }
-
-                    result.Updated += batch.Count;
-                }
-                catch ( Exception ex )
-                {
-                    result.Errors.Add( $"Write batch failed after {writtenCount} of {pendingWrites.Count} writes for attribute '{targetAttribute.Name}': {ex.Message}" );
-                    ExceptionLogService.LogException( ex );
-                }
-            }
+            // Execute writes set-based (chunked, grouped by value) rather than one round-trip
+            // per person. A failed chunk is logged and the rest continue.
+            int writtenCount = BulkWriteAttributeValues( targetAttribute.Id, pendingWrites, result );
+            result.Updated += writtenCount;
 
             // Queue comm log rows for the newly-matched persons (transition: blank → match).
             // Dedup vs prior logs is handled inside QueueCommunicationLogs.
@@ -1053,6 +1449,49 @@ namespace com.razayya.JourneyTrack.Data
             return result;
         }
 
+        /// <summary>
+        /// "Reset Enrollment": removes enrollees from a program. Touches ONLY the enrollment
+        /// table — no Person Attributes or calc data are changed. Hard delete (not
+        /// soft-unenroll), so this is a clean reset:
+        ///  - Auto-Enroll ON  (AutoEnrollFromPopulation): keep the auto-enrolled rows
+        ///    (Source = "AutoEnroll") and remove the manually-added ones (any other / null
+        ///    Source). Anyone still in the population is re-added fresh on the next reconcile.
+        ///  - Auto-Enroll OFF: remove every enrollment row for the program.
+        /// </summary>
+        public ResetEnrollmentResult ResetEnrollment( int programId )
+        {
+            var result = new ResetEnrollmentResult();
+            using ( var rockContext = new RockContext() )
+            {
+                var group = new JourneyProgramService( rockContext ).Get( programId );
+                if ( group == null )
+                {
+                    result.Errors.Add( $"Journey Program Id {programId} not found." );
+                    return result;
+                }
+
+                result.AutoEnrollMode = group.AutoEnrollFromPopulation;
+                if ( group.AutoEnrollFromPopulation )
+                {
+                    result.KeptAutoEnrolled = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                        .Count( e => e.JourneyProgramId == programId && e.Source == "AutoEnroll" );
+
+                    // Keep auto-enrolled rows; remove manual (and null-Source) adds.
+                    result.Removed = rockContext.Database.ExecuteSqlCommand(
+                        "DELETE FROM [_com_razayya_JourneyTrack_JourneyProgramEnrollment] WHERE [JourneyProgramId] = @p0 AND ( [Source] IS NULL OR [Source] <> @p1 )",
+                        programId, "AutoEnroll" );
+                }
+                else
+                {
+                    // No auto-enroll: clear everyone.
+                    result.Removed = rockContext.Database.ExecuteSqlCommand(
+                        "DELETE FROM [_com_razayya_JourneyTrack_JourneyProgramEnrollment] WHERE [JourneyProgramId] = @p0",
+                        programId );
+                }
+            }
+            return result;
+        }
+
         private static string ResolveMatchValue( JourneyCalculation calc, Dictionary<string, object> mergeFields )
         {
             if ( !string.IsNullOrWhiteSpace( calc.ResultLavaTemplate ) )
@@ -1074,8 +1513,124 @@ namespace com.razayya.JourneyTrack.Data
             return null;
         }
 
+        /// <summary>
+        /// Reads existing AttributeValue strings for an attribute, keyed by EntityId (PersonId),
+        /// restricted to the given population. Avoids the large-IN-clause trap: for a big
+        /// population a per-id IN() expands into tens of thousands of parameters that are slow
+        /// to compile and transmit (this was the ~11s-per-calc cost on full-population syncs).
+        /// For large populations we instead read every row for the attribute — an index seek
+        /// bounded by the enrolled population for a dedicated sink attribute — and filter in
+        /// memory. Small populations (single-person / collapsed downstream stages) keep the
+        /// cheap IN() path so they never over-read.
+        /// </summary>
+        private Dictionary<int, string> ReadExistingAttributeValues( int attributeId, HashSet<int> population, RockContext rockContext )
+        {
+            const int inClauseThreshold = 2000;
+            var query = new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                .Where( av => av.AttributeId == attributeId && av.EntityId.HasValue );
+
+            if ( population.Count <= inClauseThreshold )
+            {
+                var ids = population.ToList();
+                return query.Where( av => ids.Contains( av.EntityId.Value ) )
+                    .Select( av => new { av.EntityId, av.Value } )
+                    .ToList()
+                    .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+            }
+
+            return query
+                .Select( av => new { av.EntityId, av.Value } )
+                .ToList()
+                .Where( av => population.Contains( av.EntityId.Value ) )
+                .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+        }
+
+        /// <summary>
+        /// Writes AttributeValue rows set-based instead of one ExecuteSqlCommand per person.
+        /// Groups writes by target value (so each statement carries a single value parameter),
+        /// then issues chunked multi-row INSERTs for new rows and chunked UPDATEs for changed
+        /// rows — ~1000 entities per round-trip rather than one. This is the dominant win on
+        /// full-population syncs (the program rollup alone was writing 30k+ rows one statement
+        /// at a time). Mirrors the raw-SQL + IsPersistedValueDirty convention used elsewhere
+        /// here: it bypasses EF change tracking and Rock save hooks; the dirty flag triggers a
+        /// lazy recompute of the persisted Value* columns. A failed chunk is logged and the
+        /// remaining chunks continue, matching the previous per-batch resilience.
+        /// </summary>
+        private int BulkWriteAttributeValues( int attributeId, List<AttributeWrite> writes, SyncResult result, Action<int> onProgress = null )
+        {
+            int written = 0;
+            written += WriteAttributeValueChunks( attributeId, writes.Where( w => !w.IsUpdate ).GroupBy( w => w.NewValue ), false, result, written, onProgress );
+            written += WriteAttributeValueChunks( attributeId, writes.Where( w => w.IsUpdate ).GroupBy( w => w.NewValue ), true, result, written, onProgress );
+            return written;
+        }
+
+        private int WriteAttributeValueChunks( int attributeId, IEnumerable<IGrouping<string, AttributeWrite>> groups, bool isUpdate, SyncResult result, int alreadyWritten, Action<int> onProgress )
+        {
+            const int chunkSize = 1000;
+            int writtenHere = 0;
+
+            foreach ( var grp in groups )
+            {
+                var ids = grp.Select( w => w.PersonId ).ToList();
+                for ( int i = 0; i < ids.Count; i += chunkSize )
+                {
+                    var chunk = ids.GetRange( i, Math.Min( chunkSize, ids.Count - i ) );
+
+                    // args[0]=attributeId, args[1]=value, args[2..]=entityIds → @p0, @p1, @p2..
+                    var args = new object[2 + chunk.Count];
+                    args[0] = attributeId;
+                    args[1] = (object)grp.Key ?? DBNull.Value;
+                    for ( int k = 0; k < chunk.Count; k++ )
+                    {
+                        args[2 + k] = chunk[k];
+                    }
+
+                    string sql;
+                    if ( isUpdate )
+                    {
+                        var inList = string.Join( ",", chunk.Select( ( _, k ) => $"@p{2 + k}" ) );
+                        sql = $@"UPDATE [AttributeValue] SET [Value] = @p1, [ModifiedDateTime] = GETDATE(), [IsPersistedValueDirty] = 1
+WHERE [AttributeId] = @p0 AND [EntityId] IN ({inList})";
+                    }
+                    else
+                    {
+                        var valuesList = string.Join( ",", chunk.Select( ( _, k ) => $"(@p{2 + k})" ) );
+                        sql = $@"INSERT INTO [AttributeValue] ([IsSystem],[AttributeId],[EntityId],[Value],[Guid],[CreatedDateTime],[ModifiedDateTime],[IsPersistedValueDirty])
+SELECT 0, @p0, v.EntityId, @p1, NEWID(), GETDATE(), GETDATE(), 1
+FROM ( VALUES {valuesList} ) v(EntityId)
+WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p0 AND av.[EntityId] = v.EntityId )";
+                    }
+
+                    try
+                    {
+                        using ( var writeContext = new RockContext() )
+                        {
+                            writeContext.Database.ExecuteSqlCommand( sql, args );
+                        }
+                        writtenHere += chunk.Count;
+                        onProgress?.Invoke( alreadyWritten + writtenHere );
+                    }
+                    catch ( Exception ex )
+                    {
+                        result.Errors.Add( $"Bulk {( isUpdate ? "update" : "insert" )} of attribute {attributeId} failed for {chunk.Count} row(s): {ex.Message}" );
+                        ExceptionLogService.LogException( ex );
+                    }
+                }
+            }
+
+            return writtenHere;
+        }
+
         private void RecordJourneyCalculationRun( int calculationId, DateTime runStart, int populationCount, int matchedCount, SyncResult result )
         {
+            // Render-path (single-person) evaluations only log calcs that actually changed
+            // something or errored — a no-change render row is noise, and each row costs a
+            // fresh RockContext + INSERT round trip inside the page render.
+            if ( _suppressNoChangeRunLogs && result.Updated == 0 && !result.Errors.Any() )
+            {
+                return;
+            }
+
             try
             {
                 using ( var runContext = new RockContext() )
@@ -1115,6 +1670,13 @@ namespace com.razayya.JourneyTrack.Data
         {
             public SyncResult Result { get; set; }
             public HashSet<int> Passers { get; set; }
+            public StageRunSummary Summary { get; set; }
+            /// <summary>
+            /// True when the stage's evaluation failed and Passers is a fail-open
+            /// placeholder (kept so prerequisites don't hard-block). Callers must
+            /// not persist these passer sets as real state.
+            /// </summary>
+            public bool EvaluationFailed { get; set; }
         }
 
         private class AttributeWrite
@@ -1134,9 +1696,10 @@ namespace com.razayya.JourneyTrack.Data
         /// AttributeValues. Designed for the Person Profile progress block (WP9) - a
         /// single page-load should clock well under 50ms even with 10 Stages.
         /// </summary>
-        public ProgramProgressResult GetProgramProgressForPerson( int programId, int personId )
+        public ProgramProgressResult GetProgramProgressForPerson( int programId, int personId, bool forceLive = false )
         {
             var result = new ProgramProgressResult { PersonId = personId, ProgramId = programId };
+            _suppressNoChangeRunLogs = true;
 
             using ( var rockContext = new RockContext() )
             {
@@ -1155,7 +1718,49 @@ namespace com.razayya.JourneyTrack.Data
                     .ThenBy( s => s.Name )
                     .ToList();
 
+                // Fast path: serve the engine-maintained enrollment state (one indexed row
+                // read) instead of re-running every calc. Only complete state is served —
+                // a stage added since the person's last sync forces one live pass, which
+                // then persists the fuller map below (self-healing).
+                if ( !forceLive )
+                {
+                    var storedJson = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                        .Where( e => e.JourneyProgramId == program.Id && e.IsActive && e.PersonAlias.PersonId == personId )
+                        .OrderBy( e => e.Id )
+                        .Select( e => e.StageStatusJson )
+                        .FirstOrDefault();
+
+                    var storedState = ParseStageStatus( storedJson );
+                    if ( storedState.Count > 0 && stages.All( s => storedState.ContainsKey( s.Id ) ) )
+                    {
+                        bool sawIncompleteStored = false;
+                        foreach ( var stage in stages )
+                        {
+                            var entry = new StageProgressEntry
+                            {
+                                StageId = stage.Id,
+                                StageName = stage.Name,
+                                Order = stage.Order,
+                                Passed = storedState[stage.Id]
+                            };
+                            if ( !entry.Passed && !sawIncompleteStored )
+                            {
+                                entry.IsCurrent = true;
+                                sawIncompleteStored = true;
+                            }
+                            result.Stages.Add( entry );
+                        }
+
+                        result.AllPassed = result.Stages.Count > 0 && result.Stages.All( s => s.Passed );
+                        result.FromStoredState = true;
+                        return result;
+                    }
+                }
+
+                // Live path (no or incomplete stored state): evaluate every stage, then
+                // persist what was computed so the next render takes the fast path.
                 var stagePassers = new Dictionary<int, HashSet<int>>();
+                var erroredStageIds = new HashSet<int>();
                 bool sawIncomplete = false;
 
                 foreach ( var stage in stages )
@@ -1167,12 +1772,17 @@ namespace com.razayya.JourneyTrack.Data
                         var subResult = ProcessSubGroupInternal( stage, population, stagePassers, rockContext );
                         stagePassers[stage.Id] = subResult.Passers;
                         stageEntry.Passed = subResult.Passers.Contains( personId );
+                        if ( subResult.EvaluationFailed )
+                        {
+                            erroredStageIds.Add( stage.Id );
+                        }
                     }
                     catch ( Exception ex )
                     {
                         stageEntry.Passed = false;
                         stageEntry.ErrorMessage = ex.Message;
                         stagePassers[stage.Id] = population;
+                        erroredStageIds.Add( stage.Id );
                     }
 
                     if ( !stageEntry.Passed && !sawIncomplete )
@@ -1185,9 +1795,230 @@ namespace com.razayya.JourneyTrack.Data
                 }
 
                 result.AllPassed = result.Stages.Count > 0 && result.Stages.All( s => s.Passed );
+
+                WriteEnrollmentStageStatusForPerson( program.Id, personId, stagePassers, erroredStageIds, new SyncResult(), rockContext );
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Read-only, per-calculation progress for one person — a uniform merge-field
+        /// dictionary covering every calc type (see JourneyCalculationTypeComponent
+        /// .DescribeProgress for the Matched/Current/Target contract). Unlike a sync,
+        /// this never writes sink attributes, and unlike Evaluate it reports partial
+        /// progress ("3 of 4 attendances") for persons who have not matched yet.
+        /// Consumed by the {% journeycalcprogress %} Lava tag.
+        /// </summary>
+        /// <returns>The progress dictionary, or null when the calculation doesn't exist.</returns>
+        public Dictionary<string, object> GetCalcProgressForPerson( int calculationId, int personId, bool includeStageStatus = false )
+        {
+            using ( var rockContext = new RockContext() )
+            {
+                var calc = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                    .Include( c => c.CalculationTypeEntityType )
+                    .Include( c => c.Stage )
+                    .FirstOrDefault( c => c.Id == calculationId );
+
+                if ( calc == null )
+                {
+                    return null;
+                }
+
+                var stageStatus = includeStageStatus ? GetStageStatusEntry( calc.Stage, personId ) : null;
+                return BuildCalcProgressEntry( calc, personId, stageStatus, rockContext );
+            }
+        }
+
+        /// <summary>
+        /// Read-only progress for every active calculation in a Stage, ordered by
+        /// calc Order. Same per-entry shape as <see cref="GetCalcProgressForPerson"/>.
+        /// </summary>
+        public List<Dictionary<string, object>> GetStageCalcProgressForPerson( int stageId, int personId, bool includeStageStatus = false )
+        {
+            var entries = new List<Dictionary<string, object>>();
+
+            using ( var rockContext = new RockContext() )
+            {
+                var calcs = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
+                    .Include( c => c.CalculationTypeEntityType )
+                    .Include( c => c.Stage )
+                    .Where( c => c.StageId == stageId && c.IsActive )
+                    .OrderBy( c => c.Order )
+                    .ThenBy( c => c.Id )
+                    .ToList();
+
+                var stageStatus = includeStageStatus && calcs.Count > 0
+                    ? GetStageStatusEntry( calcs[0].Stage, personId )
+                    : null;
+
+                foreach ( var calc in calcs )
+                {
+                    // Per-calc isolation: one failing component (e.g. a cold-cache SQL
+                    // timeout on a MediaWatched Interaction query) must not kill the
+                    // whole stage list. The failed entry keeps its identity fields and
+                    // carries the innermost error message in "Error".
+                    try
+                    {
+                        entries.Add( BuildCalcProgressEntry( calc, personId, stageStatus, rockContext ) );
+                    }
+                    catch ( Exception ex )
+                    {
+                        entries.Add( new Dictionary<string, object>
+                        {
+                            { "CalcId", calc.Id },
+                            { "CalcGuid", calc.Guid },
+                            { "CalcName", calc.Name },
+                            { "CalcIsActive", calc.IsActive },
+                            { "CalcOrder", calc.Order },
+                            { "StageId", calc.StageId },
+                            { "StageGuid", calc.Stage?.Guid },
+                            { "StageName", calc.Stage?.Name },
+                            { "StageOrder", calc.Stage?.Order ?? 0 },
+                            { "Matched", false },
+                            { "Current", 0m },
+                            { "Target", 1m },
+                            { "ProgressPercent", 0m },
+                            { "Error", GetInnermostMessage( ex ) }
+                        } );
+                    }
+                }
+            }
+
+            return entries;
+        }
+
+        /// <summary>
+        /// Walks to the innermost exception message — EF wraps SQL errors in
+        /// EntityCommandExecutionException whose own message is useless.
+        /// </summary>
+        internal static string GetInnermostMessage( Exception ex )
+        {
+            while ( ex.InnerException != null )
+            {
+                ex = ex.InnerException;
+            }
+            return ex.Message;
+        }
+
+        /// <summary>
+        /// Evaluates the person's whole program (read-only) and picks out the one
+        /// Stage's pass/current entry. Costs a full program evaluation — only run
+        /// when the caller asked for stage status.
+        /// </summary>
+        private StageProgressEntry GetStageStatusEntry( Stage stage, int personId )
+        {
+            if ( stage == null )
+            {
+                return null;
+            }
+
+            var programProgress = GetProgramProgressForPerson( stage.JourneyProgramId, personId );
+            return programProgress.Stages.FirstOrDefault( s => s.StageId == stage.Id );
+        }
+
+        /// <summary>
+        /// Assembles the uniform progress dictionary for one calc + person: calc/stage
+        /// identity, the component's DescribeProgress fields, a clamped ProgressPercent,
+        /// and the sink attribute's current value (when the calc writes one).
+        /// </summary>
+        private Dictionary<string, object> BuildCalcProgressEntry(
+            JourneyCalculation calc,
+            int personId,
+            StageProgressEntry stageStatus,
+            RockContext rockContext )
+        {
+            var entry = new Dictionary<string, object>
+            {
+                { "CalcId", calc.Id },
+                { "CalcGuid", calc.Guid },
+                { "CalcName", calc.Name },
+                { "CalcIsActive", calc.IsActive },
+                { "CalcOrder", calc.Order },
+                { "StageId", calc.StageId },
+                { "StageGuid", calc.Stage?.Guid },
+                { "StageName", calc.Stage?.Name },
+                { "StageOrder", calc.Stage?.Order ?? 0 },
+                { "Matched", false },
+                { "Current", 0m },
+                { "Target", 1m }
+            };
+
+            var component = CalculationTypes.JourneyCalculationTypeComponent.GetComponent( calc.CalculationTypeEntityType?.Name );
+            entry["CalcType"] = component?.Title ?? calc.CalculationTypeEntityType?.FriendlyName;
+
+            if ( component != null )
+            {
+                if ( calc.Attributes == null )
+                {
+                    calc.LoadAttributes( rockContext );
+                }
+
+                var progress = component.DescribeProgress( rockContext, calc, personId );
+                if ( progress != null )
+                {
+                    foreach ( var field in progress )
+                    {
+                        entry[field.Key] = field.Value;
+                    }
+                }
+            }
+
+            // Manual skip (7038): an active skip reads as satisfied on every progress
+            // surface — the member's app stops prompting for the item — and is flagged
+            // separately so UIs can render "Skipped" distinctly from earned completion.
+            bool manuallySkipped = new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
+                .Any( s => s.JourneyCalculationId == calc.Id && s.IsActive && s.PersonAlias.PersonId == personId );
+            entry["ManuallySkipped"] = manuallySkipped;
+            if ( manuallySkipped )
+            {
+                entry["Matched"] = true;
+            }
+
+            // Progress toward the requirement, clamped to 0-100. Matched always
+            // reads 100 even if the component's Current has since drifted below
+            // Target-shaped math (e.g. sticky-skip semantics).
+            bool matched = entry["Matched"] is bool matchedBool && matchedBool;
+            decimal current = ToDecimalSafe( entry["Current"] );
+            decimal target = ToDecimalSafe( entry["Target"] );
+            entry["ProgressPercent"] = matched
+                ? 100m
+                : ( target > 0 ? Math.Min( 100m, Math.Round( current * 100m / target, 1 ) ) : 0m );
+
+            // Current sink attribute value (null for transient calcs).
+            string sinkKey = null;
+            string sinkValue = null;
+            string sinkTextValue = null;
+            if ( calc.PersonAttributeId.HasValue )
+            {
+                sinkKey = AttributeCache.Get( calc.PersonAttributeId.Value )?.Key;
+                var av = new AttributeValueService( rockContext ).GetByAttributeIdAndEntityId( calc.PersonAttributeId.Value, personId );
+                sinkValue = av?.Value;
+                sinkTextValue = string.IsNullOrWhiteSpace( av?.PersistedTextValue ) ? av?.Value : av.PersistedTextValue;
+            }
+            entry["SinkAttributeKey"] = sinkKey;
+            entry["SinkValue"] = sinkValue;
+            entry["SinkTextValue"] = sinkTextValue;
+
+            if ( stageStatus != null )
+            {
+                entry["StagePassed"] = stageStatus.Passed;
+                entry["StageIsCurrent"] = stageStatus.IsCurrent;
+            }
+
+            return entry;
+        }
+
+        private static decimal ToDecimalSafe( object value )
+        {
+            try
+            {
+                return Convert.ToDecimal( value );
+            }
+            catch
+            {
+                return 0m;
+            }
         }
 
         #endregion
@@ -1204,7 +2035,8 @@ namespace com.razayya.JourneyTrack.Data
             HashSet<int> basePopulation,
             Dictionary<int, HashSet<int>> stagePassers,
             SyncResult result,
-            RockContext rockContext )
+            RockContext rockContext,
+            ProgramRunSummary progSummary = null )
         {
             if ( !program.CompletionTargetPersonAttributeId.HasValue || basePopulation.Count == 0 )
             {
@@ -1229,68 +2061,66 @@ namespace com.razayya.JourneyTrack.Data
                 completed.IntersectWith( passers );
             }
 
-            // Read existing AVs in one batch
-            var personIdList = basePopulation.ToList();
+            // Read existing AVs (size-aware: avoids a large-IN clause on full-population syncs).
             Dictionary<int, string> existing;
             using ( var readContext = new RockContext() )
             {
-                existing = new AttributeValueService( readContext ).Queryable().AsNoTracking()
-                    .Where( av => av.AttributeId == targetAttribute.Id && av.EntityId.HasValue && personIdList.Contains( av.EntityId.Value ) )
-                    .Select( av => new { av.EntityId, av.Value } )
-                    .ToDictionary( av => av.EntityId.Value, av => av.Value ?? string.Empty );
+                existing = ReadExistingAttributeValues( targetAttribute.Id, basePopulation, readContext );
             }
 
-            int written = 0;
             // Track persons transitioning to complete this run (existing != True, new = True)
             // so we can queue rollup-level communications after the write.
             var newlyCompletedPersonIds = program.OnCompleteSystemCommunicationId.HasValue
                 ? new HashSet<int>()
                 : null;
-            using ( var writeContext = new RockContext() )
-            {
-                foreach ( var personId in basePopulation )
-                {
-                    var newValue = completed.Contains( personId ) ? "True" : "False";
-                    existing.TryGetValue( personId, out var oldValue );
-                    oldValue = oldValue ?? string.Empty;
-                    if ( string.Equals( oldValue, newValue, StringComparison.OrdinalIgnoreCase ) )
-                    {
-                        continue;
-                    }
-                    if ( newlyCompletedPersonIds != null
-                        && newValue.Equals( "True", StringComparison.OrdinalIgnoreCase )
-                        && !oldValue.Equals( "True", StringComparison.OrdinalIgnoreCase ) )
-                    {
-                        newlyCompletedPersonIds.Add( personId );
-                    }
 
-                    var isUpdate = existing.ContainsKey( personId );
-                    try
-                    {
-                        if ( isUpdate )
-                        {
-                            writeContext.Database.ExecuteSqlCommand(
-                                "UPDATE [AttributeValue] SET [Value] = @p0, [ModifiedDateTime] = GETDATE(), [IsPersistedValueDirty] = 1 WHERE [AttributeId] = @p1 AND [EntityId] = @p2",
-                                newValue, targetAttribute.Id, personId );
-                        }
-                        else
-                        {
-                            writeContext.Database.ExecuteSqlCommand(
-                                "INSERT INTO [AttributeValue] ([IsSystem], [AttributeId], [EntityId], [Value], [Guid], [CreatedDateTime], [ModifiedDateTime], [IsPersistedValueDirty]) VALUES (0, @p0, @p1, @p2, NEWID(), GETDATE(), GETDATE(), 1)",
-                                targetAttribute.Id, personId, newValue );
-                        }
-                        written++;
-                    }
-                    catch ( Exception ex )
-                    {
-                        result.Errors.Add( $"Program rollup write failed for PersonId {personId}: {ex.Message}" );
-                        ExceptionLogService.LogException( ex );
-                    }
+            // Diff against existing → build the change list, then write it set-based.
+            var pendingWrites = new List<AttributeWrite>();
+            foreach ( var personId in basePopulation )
+            {
+                var newValue = completed.Contains( personId ) ? "True" : "False";
+                existing.TryGetValue( personId, out var oldValue );
+                oldValue = oldValue ?? string.Empty;
+                if ( string.Equals( oldValue, newValue, StringComparison.OrdinalIgnoreCase ) )
+                {
+                    continue;
                 }
+                if ( newlyCompletedPersonIds != null
+                    && newValue.Equals( "True", StringComparison.OrdinalIgnoreCase )
+                    && !oldValue.Equals( "True", StringComparison.OrdinalIgnoreCase ) )
+                {
+                    newlyCompletedPersonIds.Add( personId );
+                }
+
+                pendingWrites.Add( new AttributeWrite
+                {
+                    PersonId = personId,
+                    NewValue = newValue,
+                    IsUpdate = existing.ContainsKey( personId )
+                } );
             }
+
+            int totalToWrite = pendingWrites.Count;
+            Report( $"Program '{program.Name}': writing rollup ({totalToWrite:N0} change(s), {completed.Count:N0} complete)" );
+            int written = BulkWriteAttributeValues( targetAttribute.Id, pendingWrites, result,
+                done =>
+                {
+                    if ( done == totalToWrite || done % 5000 == 0 )
+                    {
+                        Report( $"Program '{program.Name}': rollup written {done:N0}/{totalToWrite:N0}" );
+                    }
+                } );
 
             result.Updated += written;
             result.Log.Add( $"  Program rollup '{program.Name}': {completed.Count}/{basePopulation.Count} complete, {written} attribute values written." );
+
+            if ( progSummary != null )
+            {
+                progSummary.HasRollup = true;
+                progSummary.RollupAttributeName = targetAttribute.Name;
+                progSummary.RollupCompleted = completed.Count;
+                progSummary.RollupWritten = written;
+            }
 
             // Program-level transition detection: rollup went False/blank → True this run
             if ( newlyCompletedPersonIds != null && newlyCompletedPersonIds.Count > 0 )
@@ -1301,6 +2131,160 @@ namespace com.razayya.JourneyTrack.Data
                     program.OnCompleteSystemCommunicationId.Value,
                     newlyCompletedPersonIds,
                     rockContext, result );
+            }
+        }
+
+        /// <summary>
+        /// Merges the given per-stage passer sets into the person's enrollment
+        /// StageStatusJson ({stageId: passed} map). Presence-gated: a person with no
+        /// active enrollment row gets nothing persisted, and read surfaces fall back
+        /// to a live evaluation. Stages in <paramref name="erroredStageIds"/> are
+        /// skipped — their passer sets are fail-open placeholders, not real passes.
+        /// </summary>
+        private void WriteEnrollmentStageStatusForPerson(
+            int programId,
+            int personId,
+            Dictionary<int, HashSet<int>> stagePassers,
+            HashSet<int> erroredStageIds,
+            SyncResult result,
+            RockContext rockContext )
+        {
+            if ( stagePassers == null || stagePassers.Count == 0 )
+            {
+                return;
+            }
+
+            try
+            {
+                var enrollment = new JourneyProgramEnrollmentService( rockContext ).Queryable()
+                    .Where( e => e.JourneyProgramId == programId && e.IsActive && e.PersonAlias.PersonId == personId )
+                    .OrderBy( e => e.Id )
+                    .FirstOrDefault();
+                if ( enrollment == null )
+                {
+                    return;
+                }
+
+                var state = ParseStageStatus( enrollment.StageStatusJson );
+                foreach ( var kv in stagePassers )
+                {
+                    if ( erroredStageIds != null && erroredStageIds.Contains( kv.Key ) )
+                    {
+                        continue;
+                    }
+                    state[kv.Key] = kv.Value != null && kv.Value.Contains( personId );
+                }
+
+                var newJson = JsonConvert.SerializeObject( state );
+                if ( !string.Equals( newJson, enrollment.StageStatusJson ) )
+                {
+                    enrollment.StageStatusJson = newJson;
+                    enrollment.StageStatusModifiedDateTime = RockDateTime.Now;
+                    rockContext.SaveChanges();
+                }
+            }
+            catch ( Exception ex )
+            {
+                result.Errors.Add( $"Failed to persist enrollment stage status: {ex.Message}" );
+                ExceptionLogService.LogException( ex );
+            }
+        }
+
+        /// <summary>
+        /// Full-population variant: merges the run's stage passer sets into every
+        /// enrolled person's StageStatusJson. Diff-gated (only changed rows written)
+        /// and chunked as VALUES-join UPDATEs — the JSON differs per person, so
+        /// there's no value-grouping to exploit like the attribute bulk writer has.
+        /// </summary>
+        private void WriteEnrollmentStageStatusBulk(
+            JourneyProgram program,
+            HashSet<int> basePopulation,
+            Dictionary<int, HashSet<int>> stagePassers,
+            HashSet<int> erroredStageIds,
+            SyncResult result,
+            RockContext rockContext )
+        {
+            if ( stagePassers == null || stagePassers.Count == 0 || basePopulation.Count == 0 )
+            {
+                return;
+            }
+
+            try
+            {
+                // One row per person: lowest active row Id wins (mirrors the single-person path).
+                var rows = new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                    .Where( e => e.JourneyProgramId == program.Id && e.IsActive )
+                    .Select( e => new { e.Id, e.PersonAlias.PersonId, e.StageStatusJson } )
+                    .ToList()
+                    .GroupBy( r => r.PersonId )
+                    .Select( g => g.OrderBy( r => r.Id ).First() )
+                    .ToList();
+
+                var pending = new List<(int Id, string Json)>();
+                foreach ( var row in rows )
+                {
+                    if ( !basePopulation.Contains( row.PersonId ) )
+                    {
+                        continue;
+                    }
+
+                    var state = ParseStageStatus( row.StageStatusJson );
+                    foreach ( var kv in stagePassers )
+                    {
+                        if ( erroredStageIds != null && erroredStageIds.Contains( kv.Key ) )
+                        {
+                            continue;
+                        }
+                        state[kv.Key] = kv.Value != null && kv.Value.Contains( row.PersonId );
+                    }
+
+                    var newJson = JsonConvert.SerializeObject( state );
+                    if ( !string.Equals( newJson, row.StageStatusJson ) )
+                    {
+                        pending.Add( (row.Id, newJson) );
+                    }
+                }
+
+                int written = 0;
+                var stamp = RockDateTime.Now.ToString( "yyyy-MM-ddTHH:mm:ss.fff" );
+                const int chunkSize = 500;
+                for ( int i = 0; i < pending.Count; i += chunkSize )
+                {
+                    var chunk = pending.Skip( i ).Take( chunkSize );
+                    var values = string.Join( ",", chunk.Select( p => $"({p.Id}, N'{p.Json.Replace( "'", "''" )}')" ) );
+                    var sql = $@"
+UPDATE e SET [StageStatusJson] = v.[Json], [StageStatusModifiedDateTime] = '{stamp}'
+FROM [_com_razayya_JourneyTrack_JourneyProgramEnrollment] e
+INNER JOIN ( VALUES {values} ) AS v ([Id], [Json]) ON v.[Id] = e.[Id]";
+                    written += rockContext.Database.ExecuteSqlCommand( sql );
+                }
+
+                if ( pending.Count > 0 )
+                {
+                    result.Log.Add( $"  Enrollment stage status '{program.Name}': {written}/{rows.Count} row(s) updated." );
+                }
+            }
+            catch ( Exception ex )
+            {
+                result.Errors.Add( $"Failed to persist enrollment stage status (bulk): {ex.Message}" );
+                ExceptionLogService.LogException( ex );
+            }
+        }
+
+        /// <summary>Parses a StageStatusJson map, returning an empty map for null/invalid input.</summary>
+        private static Dictionary<int, bool> ParseStageStatus( string json )
+        {
+            if ( string.IsNullOrWhiteSpace( json ) )
+            {
+                return new Dictionary<int, bool>();
+            }
+            try
+            {
+                return JsonConvert.DeserializeObject<Dictionary<int, bool>>( json ) ?? new Dictionary<int, bool>();
+            }
+            catch
+            {
+                return new Dictionary<int, bool>();
             }
         }
 
@@ -1331,6 +2315,20 @@ namespace com.razayya.JourneyTrack.Data
     #region Result Classes
 
     /// <summary>
+    /// Result of a Reset Enrollment pass.
+    /// </summary>
+    public class ResetEnrollmentResult
+    {
+        /// <summary>Number of enrollment rows hard-deleted.</summary>
+        public int Removed { get; set; }
+        /// <summary>Auto-enrolled rows left in place (only meaningful when AutoEnrollMode).</summary>
+        public int KeptAutoEnrolled { get; set; }
+        /// <summary>True if the program auto-enrolls — i.e. only manual adds were removed.</summary>
+        public bool AutoEnrollMode { get; set; }
+        public List<string> Errors { get; set; } = new List<string>();
+    }
+
+    /// <summary>
     /// Result of an enrollment reconciliation pass.
     /// </summary>
     public class ReconcileResult
@@ -1354,6 +2352,8 @@ namespace com.razayya.JourneyTrack.Data
         public List<string> Errors { get; set; } = new List<string>();
         public List<string> Log { get; set; } = new List<string>();
         public HashSet<int> MatchedPersonIds { get; set; } = new HashSet<int>();
+        /// <summary>Per-program, per-stage breakdown for the job summary (populated by ProcessGroup).</summary>
+        public List<ProgramRunSummary> ProgramSummaries { get; set; } = new List<ProgramRunSummary>();
 
         public void Merge( SyncResult other )
         {
@@ -1361,12 +2361,43 @@ namespace com.razayya.JourneyTrack.Data
             Skipped += other.Skipped;
             Errors.AddRange( other.Errors );
             Log.AddRange( other.Log );
+            ProgramSummaries.AddRange( other.ProgramSummaries );
         }
 
         public override string ToString()
         {
             return $"{Updated} updated, {Skipped} skipped, {Errors.Count} error(s)";
         }
+    }
+
+    /// <summary>
+    /// Per-program breakdown of a full ProcessGroup run, for a human-readable job summary.
+    /// </summary>
+    public class ProgramRunSummary
+    {
+        public string ProgramName { get; set; }
+        public int Enrollees { get; set; }
+        public List<StageRunSummary> Stages { get; set; } = new List<StageRunSummary>();
+        public bool HasRollup { get; set; }
+        public string RollupAttributeName { get; set; }
+        public int RollupCompleted { get; set; }   // people who passed every stage
+        public int RollupWritten { get; set; }      // rollup attribute values written this run
+    }
+
+    /// <summary>
+    /// Per-stage breakdown within a program run. Written/Unchanged count only this stage's
+    /// own calc writes — the program rollup is reported separately on ProgramRunSummary.
+    /// </summary>
+    public class StageRunSummary
+    {
+        public int Order { get; set; }
+        public string Name { get; set; }
+        public int CalcCount { get; set; }
+        public int Evaluated { get; set; }   // working population entering the stage
+        public int Passers { get; set; }     // people who passed the stage gate
+        public int Written { get; set; }     // attribute values written by this stage's calcs
+        public int Unchanged { get; set; }   // people this stage's calcs left unchanged
+        public bool Skipped { get; set; }    // stage skipped because nobody reached it
     }
 
     /// <summary>
@@ -1403,6 +2434,8 @@ namespace com.razayya.JourneyTrack.Data
         public int PersonId { get; set; }
         public bool NotFound { get; set; }
         public bool AllPassed { get; set; }
+        /// <summary>True when served from persisted enrollment stage status; false = live engine evaluation.</summary>
+        public bool FromStoredState { get; set; }
         public List<StageProgressEntry> Stages { get; set; } = new List<StageProgressEntry>();
     }
 

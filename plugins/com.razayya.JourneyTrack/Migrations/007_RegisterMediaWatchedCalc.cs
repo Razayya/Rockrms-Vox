@@ -13,8 +13,8 @@ namespace com.razayya.JourneyTrack.Migrations
         private const string FT_INTEGER       = "A75DFC58-7A1B-4799-BF31-451B2BBE38FF";  // Rock.Field.Types.IntegerFieldType
 
         // Config attr Guids (stable across deploys)
-        private const string ATTR_MEDIA_ELEMENT = "B0000003-0000-0000-0000-000000000001";
-        private const string ATTR_MIN_WATCHED   = "B0000003-0000-0000-0000-000000000002";
+        private const string ATTR_MEDIA_ELEMENT = "6a651eb7-b10e-4972-ba25-e39c98d5cc7f";
+        private const string ATTR_MIN_WATCHED   = "c72bf71b-3894-4f04-bd65-72d138dc44ac";
 
         public override void Up()
         {
