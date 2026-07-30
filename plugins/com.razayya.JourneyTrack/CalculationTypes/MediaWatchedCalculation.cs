@@ -39,9 +39,11 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
         // Per-MediaElement decoded-union cache. Keyed by MediaElement.Id, valued by
         // (timestamp, dict of personId -> {union bits, maxSession%, sessionCount}).
-        // Critical perf win: within a single sync, 5 calcs that share a MediaElement
-        // only hit the Interaction firehose once. TTL is short (30s) so a fresh sync
-        // a minute later re-queries.
+        // POPULATION runs only: within a full sync, calcs that share a MediaElement
+        // hit the Interaction firehose once. TTL is short (30s) so a fresh sync a
+        // minute later re-queries. Single-person (render-path) evaluations never
+        // rebuild this map — they take GetPersonWatchAggregate's per-person query,
+        // using a fresh shared entry only as a free read.
         private struct PersonWatchAggregate
         {
             public int[] UnionBits;
@@ -96,11 +98,10 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             return cachedAt < bustedAt;
         }
 
-        private static Dictionary<int, PersonWatchAggregate> GetWatchAggregates( int mediaElementId, RockContext rockContext, int? forPersonId = null )
+        private static Dictionary<int, PersonWatchAggregate> GetWatchAggregates( int mediaElementId, RockContext rockContext )
         {
             if ( _watchCache.TryGetValue( mediaElementId, out var cached )
-                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl
-                && !IsBustedFor( forPersonId, cached.CachedAt ) )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
             {
                 return cached.Map;
             }
@@ -116,39 +117,84 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var map = new Dictionary<int, PersonWatchAggregate>();
             foreach ( var personGroup in rows.GroupBy( r => r.PersonId ) )
             {
-                int[] union = null;
-                double maxSingleSession = 0;
-                int sessionCount = 0;
-
-                foreach ( var row in personGroup )
+                var agg = BuildAggregate( personGroup.Select( r => r.InteractionData ) );
+                if ( agg.HasValue )
                 {
-                    MediaWatchedInteractionData data;
-                    try { data = JsonConvert.DeserializeObject<MediaWatchedInteractionData>( row.InteractionData ); }
-                    catch { continue; }
-                    if ( data == null ) continue;
-
-                    if ( data.WatchedPercentage > maxSingleSession ) maxSingleSession = data.WatchedPercentage;
-
-                    var bits = RleToArray( data.WatchMap );
-                    if ( bits == null || bits.Length == 0 ) continue;
-
-                    sessionCount++;
-                    union = ( union == null ) ? bits : MergeMaps( union, bits );
-                }
-
-                if ( union != null )
-                {
-                    map[personGroup.Key] = new PersonWatchAggregate
-                    {
-                        UnionBits = union,
-                        MaxSingleSession = maxSingleSession,
-                        SessionCount = sessionCount
-                    };
+                    map[personGroup.Key] = agg.Value;
                 }
             }
 
             _watchCache[mediaElementId] = ( System.DateTime.UtcNow, map );
             return map;
+        }
+
+        /// <summary>
+        /// Single-person aggregate for render-path evaluations. A fresh, un-busted
+        /// shared entry is a free hit; otherwise this queries ONLY the person's own
+        /// Interaction rows for the media element instead of rebuilding the
+        /// all-persons union — that firehose decode (every watcher's JSON, per
+        /// video, per open) was the bulk of the stage-page render cost. The shared
+        /// cache is neither served stale nor written here: population runs keep
+        /// their own rebuild cadence.
+        /// </summary>
+        private static PersonWatchAggregate? GetPersonWatchAggregate( int mediaElementId, int personId, RockContext rockContext )
+        {
+            if ( _watchCache.TryGetValue( mediaElementId, out var cached )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl
+                && !IsBustedFor( personId, cached.CachedAt ) )
+            {
+                return cached.Map.TryGetValue( personId, out var hit ) ? hit : ( PersonWatchAggregate? ) null;
+            }
+
+            var rows = new InteractionService( rockContext ).Queryable().AsNoTracking()
+                .Where( i =>
+                    i.InteractionComponent.EntityId == mediaElementId
+                    && i.PersonAliasId.HasValue
+                    && i.PersonAlias.PersonId == personId
+                    && i.InteractionData != null )
+                .Select( i => i.InteractionData )
+                .ToList();
+
+            return BuildAggregate( rows );
+        }
+
+        /// <summary>
+        /// Unions one person's raw InteractionData rows into a watch aggregate.
+        /// Returns null when no row carries a decodable WatchMap.
+        /// </summary>
+        private static PersonWatchAggregate? BuildAggregate( IEnumerable<string> interactionDataRows )
+        {
+            int[] union = null;
+            double maxSingleSession = 0;
+            int sessionCount = 0;
+
+            foreach ( var raw in interactionDataRows )
+            {
+                MediaWatchedInteractionData data;
+                try { data = JsonConvert.DeserializeObject<MediaWatchedInteractionData>( raw ); }
+                catch { continue; }
+                if ( data == null ) continue;
+
+                if ( data.WatchedPercentage > maxSingleSession ) maxSingleSession = data.WatchedPercentage;
+
+                var bits = RleToArray( data.WatchMap );
+                if ( bits == null || bits.Length == 0 ) continue;
+
+                sessionCount++;
+                union = ( union == null ) ? bits : MergeMaps( union, bits );
+            }
+
+            if ( union == null )
+            {
+                return null;
+            }
+
+            return new PersonWatchAggregate
+            {
+                UnionBits = union,
+                MaxSingleSession = maxSingleSession,
+                SessionCount = sessionCount
+            };
         }
 
         /// <inheritdoc/>
@@ -168,32 +214,50 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var mediaElement = new MediaElementService( rockContext ).Get( mediaGuid.Value );
             if ( mediaElement == null ) return results;
 
-            // Single-person evaluations (render-path syncs) honor that person's bust epoch;
-            // population runs always take the shared entry.
-            int? forPersonId = populationPersonIds.Count == 1 ? populationPersonIds.First() : ( int? ) null;
-            var aggregates = GetWatchAggregates( mediaElement.Id, rockContext, forPersonId );
+            // Render-path fast path: a single-person evaluation reads (at most) that
+            // person's own Interaction rows — never the all-persons union.
+            if ( populationPersonIds.Count == 1 )
+            {
+                var singlePersonId = populationPersonIds.First();
+                var personAgg = GetPersonWatchAggregate( mediaElement.Id, singlePersonId, rockContext );
+                if ( personAgg.HasValue )
+                {
+                    AppendIfPassing( results, singlePersonId, personAgg.Value, minPercent );
+                }
+                return results;
+            }
+
+            var aggregates = GetWatchAggregates( mediaElement.Id, rockContext );
             if ( aggregates.Count == 0 ) return results;
 
             foreach ( var personId in populationPersonIds )
             {
                 if ( !aggregates.TryGetValue( personId, out var agg ) ) continue;
-
-                int watchedSeconds = agg.UnionBits.Count( v => v > 0 );
-                double percent = agg.UnionBits.Length > 0 ? ( watchedSeconds * 100.0 / agg.UnionBits.Length ) : 0;
-                if ( percent < minPercent ) continue;
-
-                results[personId] = new Dictionary<string, object>
-                {
-                    { "Matched", true },
-                    { "WatchedPercentage", Math.Round( percent, 2 ) },
-                    { "MaxSingleSessionPercentage", Math.Round( agg.MaxSingleSession, 2 ) },
-                    { "WatchedSeconds", watchedSeconds },
-                    { "MapLength", agg.UnionBits.Length },
-                    { "SessionCount", agg.SessionCount }
-                };
+                AppendIfPassing( results, personId, agg, minPercent );
             }
 
             return results;
+        }
+
+        private static void AppendIfPassing(
+            Dictionary<int, Dictionary<string, object>> results,
+            int personId,
+            PersonWatchAggregate agg,
+            int minPercent )
+        {
+            int watchedSeconds = agg.UnionBits.Count( v => v > 0 );
+            double percent = agg.UnionBits.Length > 0 ? ( watchedSeconds * 100.0 / agg.UnionBits.Length ) : 0;
+            if ( percent < minPercent ) return;
+
+            results[personId] = new Dictionary<string, object>
+            {
+                { "Matched", true },
+                { "WatchedPercentage", Math.Round( percent, 2 ) },
+                { "MaxSingleSessionPercentage", Math.Round( agg.MaxSingleSession, 2 ) },
+                { "WatchedSeconds", watchedSeconds },
+                { "MapLength", agg.UnionBits.Length },
+                { "SessionCount", agg.SessionCount }
+            };
         }
 
         /// <inheritdoc/>
@@ -219,9 +283,10 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 var mediaElement = new MediaElementService( rockContext ).Get( mediaGuid.Value );
                 if ( mediaElement != null )
                 {
-                    var aggregates = GetWatchAggregates( mediaElement.Id, rockContext, personId );
-                    if ( aggregates.TryGetValue( personId, out var agg ) )
+                    var personAgg = GetPersonWatchAggregate( mediaElement.Id, personId, rockContext );
+                    if ( personAgg.HasValue )
                     {
+                        var agg = personAgg.Value;
                         watchedSeconds = agg.UnionBits.Count( v => v > 0 );
                         mapLength = agg.UnionBits.Length;
                         percent = mapLength > 0 ? ( watchedSeconds * 100.0 / mapLength ) : 0;
