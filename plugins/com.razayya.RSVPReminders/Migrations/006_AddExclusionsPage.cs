@@ -13,13 +13,13 @@ namespace com.razayya.RSVPReminders.Migrations
     public class AddExclusionsPage : Migration
     {
         private const string PAGE_GROUP_TOOLBOX = "A71619CF-D775-4FDE-9DB3-4B99489559A0";
-        private const string LAYOUT_LEFT_SIDEBAR = "C624F84F-2EF0-4F39-A32F-8A7C0239FC29";
+        private const string LAYOUT_FULL_WIDTH = "02677DA7-178C-4766-A20D-9C84699B66F1";
 
         public override void Up()
         {
             RockMigrationHelper.AddPage(
                 PAGE_GROUP_TOOLBOX,
-                LAYOUT_LEFT_SIDEBAR,
+                LAYOUT_FULL_WIDTH,
                 "Meeting Exclusions",
                 "Leader-managed RSVP meeting exclusions for a group.",
                 SystemGuid.Page.MEETING_EXCLUSIONS );
