@@ -17,6 +17,43 @@ using Rock.Web.Cache;
 namespace com.razayya.JourneyTrack.Data
 {
     /// <summary>
+    /// Per-stage-evaluation prefetch bundle. Built once per stage in
+    /// ProcessSubGroupInternal (one round trip each for calc attributes, manual
+    /// skips, and — on single-person syncs — the person's sink values and media
+    /// watch aggregates), then consumed by ExecuteCalculation and the calc
+    /// components through the [ThreadStatic] ambient slot so component
+    /// signatures stay unchanged. The engine is fully synchronous, so the slot
+    /// never crosses threads; it is cleared in a finally and never outlives the
+    /// stage evaluation that built it. Every consumer falls back to its own
+    /// per-calc query when the slot is empty (admin blocks, previews, tags).
+    /// </summary>
+    internal class StageEvalContext
+    {
+        [ThreadStatic]
+        public static StageEvalContext Current;
+
+        /// <summary>CalcId -> active manually-skipped PersonIds (one query per stage).</summary>
+        public Dictionary<int, HashSet<int>> ManualSkipPersonIdsByCalcId;
+
+        /// <summary>The person a single-person sync is evaluating (null on population runs).</summary>
+        public int? SinglePersonId;
+
+        /// <summary>
+        /// Single-person syncs only: sink AttributeId -> stored value for that person.
+        /// A missing key means no AttributeValue row exists (callers use that to keep
+        /// insert-vs-update semantics).
+        /// </summary>
+        public Dictionary<int, string> SinkValueByAttributeId;
+
+        /// <summary>
+        /// Single-person syncs only: MediaElementId -> boxed PersonWatchAggregate
+        /// (null value = prefetched, person has no decodable watches). A missing key
+        /// means the media element was not part of the prefetch.
+        /// </summary>
+        public Dictionary<int, object> MediaAggregateByElementId;
+    }
+
+    /// <summary>
     /// Shared service that encapsulates the sync engine's evaluation and write logic.
     /// Used by both the nightly job and on-demand UI execution.
     /// </summary>
@@ -719,33 +756,46 @@ namespace com.razayya.JourneyTrack.Data
             // which references calcs by Id and folds their sets with All/Any/…False.
             var matchedByCalcId = new Dictionary<int, HashSet<int>>();
 
+            // Stage-level prefetch: collapse the per-calc scaffolding queries
+            // (attribute loads, manual-skip lookups, and on single-person syncs the
+            // sink reads and per-media interaction reads) into one round trip each
+            // for the whole stage. ~80 queries -> ~6 on an 18-calc stage open.
+            StageEvalContext.Current = BuildStageEvalContext( calculations, workingPopulation, rockContext, result );
+
             int calcIndex = 0;
-            foreach ( var calc in calculations )
+            try
             {
-                calcIndex++;
-                try
+                foreach ( var calc in calculations )
                 {
-                    Report( $"{stageLabel}: calc {calcIndex}/{calculations.Count} '{calc.Name}'" );
-                    var calcResult = ExecuteCalculation( calc, workingPopulation, rockContext );
-                    result.Merge( calcResult );
-
-                    var matched = calcResult.MatchedPersonIds ?? new HashSet<int>();
-                    matchedByCalcId[calc.Id] = matched;
-
-                    var componentName = calc.CalculationTypeEntityType?.Name ?? string.Empty;
-                    if ( componentName.Contains( "CompletionCalculation" ) )
+                    calcIndex++;
+                    try
                     {
-                        completionPassers = calcResult.MatchedPersonIds;
+                        Report( $"{stageLabel}: calc {calcIndex}/{calculations.Count} '{calc.Name}'" );
+                        var calcResult = ExecuteCalculation( calc, workingPopulation, rockContext );
+                        result.Merge( calcResult );
+
+                        var matched = calcResult.MatchedPersonIds ?? new HashSet<int>();
+                        matchedByCalcId[calc.Id] = matched;
+
+                        var componentName = calc.CalculationTypeEntityType?.Name ?? string.Empty;
+                        if ( componentName.Contains( "CompletionCalculation" ) )
+                        {
+                            completionPassers = calcResult.MatchedPersonIds;
+                        }
+                        else
+                        {
+                            nonCompletionMatched.Add( matched );
+                        }
                     }
-                    else
+                    catch ( Exception ex )
                     {
-                        nonCompletionMatched.Add( matched );
+                        result.Errors.Add( $"JourneyCalculation '{calc.Name}': {ex.Message}" );
                     }
                 }
-                catch ( Exception ex )
-                {
-                    result.Errors.Add( $"JourneyCalculation '{calc.Name}': {ex.Message}" );
-                }
+            }
+            finally
+            {
+                StageEvalContext.Current = null;
             }
 
             HashSet<int> finalPassers;
@@ -916,6 +966,76 @@ namespace com.razayya.JourneyTrack.Data
             }
         }
 
+        /// <summary>
+        /// Builds the per-stage prefetch bundle consumed via StageEvalContext.Current.
+        /// Attribute loads and manual skips are batched for every run shape; sink
+        /// values and media aggregates are only prefetched on single-person syncs
+        /// (population runs keep their size-aware per-calc reads). Any prefetch
+        /// failure degrades to the per-calc fallback paths rather than failing the
+        /// stage.
+        /// </summary>
+        private StageEvalContext BuildStageEvalContext(
+            List<JourneyCalculation> calculations,
+            HashSet<int> workingPopulation,
+            RockContext rockContext,
+            SyncResult result )
+        {
+            var ctx = new StageEvalContext();
+            if ( calculations.Count == 0 )
+            {
+                return ctx;
+            }
+
+            try
+            {
+                // One attribute-value load for every calc in the stage (was one query per calc).
+                calculations.LoadAttributes( rockContext );
+
+                // One manual-skips read for the whole stage.
+                var calcIds = calculations.Select( c => c.Id ).ToList();
+                ctx.ManualSkipPersonIdsByCalcId = new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
+                    .Where( s => calcIds.Contains( s.JourneyCalculationId ) && s.IsActive )
+                    .Select( s => new { s.JourneyCalculationId, s.PersonAlias.PersonId } )
+                    .ToList()
+                    .GroupBy( r => r.JourneyCalculationId )
+                    .ToDictionary( g => g.Key, g => new HashSet<int>( g.Select( r => r.PersonId ) ) );
+
+                if ( workingPopulation.Count == 1 )
+                {
+                    var personId = workingPopulation.First();
+                    ctx.SinglePersonId = personId;
+
+                    // One sink read across every sink attribute in the stage for this person.
+                    var sinkAttrIds = calculations
+                        .Where( c => c.PersonAttributeId.HasValue )
+                        .Select( c => c.PersonAttributeId.Value )
+                        .Distinct()
+                        .ToList();
+                    ctx.SinkValueByAttributeId = sinkAttrIds.Count == 0
+                        ? new Dictionary<int, string>()
+                        : new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                            .Where( av => sinkAttrIds.Contains( av.AttributeId ) && av.EntityId == personId )
+                            .Select( av => new { av.AttributeId, av.Value } )
+                            .ToList()
+                            .GroupBy( x => x.AttributeId )
+                            .ToDictionary( g => g.Key, g => g.First().Value ?? string.Empty );
+
+                    // One interactions read across every MediaWatched calc's media element.
+                    MediaWatchedCalculation.PrefetchPersonAggregates( calculations, personId, rockContext, ctx );
+                }
+            }
+            catch ( Exception ex )
+            {
+                // Prefetch is an optimization, never a correctness dependency.
+                result.Log.Add( $"    (stage prefetch failed, using per-calc reads: {ex.Message})" );
+                ctx.ManualSkipPersonIdsByCalcId = null;
+                ctx.SinkValueByAttributeId = null;
+                ctx.MediaAggregateByElementId = null;
+            }
+
+            return ctx;
+        }
+
         private SyncResult ExecuteCalculation(
             JourneyCalculation calc,
             HashSet<int> workingPopulation,
@@ -940,7 +1060,12 @@ namespace com.razayya.JourneyTrack.Data
                 return result;
             }
 
-            calc.LoadAttributes( rockContext );
+            // Batched by the stage prefetch; per-calc load only when invoked outside
+            // a stage evaluation (previews, tags, admin runs).
+            if ( calc.Attributes == null )
+            {
+                calc.LoadAttributes( rockContext );
+            }
 
             // "Sticky" mode: if SkipIfTargetHasValue is set and the calc has a sink
             // attribute, exclude people who already have a non-blank value. Big win
@@ -951,7 +1076,8 @@ namespace com.razayya.JourneyTrack.Data
             if ( calc.SkipIfTargetHasValue && calc.PersonAttributeId.HasValue && workingPopulation.Count > 0 )
             {
                 // Size-aware read (avoids a large-IN clause), then keep only non-blank values.
-                var existingForSkip = ReadExistingAttributeValues( calc.PersonAttributeId.Value, workingPopulation, rockContext );
+                var existingForSkip = TryReadSinkValuesFromPrefetch( calc.PersonAttributeId.Value, workingPopulation )
+                    ?? ReadExistingAttributeValues( calc.PersonAttributeId.Value, workingPopulation, rockContext );
                 var skipPersonIds = new HashSet<int>( existingForSkip
                     .Where( kv => !string.IsNullOrEmpty( kv.Value ) )
                     .Select( kv => kv.Key ) );
@@ -992,10 +1118,21 @@ namespace com.razayya.JourneyTrack.Data
             HashSet<int> manualSkipIds = null;
             if ( workingPopulation.Count > 0 )
             {
-                var manualSkips = new HashSet<int>( new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
-                    .Where( s => s.JourneyCalculationId == calc.Id && s.IsActive )
-                    .Select( s => s.PersonAlias.PersonId )
-                    .ToList() );
+                HashSet<int> manualSkips;
+                var skipCtx = StageEvalContext.Current;
+                if ( skipCtx?.ManualSkipPersonIdsByCalcId != null )
+                {
+                    manualSkips = skipCtx.ManualSkipPersonIdsByCalcId.TryGetValue( calc.Id, out var prefetchedSkips )
+                        ? new HashSet<int>( prefetchedSkips )
+                        : new HashSet<int>();
+                }
+                else
+                {
+                    manualSkips = new HashSet<int>( new JourneyCalculationSkipService( rockContext ).Queryable().AsNoTracking()
+                        .Where( s => s.JourneyCalculationId == calc.Id && s.IsActive )
+                        .Select( s => s.PersonAlias.PersonId )
+                        .ToList() );
+                }
                 manualSkips.IntersectWith( workingPopulation );
                 if ( manualSkips.Count > 0 )
                 {
@@ -1076,11 +1213,15 @@ namespace com.razayya.JourneyTrack.Data
             }
 
             // Batch-read existing attribute values for this attribute, restricted to the
-            // population. Size-aware to avoid a large-IN clause on full-population syncs.
-            Dictionary<int, string> existingValues;
-            using ( var readContext = new RockContext() )
+            // population. Served from the stage prefetch on single-person syncs; else
+            // size-aware to avoid a large-IN clause on full-population syncs.
+            Dictionary<int, string> existingValues = TryReadSinkValuesFromPrefetch( targetAttribute.Id, workingPopulation );
+            if ( existingValues == null )
             {
-                existingValues = ReadExistingAttributeValues( targetAttribute.Id, workingPopulation, readContext );
+                using ( var readContext = new RockContext() )
+                {
+                    existingValues = ReadExistingAttributeValues( targetAttribute.Id, workingPopulation, readContext );
+                }
             }
 
             // Build the list of writes needed (resolve Lava templates first, then diff against existing).
@@ -1619,6 +1760,26 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
             }
 
             return writtenHere;
+        }
+
+        /// <summary>
+        /// Existing sink values served from the stage prefetch — non-null only on a
+        /// single-person sync whose prefetch covered this population. A missing
+        /// person key means no AttributeValue row exists (preserves insert-vs-update
+        /// semantics). Returns null when the caller must run its own read.
+        /// </summary>
+        private static Dictionary<int, string> TryReadSinkValuesFromPrefetch( int attributeId, HashSet<int> population )
+        {
+            var ctx = StageEvalContext.Current;
+            if ( ctx?.SinglePersonId == null || ctx.SinkValueByAttributeId == null
+                || population.Count != 1 || population.First() != ctx.SinglePersonId.Value )
+            {
+                return null;
+            }
+
+            return ctx.SinkValueByAttributeId.TryGetValue( attributeId, out var value )
+                ? new Dictionary<int, string> { { ctx.SinglePersonId.Value, value } }
+                : new Dictionary<int, string>();
         }
 
         private void RecordJourneyCalculationRun( int calculationId, DateTime runStart, int populationCount, int matchedCount, SyncResult result )

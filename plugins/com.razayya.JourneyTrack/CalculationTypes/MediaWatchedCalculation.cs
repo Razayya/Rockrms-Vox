@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Data.Entity;
 using System.Linq;
 
+using com.razayya.JourneyTrack.Data;
 using com.razayya.JourneyTrack.Model;
 
 using Newtonsoft.Json;
@@ -81,6 +82,83 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             _personBustEpoch[personId] = System.DateTime.UtcNow;
         }
 
+        // MediaElement Guid -> Id. A media element's Id never changes for a Guid, so
+        // this never expires; it exists purely to skip the per-calc MediaElement.Get
+        // round trip on render syncs.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, int> _mediaIdByGuid
+            = new System.Collections.Concurrent.ConcurrentDictionary<Guid, int>();
+
+        internal static int? ResolveMediaElementId( Guid mediaGuid, RockContext rockContext )
+        {
+            if ( _mediaIdByGuid.TryGetValue( mediaGuid, out var cachedId ) )
+            {
+                return cachedId;
+            }
+
+            var mediaElement = new MediaElementService( rockContext ).Get( mediaGuid );
+            if ( mediaElement == null )
+            {
+                return null;
+            }
+
+            _mediaIdByGuid[mediaGuid] = mediaElement.Id;
+            return mediaElement.Id;
+        }
+
+        /// <summary>
+        /// Engine hook (stage prefetch): ONE Interaction query covering every
+        /// MediaWatched calc in the stage for the person, decoded into per-media
+        /// aggregates on the eval context. GetPersonWatchAggregate consumes them,
+        /// so an 18-calc stage open pays one media round trip instead of 17.
+        /// Calc attributes must already be loaded (the stage prefetch batch-loads
+        /// them before calling this).
+        /// </summary>
+        internal static void PrefetchPersonAggregates( List<JourneyCalculation> calculations, int personId, RockContext rockContext, StageEvalContext ctx )
+        {
+            var mediaElementIds = new List<int>();
+            foreach ( var calc in calculations )
+            {
+                if ( calc.CalculationTypeEntityType?.Name?.Contains( "MediaWatchedCalculation" ) != true )
+                {
+                    continue;
+                }
+
+                var mediaGuid = calc.GetAttributeValue( "MediaElement" ).AsGuidOrNull();
+                if ( !mediaGuid.HasValue )
+                {
+                    continue;
+                }
+
+                var mediaId = ResolveMediaElementId( mediaGuid.Value, rockContext );
+                if ( mediaId.HasValue )
+                {
+                    mediaElementIds.Add( mediaId.Value );
+                }
+            }
+
+            ctx.MediaAggregateByElementId = new Dictionary<int, object>();
+            if ( mediaElementIds.Count == 0 )
+            {
+                return;
+            }
+
+            var rows = new InteractionService( rockContext ).Queryable().AsNoTracking()
+                .Where( i =>
+                    i.InteractionComponent.EntityId.HasValue
+                    && mediaElementIds.Contains( i.InteractionComponent.EntityId.Value )
+                    && i.PersonAliasId.HasValue
+                    && i.PersonAlias.PersonId == personId
+                    && i.InteractionData != null )
+                .Select( i => new { MediaId = i.InteractionComponent.EntityId.Value, i.InteractionData } )
+                .ToList();
+
+            foreach ( var mediaId in mediaElementIds.Distinct() )
+            {
+                var agg = BuildAggregate( rows.Where( r => r.MediaId == mediaId ).Select( r => r.InteractionData ) );
+                ctx.MediaAggregateByElementId[mediaId] = agg.HasValue ? ( object ) agg.Value : null;
+            }
+        }
+
         private static bool IsBustedFor( int? personId, System.DateTime cachedAt )
         {
             if ( !personId.HasValue || !_personBustEpoch.TryGetValue( personId.Value, out var bustedAt ) )
@@ -139,6 +217,15 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// </summary>
         private static PersonWatchAggregate? GetPersonWatchAggregate( int mediaElementId, int personId, RockContext rockContext )
         {
+            // Stage prefetch hit: the engine already decoded this person's aggregate
+            // for every media element in the stage in one query.
+            var evalCtx = StageEvalContext.Current;
+            if ( evalCtx?.SinglePersonId == personId && evalCtx.MediaAggregateByElementId != null
+                && evalCtx.MediaAggregateByElementId.TryGetValue( mediaElementId, out var prefetched ) )
+            {
+                return prefetched == null ? ( PersonWatchAggregate? ) null : ( PersonWatchAggregate ) prefetched;
+            }
+
             if ( _watchCache.TryGetValue( mediaElementId, out var cached )
                 && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl
                 && !IsBustedFor( personId, cached.CachedAt ) )
@@ -211,15 +298,15 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             if ( !mediaGuid.HasValue ) return results;
             if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
 
-            var mediaElement = new MediaElementService( rockContext ).Get( mediaGuid.Value );
-            if ( mediaElement == null ) return results;
+            var mediaElementId = ResolveMediaElementId( mediaGuid.Value, rockContext );
+            if ( !mediaElementId.HasValue ) return results;
 
             // Render-path fast path: a single-person evaluation reads (at most) that
             // person's own Interaction rows — never the all-persons union.
             if ( populationPersonIds.Count == 1 )
             {
                 var singlePersonId = populationPersonIds.First();
-                var personAgg = GetPersonWatchAggregate( mediaElement.Id, singlePersonId, rockContext );
+                var personAgg = GetPersonWatchAggregate( mediaElementId.Value, singlePersonId, rockContext );
                 if ( personAgg.HasValue )
                 {
                     AppendIfPassing( results, singlePersonId, personAgg.Value, minPercent );
@@ -227,7 +314,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 return results;
             }
 
-            var aggregates = GetWatchAggregates( mediaElement.Id, rockContext );
+            var aggregates = GetWatchAggregates( mediaElementId.Value, rockContext );
             if ( aggregates.Count == 0 ) return results;
 
             foreach ( var personId in populationPersonIds )
@@ -280,10 +367,10 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
             if ( mediaGuid.HasValue )
             {
-                var mediaElement = new MediaElementService( rockContext ).Get( mediaGuid.Value );
-                if ( mediaElement != null )
+                var mediaElementId = ResolveMediaElementId( mediaGuid.Value, rockContext );
+                if ( mediaElementId.HasValue )
                 {
-                    var personAgg = GetPersonWatchAggregate( mediaElement.Id, personId, rockContext );
+                    var personAgg = GetPersonWatchAggregate( mediaElementId.Value, personId, rockContext );
                     if ( personAgg.HasValue )
                     {
                         var agg = personAgg.Value;
