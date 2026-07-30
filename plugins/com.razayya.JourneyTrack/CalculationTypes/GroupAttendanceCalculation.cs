@@ -96,6 +96,46 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             return map;
         }
 
+        /// <summary>
+        /// Single-person summary for render-path evaluations: a fresh shared entry
+        /// is a free hit; otherwise query only this person's attendance rows
+        /// instead of building the all-persons map. The shared cache is not
+        /// written here — population runs keep their own rebuild cadence.
+        /// </summary>
+        private static AttendanceSummary? GetPersonAttendanceSummary( List<System.Guid> groupGuids, int withinDays, int personId, RockContext rockContext )
+        {
+            var key = string.Join( ",", groupGuids.OrderBy( g => g ) ) + "|" + withinDays;
+            if ( _attCache.TryGetValue( key, out var cached )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
+            {
+                return cached.Map.TryGetValue( personId, out var hit ) ? hit : ( AttendanceSummary? ) null;
+            }
+
+            var sinceDate = RockDateTime.Today.AddDays( -withinDays );
+            var row = new AttendanceService( rockContext ).Queryable().AsNoTracking()
+                .Where( a =>
+                    a.DidAttend == true &&
+                    a.StartDateTime >= sinceDate &&
+                    a.Occurrence.Group != null &&
+                    groupGuids.Contains( a.Occurrence.Group.Guid ) &&
+                    a.PersonAlias != null &&
+                    a.PersonAlias.PersonId == personId )
+                .GroupBy( a => a.PersonAlias.PersonId )
+                .Select( g => new
+                {
+                    AttendanceCount = g.Count(),
+                    LastAttendanceDate = g.Max( a => a.StartDateTime )
+                } )
+                .FirstOrDefault();
+
+            if ( row == null )
+            {
+                return null;
+            }
+
+            return new AttendanceSummary { AttendanceCount = row.AttendanceCount, LastAttendanceDate = row.LastAttendanceDate };
+        }
+
         /// <inheritdoc/>
         public override Dictionary<int, Dictionary<string, object>> Evaluate(
             RockContext rockContext,
@@ -112,6 +152,24 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
             if ( !groupGuids.Any() ) return results;
             if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
+
+            // Render-path fast path: a single-person evaluation queries only that
+            // person's attendance rather than the all-persons summary map.
+            if ( populationPersonIds.Count == 1 )
+            {
+                var singlePersonId = populationPersonIds.First();
+                var personSummary = GetPersonAttendanceSummary( groupGuids, withinDays, singlePersonId, rockContext );
+                if ( personSummary.HasValue && personSummary.Value.AttendanceCount >= minimumCount )
+                {
+                    results[singlePersonId] = new Dictionary<string, object>
+                    {
+                        { "Matched", true },
+                        { "AttendanceCount", personSummary.Value.AttendanceCount },
+                        { "LastAttendanceDate", personSummary.Value.LastAttendanceDate }
+                    };
+                }
+                return results;
+            }
 
             var attMap = GetAttendanceSummaries( groupGuids, withinDays, rockContext );
             if ( attMap.Count == 0 ) return results;
@@ -152,11 +210,11 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
             if ( groupGuids.Any() )
             {
-                var attMap = GetAttendanceSummaries( groupGuids, withinDays, rockContext );
-                if ( attMap.TryGetValue( personId, out var summary ) )
+                var personSummary = GetPersonAttendanceSummary( groupGuids, withinDays, personId, rockContext );
+                if ( personSummary.HasValue )
                 {
-                    count = summary.AttendanceCount;
-                    lastAttendance = summary.LastAttendanceDate;
+                    count = personSummary.Value.AttendanceCount;
+                    lastAttendance = personSummary.Value.LastAttendanceDate;
                 }
             }
 

@@ -122,6 +122,78 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             return map;
         }
 
+        /// <summary>
+        /// Single-person memberships for render-path evaluations: a fresh shared
+        /// entry is a free hit; otherwise resolve the group id set and query only
+        /// this person's GroupMember rows instead of building the all-persons map.
+        /// The shared cache is not written here.
+        /// </summary>
+        private static List<MembershipRow> GetPersonMemberships(
+            System.Guid groupGuid, bool includeChildren, System.Guid? roleGuid, bool activeOnly, int personId, RockContext rockContext )
+        {
+            var key = $"{groupGuid}|{includeChildren}|{roleGuid}|{activeOnly}";
+            if ( _gmCache.TryGetValue( key, out var cached )
+                && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
+            {
+                return cached.Map.TryGetValue( personId, out var hit ) ? hit : new List<MembershipRow>();
+            }
+
+            var groupService = new GroupService( rockContext );
+            var selectedGroup = groupService.Get( groupGuid );
+            if ( selectedGroup == null )
+            {
+                return new List<MembershipRow>();
+            }
+
+            var groupIds = new HashSet<int> { selectedGroup.Id };
+            if ( includeChildren )
+            {
+                foreach ( var id in groupService.GetAllDescendentGroupIds( selectedGroup.Id, false ) )
+                {
+                    groupIds.Add( id );
+                }
+            }
+
+            var query = new GroupMemberService( rockContext ).Queryable().AsNoTracking()
+                .Where( gm => gm.PersonId == personId && groupIds.Contains( gm.GroupId ) );
+            if ( activeOnly )
+                query = query.Where( gm => gm.GroupMemberStatus == GroupMemberStatus.Active );
+            if ( roleGuid.HasValue )
+                query = query.Where( gm => gm.GroupRole.Guid == roleGuid.Value );
+
+            return query.Select( gm => new
+                {
+                    gm.CreatedDateTime,
+                    GroupRoleName = gm.GroupRole.Name,
+                    GroupName = gm.Group.Name
+                } )
+                .ToList()
+                .OrderBy( r => r.CreatedDateTime )
+                .Select( r => new MembershipRow { CreatedDateTime = r.CreatedDateTime, GroupRoleName = r.GroupRoleName, GroupName = r.GroupName } )
+                .ToList();
+        }
+
+        private static Dictionary<string, object> BuildMembershipEntry( List<MembershipRow> memberships )
+        {
+            var memList = memberships.Select( r => new Dictionary<string, object>
+            {
+                { "GroupName", r.GroupName },
+                { "GroupRole", r.GroupRoleName },
+                { "JoinDate", r.CreatedDateTime }
+            } ).ToList();
+            var earliest = memList.First();
+
+            return new Dictionary<string, object>
+            {
+                { "Matched", true },
+                { "GroupName", earliest["GroupName"] },
+                { "GroupRole", earliest["GroupRole"] },
+                { "JoinDate", earliest["JoinDate"] },
+                { "Groups", memList },
+                { "GroupCount", memList.Count }
+            };
+        }
+
         /// <inheritdoc/>
         public override Dictionary<int, Dictionary<string, object>> Evaluate(
             RockContext rockContext,
@@ -138,6 +210,19 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             if ( !groupGuid.HasValue ) return results;
             if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
 
+            // Render-path fast path: a single-person evaluation queries only that
+            // person's memberships rather than the all-persons map.
+            if ( populationPersonIds.Count == 1 )
+            {
+                var singlePersonId = populationPersonIds.First();
+                var personMemberships = GetPersonMemberships( groupGuid.Value, includeChildGroups, groupRoleGuid, activeMembersOnly, singlePersonId, rockContext );
+                if ( personMemberships.Count > 0 )
+                {
+                    results[singlePersonId] = BuildMembershipEntry( personMemberships );
+                }
+                return results;
+            }
+
             var membershipMap = GetMembershipMap( groupGuid.Value, includeChildGroups, groupRoleGuid, activeMembersOnly, rockContext );
             if ( membershipMap.Count == 0 ) return results;
 
@@ -145,23 +230,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             {
                 if ( !membershipMap.TryGetValue( personId, out var memberships ) || memberships.Count == 0 ) continue;
 
-                var memList = memberships.Select( r => new Dictionary<string, object>
-                {
-                    { "GroupName", r.GroupName },
-                    { "GroupRole", r.GroupRoleName },
-                    { "JoinDate", r.CreatedDateTime }
-                } ).ToList();
-                var earliest = memList.First();
-
-                results[personId] = new Dictionary<string, object>
-                {
-                    { "Matched", true },
-                    { "GroupName", earliest["GroupName"] },
-                    { "GroupRole", earliest["GroupRole"] },
-                    { "JoinDate", earliest["JoinDate"] },
-                    { "Groups", memList },
-                    { "GroupCount", memList.Count }
-                };
+                results[personId] = BuildMembershipEntry( memberships );
             }
 
             return results;
