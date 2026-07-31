@@ -416,7 +416,46 @@ namespace com.razayya.JourneyTrack.Data
             // DB-read in Rock 17+, so the historical unconditional
             // RockCache.ClearAllCachedItems() here wiped the site cache on every
             // engine run (48x/day at the 30-minute cadence) for zero benefit.
+
+            PruneRunLog( result );
             return result;
+        }
+
+        /// <summary>
+        /// Rolling retention for JourneyCalculationRun. At the 30-minute cadence the
+        /// full run records one row per active calc per run (~2.5-3k/day) and nothing
+        /// else prunes the table. Batched TOP deletes keep lock scope small; failures
+        /// are logged and never fail the run.
+        /// </summary>
+        private void PruneRunLog( SyncResult result, int retainDays = 30 )
+        {
+            try
+            {
+                var cutoff = RockDateTime.Now.AddDays( -retainDays );
+                int totalDeleted = 0;
+                using ( var rockContext = new RockContext() )
+                {
+                    int deleted;
+                    do
+                    {
+                        deleted = rockContext.Database.ExecuteSqlCommand(
+                            "DELETE TOP (5000) FROM [_com_razayya_JourneyTrack_JourneyCalculationRun] WHERE [RunDateTime] < @p0",
+                            cutoff );
+                        totalDeleted += deleted;
+                    }
+                    while ( deleted == 5000 );
+                }
+
+                if ( totalDeleted > 0 )
+                {
+                    result.Log.Add( $"Run-log retention: pruned {totalDeleted} rows older than {retainDays} days." );
+                }
+            }
+            catch ( Exception ex )
+            {
+                result.Log.Add( $"Run-log retention failed (non-fatal): {ex.Message}" );
+                ExceptionLogService.LogException( ex );
+            }
         }
 
         /// <summary>
@@ -2127,6 +2166,23 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                 .Any( s => s.JourneyCalculationId == calc.Id && s.IsActive && s.PersonAlias.PersonId == personId );
             entry["ManuallySkipped"] = manuallySkipped;
             if ( manuallySkipped )
+            {
+                entry["Matched"] = true;
+            }
+
+            // Skip Logic (engine parity): a person matching the calc's "Skip If" filter
+            // passes the stage gate with a blank sink, so progress surfaces must report
+            // them satisfied too — otherwise the drawers/tags contradict the engine's
+            // verdict for skip-filtered people. Flagged separately like manual skips.
+            bool skipFiltered = false;
+            if ( !manuallySkipped && !string.IsNullOrWhiteSpace( calc.SkipFilterJson ) )
+            {
+                skipFiltered = PersonFilterCalculation.EvaluatePopulation(
+                        calc.SkipFilterJson, calc.SkipFilterMatchAll, new HashSet<int> { personId }, rockContext )
+                    .Contains( personId );
+            }
+            entry["SkipFiltered"] = skipFiltered;
+            if ( skipFiltered )
             {
                 entry["Matched"] = true;
             }
