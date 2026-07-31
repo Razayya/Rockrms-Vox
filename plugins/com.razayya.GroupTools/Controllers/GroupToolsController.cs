@@ -1516,8 +1516,20 @@ namespace com.razayya.GroupFinder.Controllers
              Person person,
             GroupQueryOptions qryOptions )
         {
-            var authorizedGroupTypeIds = new GroupTypeService( rockContext ).Queryable()
-               .ToList().Where( a => a.IsAuthorized( Rock.Security.Authorization.VIEW, person ) ).Select( a => a.Id ).ToList();
+            var groupTypes = new GroupTypeService( rockContext ).Queryable().ToList();
+            var authorizedGroupTypeIds = groupTypes
+               .Where( a => a.IsAuthorized( Rock.Security.Authorization.VIEW, person ) ).Select( a => a.Id ).ToList();
+
+            // 7221: showPrivateGroups / showInactiveGroups arrive from the query string, and
+            // these endpoints must stay anonymously reachable (the public group finder calls
+            // them from the browser), so a caller could previously flip either flag and
+            // enumerate private or inactive groups. Hidden groups are now released only for
+            // group types the CALLER can EDIT — anonymous callers qualify for none, so the
+            // flags degrade to public+active for the public finder while staff tools keep
+            // working within their existing security scope.
+            var elevatedGroupTypeIds = person == null
+                ? new List<int>()
+                : groupTypes.Where( a => a.IsAuthorized( Rock.Security.Authorization.EDIT, person ) ).Select( a => a.Id ).ToList();
 
             var groupService = new GroupService( rockContext );
             var definedValueService = new DefinedValueService( rockContext );
@@ -1539,20 +1551,31 @@ namespace com.razayya.GroupFinder.Controllers
                 qry = qry.Where( g => groupTypeIdList.Contains( g.GroupTypeId ) );
             }
 
-            // After filtering on security, if group ids were passed in, skip the remaining filtering and return those groups. 
-            if ( groupIdList.Any() )
-            {
-                return qry.Where( g => groupIdList.Contains( g.Id ) );
-            }
-
+            // Visibility gate (7221). Applied BEFORE the groupIds short-circuit below —
+            // that early return used to skip these filters entirely, so an explicit
+            // groupIds list was its own way to read private/inactive groups anonymously.
             if ( !qryOptions.ShowPrivateGroups )
             {
                 qry = qry.Where( g => g.IsPublic );
+            }
+            else
+            {
+                qry = qry.Where( g => g.IsPublic || elevatedGroupTypeIds.Contains( g.GroupTypeId ) );
             }
 
             if ( !qryOptions.ShowInactiveGroups )
             {
                 qry = qry.Where( g => g.IsActive );
+            }
+            else
+            {
+                qry = qry.Where( g => g.IsActive || elevatedGroupTypeIds.Contains( g.GroupTypeId ) );
+            }
+
+            // After filtering on security, if group ids were passed in, skip the remaining filtering and return those groups.
+            if ( groupIdList.Any() )
+            {
+                return qry.Where( g => groupIdList.Contains( g.Id ) );
             }
 
             if ( qryOptions.LimitByCapacity )
