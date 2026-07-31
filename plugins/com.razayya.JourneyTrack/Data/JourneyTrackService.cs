@@ -261,11 +261,6 @@ namespace com.razayya.JourneyTrack.Data
                 var erroredStageIds = subResult.EvaluationFailed ? new HashSet<int> { targetStage.Id } : null;
                 WriteEnrollmentStageStatusForPerson( targetStage.JourneyProgramId, personId, stagePassers, erroredStageIds, result, rockContext );
 
-                if ( result.Updated > 0 )
-                {
-                    FlushAttributeCache();
-                }
-
                 return result;
             }
         }
@@ -338,15 +333,12 @@ namespace com.razayya.JourneyTrack.Data
                 }
             }
 
-            // Only pay the cache flush when this sync actually wrote something. The
-            // previous unconditional call cleared the ENTIRE RockCache on every
-            // pathway page open — including the ~99% of renders that write nothing —
-            // degrading every other page on the site and forcing the very next tag
-            // in the render (personjourneyprogress) to rebuild cold caches.
-            if ( result.Updated > 0 )
-            {
-                FlushAttributeCache();
-            }
+            // No cache flush on writes: Rock 17+ reads attribute VALUES from the DB in
+            // LoadAttributes (only attribute definitions are cached, and sink writes
+            // never change definitions), and every JourneyTrack read surface (tags,
+            // drawers, template SQL, StageStatusJson) queries fresh. The historical
+            // RockCache.ClearAllCachedItems() here protected nothing and made every
+            // completion render (the loads that write) rebuild the site cache cold.
             return result;
         }
 
@@ -420,7 +412,10 @@ namespace com.razayya.JourneyTrack.Data
                 rockContext.SaveChanges();
             }
 
-            FlushAttributeCache();
+            // No cache flush: see the single-person path note — attribute values are
+            // DB-read in Rock 17+, so the historical unconditional
+            // RockCache.ClearAllCachedItems() here wiped the site cache on every
+            // engine run (48x/day at the 30-minute cadence) for zero benefit.
             return result;
         }
 
@@ -2446,27 +2441,6 @@ INNER JOIN ( VALUES {values} ) AS v ([Id], [Json]) ON v.[Id] = e.[Id]";
             catch
             {
                 return new Dictionary<int, bool>();
-            }
-        }
-
-        /// <summary>
-        /// Invalidates the AttributeValue side of Rock's cache so the freshly written values
-        /// surface immediately. Optimization O8 - one call at end of run.
-        ///
-        /// Rock 18 doesn't expose a granular AttributeValue flush, so we fall back to a
-        /// broad RockCache clear. If this proves too aggressive in practice, replace with
-        /// targeted FlushAttributesForBlockType / FlushItem(attributeId) calls.
-        /// </summary>
-        private void FlushAttributeCache()
-        {
-            try
-            {
-                Rock.Web.Cache.RockCache.ClearAllCachedItems();
-            }
-            catch ( Exception ex )
-            {
-                // Cache flush failures are non-fatal; new values will surface on natural cache expiry.
-                ExceptionLogService.LogException( ex );
             }
         }
 
