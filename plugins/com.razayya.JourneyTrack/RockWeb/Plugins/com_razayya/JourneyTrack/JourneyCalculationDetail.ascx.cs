@@ -148,9 +148,14 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
                 calc.PersonAttributeId = selectedAttributeId.Value;
                 calc.ResultLavaTemplate = ceResultLava.Text;
-                calc.NoMatchBehavior = ddlNoMatchBehavior.SelectedValue.AsInteger() == 1
-                    ? NoMatchBehavior.WriteLava
-                    : NoMatchBehavior.LeaveUnchanged;
+                // Parse across the full enum rather than the old is-it-1 ternary, which would
+                // silently collapse any new member back to LeaveUnchanged.
+                switch ( ddlNoMatchBehavior.SelectedValue.AsInteger() )
+                {
+                    case 1: calc.NoMatchBehavior = NoMatchBehavior.WriteLava; break;
+                    case 2: calc.NoMatchBehavior = NoMatchBehavior.ClearValue; break;
+                    default: calc.NoMatchBehavior = NoMatchBehavior.LeaveUnchanged; break;
+                }
                 calc.NoMatchLavaTemplate = ceNoMatchLava.Text;
                 calc.SkipIfTargetHasValue = cbSkipIfTargetHasValue.Checked;
                 calc.OnMatchSystemCommunicationId = ddlOnMatchCommunication.SelectedValueAsInt();
@@ -393,6 +398,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             ddlNoMatchBehavior.Items.Clear();
             ddlNoMatchBehavior.Items.Add( new System.Web.UI.WebControls.ListItem( "Leave Unchanged", "0" ) );
             ddlNoMatchBehavior.Items.Add( new System.Web.UI.WebControls.ListItem( "Write Lava Value", "1" ) );
+            ddlNoMatchBehavior.Items.Add( new System.Web.UI.WebControls.ListItem( "Clear Value", "2" ) );
 
             // Load JourneyCalculation types
             cpCalculationType.Items.Clear();
@@ -532,8 +538,14 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
             string details = string.Empty;
             details += string.Format( "<dt>Target Attribute</dt><dd>{0}</dd>", calc.PersonAttribute?.Name ?? "Unknown" );
-            details += string.Format( "<dt>No Match Behavior</dt><dd>{0}</dd>",
-                calc.NoMatchBehavior == NoMatchBehavior.LeaveUnchanged ? "Leave Unchanged" : "Write Lava Value" );
+            string noMatchLabel;
+            switch ( calc.NoMatchBehavior )
+            {
+                case NoMatchBehavior.WriteLava: noMatchLabel = "Write Lava Value"; break;
+                case NoMatchBehavior.ClearValue: noMatchLabel = "Clear Value"; break;
+                default: noMatchLabel = "Leave Unchanged"; break;
+            }
+            details += string.Format( "<dt>No Match Behavior</dt><dd>{0}</dd>", noMatchLabel );
 
             if ( !string.IsNullOrWhiteSpace( calc.ResultLavaTemplate ) )
             {

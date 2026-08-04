@@ -677,8 +677,12 @@ namespace com.razayya.JourneyTrack.Data
                         }
                         else
                         {
-                            newValue = ResolveNoMatchValue( calc );
-                            action = string.Equals( currentValue, newValue, StringComparison.OrdinalIgnoreCase ) ? "No Change" : "Update";
+                            newValue = calc.NoMatchBehavior == NoMatchBehavior.ClearValue
+                                ? string.Empty
+                                : ResolveNoMatchValue( calc );
+                            action = string.Equals( currentValue, newValue, StringComparison.OrdinalIgnoreCase )
+                                ? "No Change"
+                                : ( calc.NoMatchBehavior == NoMatchBehavior.ClearValue ? "Clear" : "Update" );
                         }
                     }
 
@@ -1318,6 +1322,14 @@ namespace com.razayya.JourneyTrack.Data
                     {
                         result.Skipped++;
                         continue;
+                    }
+                    else if ( calc.NoMatchBehavior == NoMatchBehavior.ClearValue )
+                    {
+                        // Empty (not null) so it flows through the diff below: people who
+                        // already have no value compare equal and are skipped, so a clearing
+                        // calc never inserts empty rows across the population — it only
+                        // updates the people who actually had a value.
+                        newValue = string.Empty;
                     }
                     else
                     {

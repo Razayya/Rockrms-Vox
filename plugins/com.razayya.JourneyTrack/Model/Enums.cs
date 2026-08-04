@@ -13,7 +13,28 @@ namespace com.razayya.JourneyTrack.Model
         /// <summary>
         /// Write a specific value using the NoMatchLavaTemplate.
         /// </summary>
-        WriteLava = 1
+        WriteLava = 1,
+
+        /// <summary>
+        /// Blank the target attribute when the person doesn't match — the step "un-completes"
+        /// for anyone who lapses out of it.
+        ///
+        /// Use on steps whose condition can genuinely lapse (group membership, serving,
+        /// attendance windows); leave <see cref="LeaveUnchanged"/> on steps that record
+        /// something permanent, where the date is a historical fact rather than a live
+        /// state (baptism, a class attended).
+        ///
+        /// People who already have no value are left alone — the existing diff means no
+        /// empty rows get inserted for the whole population, only real values get cleared.
+        /// Clearing writes an empty string rather than deleting the row, matching how the
+        /// rest of the engine and the UI test for presence (IsNullOrWhiteSpace).
+        ///
+        /// Note this is deliberately independent of SkipIfTargetHasValue: that flag holds
+        /// people back from evaluation precisely because they already have a value, so a
+        /// calc with both set will never reach the no-match branch. The two express
+        /// opposite intents; don't combine them.
+        /// </summary>
+        ClearValue = 2
     }
 
     /// <summary>
