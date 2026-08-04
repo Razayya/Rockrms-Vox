@@ -22,7 +22,7 @@
                     <i class="fa fa-chevron-left"></i> Back to Group Toolbox
                 </asp:HyperLink>
                 <Rock:NotificationBox ID="nbMessage" runat="server" Visible="false" />
-                <p class="text-muted">Skip a date your group won't be meeting and RSVP emails won't go out for it. You can un-skip a date any time before it arrives.</p>
+                <asp:Literal ID="lIntro" runat="server" />
 
                 <div class="row">
                     <div class="col-md-6">
@@ -60,8 +60,7 @@
                             Text="<p class='text-muted small'>No skipped dates.</p>" />
 
                         <div class="margin-t-md">
-                            <Rock:DateRangePicker ID="drpSkipRange" runat="server" Label="Skip a date range"
-                                Help="No RSVP emails will go out for anything scheduled between the two dates (inclusive). Leave the second date blank to skip a single date." />
+                            <Rock:DateRangePicker ID="drpSkipRange" runat="server" Label="Skip a date range" />
                             <asp:LinkButton ID="lbAddRange" runat="server" CssClass="btn btn-default btn-sm"
                                 OnClick="lbAddRange_Click" CausesValidation="false">Skip Dates</asp:LinkButton>
                         </div>
