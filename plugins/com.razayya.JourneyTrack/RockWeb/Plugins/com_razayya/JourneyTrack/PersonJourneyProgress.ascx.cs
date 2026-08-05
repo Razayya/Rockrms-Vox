@@ -66,10 +66,21 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 return;
             }
 
-            Render();
+            // Initial load runs a live sync so the page is authoritative rather than
+            // reporting whatever the last nightly run left behind. Postbacks that change
+            // nothing (enroll prompts, cancelled dialogs) re-render from the ViewState copy
+            // of that truth; skip and restore re-sync live, because they cascade.
+            Render( liveSync: true );
         }
 
-        private void Render()
+        /// <summary>
+        /// Renders the block. <paramref name="liveSync"/> runs a real single-person sync
+        /// of every stage first — slower (order of seconds across a full pathway), but it
+        /// makes this admin-facing page an ingress point that corrects data instead of one
+        /// that just reports it. Communications are always suppressed on this path: a staff
+        /// member opening a profile must never trigger a member-facing send.
+        /// </summary>
+        private void Render( bool liveSync )
         {
             // Reset
             nbMessage.Visible = false;
@@ -101,11 +112,22 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 return;
             }
 
-            var service = new JourneyTrackService();
+            var service = new JourneyTrackService
+            {
+                // Never send from a page render. See JourneyTrackService.SuppressCommunications.
+                SuppressCommunications = true,
+                RunByPersonAliasId = CurrentPersonAliasId
+            };
             var sb = new StringBuilder();
             sb.Append( JourneyCss() );
             int rendered = 0;
             var enrollPrompts = new List<EnrollPrompt>();
+
+            // Live per-calc truth, keyed by calc Id (globally unique, so programs merge
+            // safely). Populated by the sync on initial load and carried in ViewState for
+            // postback re-renders. Empty means "unknown" — the drawers fall back to
+            // sink-presence display rather than claiming a step lapsed.
+            var calcMatched = liveSync ? new Dictionary<int, bool>() : LoadCalcMatched();
 
             using ( var rockContext = new RockContext() )
             {
@@ -136,12 +158,27 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                         }
                     }
 
-                    var progress = service.GetProgramProgressForPerson( program.Id, Person.Id );
+                    var progress = service.GetProgramProgressForPerson( program.Id, Person.Id, forceLive: liveSync );
+
+                    // Merge unconditionally: the stored-state path returns an empty map, but
+                    // it also falls through to a live evaluation on its own when stored state
+                    // is missing or incomplete (a just-enrolled person, a newly added stage).
+                    // Gating this on liveSync would throw away truth we actually computed.
+                    if ( progress.CalcMatched != null )
+                    {
+                        foreach ( var kv in progress.CalcMatched )
+                        {
+                            calcMatched[kv.Key] = kv.Value;
+                        }
+                    }
+
                     sb.Append( RenderProgressBar( progress ) );
-                    sb.Append( RenderStageDrawers( program.Id, progress, rockContext ) );
+                    sb.Append( RenderStageDrawers( program.Id, progress, calcMatched, rockContext ) );
                     rendered++;
                 }
             }
+
+            SaveCalcMatched( calcMatched );
 
             lOutput.Text = sb.ToString();
 
@@ -205,7 +242,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 rockContext.SaveChanges();
             }
 
-            Render();
+            Render( liveSync: false );
         }
 
         // Lightweight bind row for the enroll-prompt repeater.
@@ -300,11 +337,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             if ( Person == null || !IsUserAuthorized( SecurityActionKey.ManageSkips )
                 || ( !pendingCalcId.HasValue && !pendingStageId.HasValue ) )
             {
-                Render();
+                Render( liveSync: false );
                 return;
             }
 
-            int? syncStageId = null;
             using ( var rockContext = new RockContext() )
             {
                 var aliasId = new PersonAliasService( rockContext ).Queryable()
@@ -327,10 +363,10 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     var calc = calcService.Get( pendingCalcId.Value );
                     if ( calc == null )
                     {
-                        Render();
+                        Render( liveSync: false );
                         return;
                     }
-                    syncStageId = calc.StageId;
+
 
                     bool alreadySkipped = skipService.Queryable().AsNoTracking()
                         .Any( s => s.JourneyCalculationId == calc.Id && s.IsActive && s.PersonAlias.PersonId == Person.Id );
@@ -347,7 +383,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 }
                 else
                 {
-                    syncStageId = pendingStageId.Value;
+
                     var stageCalcs = calcService.Queryable().AsNoTracking()
                         .Where( c => c.StageId == pendingStageId.Value && c.IsActive )
                         .Select( c => new { c.Id, c.PersonAttributeId } )
@@ -370,13 +406,21 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                             .ToList() );
                     }
 
+                    // "Skip remaining" must skip everything not CURRENTLY satisfied — the same
+                    // question the row rendering asks. Judging completeness by sink presence
+                    // (as this did) silently passed over lapsed steps: a stale value made a
+                    // step look done, so the one step actually blocking the stage was the one
+                    // left unskipped, and the stage still wouldn't pass.
+                    var calcMatched = LoadCalcMatched();
+
                     foreach ( var calc in stageCalcs )
                     {
                         if ( alreadySkippedIds.Contains( calc.Id ) )
                         {
                             continue;
                         }
-                        if ( calc.PersonAttributeId.HasValue && presentAttrIds.Contains( calc.PersonAttributeId.Value ) )
+                        bool hasSink = calc.PersonAttributeId.HasValue && presentAttrIds.Contains( calc.PersonAttributeId.Value );
+                        if ( IsCalcSatisfied( calc.Id, false, hasSink, calcMatched ) )
                         {
                             continue;
                         }
@@ -393,18 +437,18 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                 rockContext.SaveChanges();
             }
 
-            if ( syncStageId.HasValue )
-            {
-                new JourneyTrackService().ProcessStageForPerson( syncStageId.Value, Person.Id );
-            }
-
-            Render();
+            // Full live re-sync, not a stage-scoped one. A skip cascades: passing this stage
+            // un-drains the next, which changes that stage's badge, which calcs get evaluated
+            // at all, and where "current" sits. Re-syncing only the stage we touched left the
+            // rest of the page stale until a manual reload. Costs a full pathway evaluation
+            // on an explicit, infrequent admin click.
+            Render( liveSync: true );
         }
 
         /// <summary>
         /// Deactivates the person's active skip row(s) for the calc (audit preserved via
-        /// RemovedDateTime / RemovedByPersonAliasId), then re-syncs the stage so the pass
-        /// state regresses immediately if the skip was load-bearing.
+        /// RemovedDateTime / RemovedByPersonAliasId), then re-syncs so the pass state
+        /// regresses immediately if the skip was load-bearing.
         /// </summary>
         private void RestoreSkips( int calcId, RockContext rockContext )
         {
@@ -412,11 +456,6 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
             var rows = skipService.Queryable()
                 .Where( s => s.JourneyCalculationId == calcId && s.IsActive && s.PersonAlias.PersonId == Person.Id )
                 .ToList();
-
-            var stageId = new JourneyCalculationService( rockContext ).Queryable().AsNoTracking()
-                .Where( c => c.Id == calcId )
-                .Select( c => ( int? ) c.StageId )
-                .FirstOrDefault();
 
             if ( rows.Count > 0 )
             {
@@ -427,15 +466,71 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     row.RemovedByPersonAliasId = CurrentPersonAliasId;
                 }
                 rockContext.SaveChanges();
-
-                if ( stageId.HasValue )
-                {
-                    new JourneyTrackService().ProcessStageForPerson( stageId.Value, Person.Id );
-                }
             }
 
-            Render();
+            // Same reasoning as the skip path: restoring can regress a stage the skip was
+            // holding up, which cascades downstream. Full live re-sync.
+            Render( liveSync: true );
         }
+
+        #region Per-calc truth carried across postbacks
+
+        /// <summary>
+        /// Is this step satisfied RIGHT NOW for the displayed person? The engine's verdict
+        /// wins when the calc was actually evaluated this pass (skip-filter and manual skips
+        /// are already folded into its matched set). Only when the calc wasn't evaluated do
+        /// we fall back to the old heuristic of "does the sink hold a value".
+        ///
+        /// Single definition on purpose: rendering the row and deciding what "Skip remaining
+        /// steps" covers must answer this identically. They were separately implemented once
+        /// and drifted — the display learned about lapsed steps while the stage-skip loop was
+        /// still judging by sink presence, so it skipped past the very step blocking the stage.
+        /// </summary>
+        private static bool IsCalcSatisfied( int calcId, bool autoSkipped, bool hasSinkValue, Dictionary<int, bool> calcMatched )
+        {
+            if ( calcMatched != null && calcMatched.TryGetValue( calcId, out var matched ) )
+            {
+                return matched;
+            }
+            return autoSkipped || hasSinkValue;
+        }
+
+        private const string ViewStateKeyCalcMatched = "JourneyCalcMatched";
+
+        /// <summary>
+        /// Persists the live per-calc matched map as a compact "id=0|1,…" string.
+        /// Deliberately not a serialized Dictionary — ViewState's ObjectStateFormatter
+        /// has no native handler for generic dictionaries and would fall back to
+        /// BinaryFormatter, which is heavier and disabled outright in some configs.
+        /// </summary>
+        private void SaveCalcMatched( Dictionary<int, bool> map )
+        {
+            ViewState[ViewStateKeyCalcMatched] = map == null || map.Count == 0
+                ? null
+                : string.Join( ",", map.Select( kv => kv.Key + "=" + ( kv.Value ? "1" : "0" ) ) );
+        }
+
+        private Dictionary<int, bool> LoadCalcMatched()
+        {
+            var map = new Dictionary<int, bool>();
+            var raw = ViewState[ViewStateKeyCalcMatched] as string;
+            if ( string.IsNullOrEmpty( raw ) )
+            {
+                return map;
+            }
+
+            foreach ( var part in raw.Split( ',' ) )
+            {
+                var bits = part.Split( '=' );
+                if ( bits.Length == 2 && int.TryParse( bits[0], out var calcId ) )
+                {
+                    map[calcId] = bits[1] == "1";
+                }
+            }
+            return map;
+        }
+
+        #endregion
 
         // Active manual-skip display info for the displayed person, keyed by calc Id.
         private class SkipInfo
@@ -627,7 +722,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
         /// displayed person. Transient calcs (no sink) show "—". Drawers default
         /// to closed except for the current Stage, which opens by default.
         /// </summary>
-        private string RenderStageDrawers( int programId, ProgramProgressResult progress, RockContext rockContext )
+        private string RenderStageDrawers( int programId, ProgramProgressResult progress, Dictionary<int, bool> calcMatched, RockContext rockContext )
         {
             if ( progress == null || progress.NotFound || progress.Stages.Count == 0 )
             {
@@ -714,8 +809,15 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 
                 var openAttr = stage.IsCurrent ? " open" : string.Empty;
 
+                // Skipping is offered on the CURRENT stage only. Future stages haven't been
+                // reached — their calcs may not even have been evaluated (the cascade
+                // short-circuits once the population drains), so skipping there is both
+                // meaningless to the person's progress and acting on unknown state. Passed
+                // stages have nothing left to skip. Restore is deliberately NOT gated this
+                // way; a skip that moved someone past a stage still has to be undoable from
+                // that stage once it's no longer current.
                 string stageActionsHtml = string.Empty;
-                if ( canManage && !stage.Passed )
+                if ( canManage && stage.IsCurrent )
                 {
                     stageActionsHtml = "<div class='jp-stage-actions'><a href=\"" +
                         Page.ClientScript.GetPostBackClientHyperlink( this, "skipstage:" + stage.StageId ) +
@@ -772,12 +874,14 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                     // there's no per-person record to restore — undoing it means editing the
                     // step's Skip Logic or the person no longer matching. Presence-gated:
                     // unconfigured calcs do no work here.
+                    bool autoSkipped = false;
                     if ( string.IsNullOrWhiteSpace( valueCell ) && !string.IsNullOrWhiteSpace( calc.SkipFilterJson ) )
                     {
                         var skipMatch = com.razayya.JourneyTrack.CalculationTypes.PersonFilterCalculation.EvaluatePopulation(
                             calc.SkipFilterJson, calc.SkipFilterMatchAll, new System.Collections.Generic.HashSet<int> { Person.Id }, rockContext );
                         if ( skipMatch.Contains( Person.Id ) )
                         {
+                            autoSkipped = true;
                             var rule = DescribeSkipRule( calc.SkipFilterJson, calc.SkipFilterMatchAll, rockContext );
                             var autoTooltip = rule != null
                                 ? "Skipped by rule: " + rule
@@ -786,14 +890,40 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                         }
                     }
 
-                    if ( string.IsNullOrWhiteSpace( valueCell )
-                        && calc.PersonAttributeId.HasValue
+                    // Does the sink hold a value, independent of how the cell renders?
+                    string sinkText = null;
+                    if ( calc.PersonAttributeId.HasValue
                         && avValue.TryGetValue( calc.PersonAttributeId.Value, out var v )
                         && !string.IsNullOrWhiteSpace( v ) )
                     {
                         avPersisted.TryGetValue( calc.PersonAttributeId.Value, out var pt );
-                        var text = !string.IsNullOrWhiteSpace( pt ) ? pt : v;
-                        valueCell = "<span class='jp-val'>" + System.Web.HttpUtility.HtmlEncode( text ) + "</span>";
+                        sinkText = !string.IsNullOrWhiteSpace( pt ) ? pt : v;
+                    }
+
+                    // Is the step satisfied RIGHT NOW? The engine's verdict is authoritative
+                    // when we have it (skip-filter and manual skips are already folded into
+                    // its matched set). A sink value is not evidence of satisfaction: most
+                    // calcs run NoMatchBehavior.LeaveUnchanged, so a step the person has
+                    // since lapsed out of keeps the date it was last met. Fall back to
+                    // sink presence only when the calc wasn't evaluated this pass.
+                    // isMatched is declared separately rather than as an inline `out var`:
+                    // short-circuiting && leaves an inline out-variable not definitely
+                    // assigned, so reading it below would not compile.
+                    bool isMatched = false;
+                    bool evaluated = calcMatched != null && calcMatched.TryGetValue( calc.Id, out isMatched );
+                    bool satisfied = IsCalcSatisfied( calc.Id, autoSkipped, sinkText != null, calcMatched );
+
+                    // Lapsed: earned once, no longer met. Show the date as history so staff
+                    // can see it happened, but stop it reading as a live completion.
+                    bool lapsed = evaluated && !isMatched && sinkText != null;
+
+                    if ( string.IsNullOrWhiteSpace( valueCell ) && sinkText != null )
+                    {
+                        valueCell = lapsed
+                            ? "<span class='jp-val jp-stale' title=\"" + System.Web.HttpUtility.HtmlAttributeEncode(
+                                  "Last met " + sinkText + " — no longer meets this step" ) + "\">" +
+                                  System.Web.HttpUtility.HtmlEncode( sinkText ) + "</span>"
+                            : "<span class='jp-val'>" + System.Web.HttpUtility.HtmlEncode( sinkText ) + "</span>";
                     }
 
                     string actionCell = string.Empty;
@@ -805,7 +935,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
                                 Page.ClientScript.GetPostBackClientHyperlink( this, "restore:" + calc.Id ) +
                                 "\" onclick=\"return confirm('Restore this step? It will need to be completed normally.');\">Restore</a>";
                         }
-                        else if ( string.IsNullOrWhiteSpace( valueCell ) )
+                        else if ( !satisfied && stage.IsCurrent )
                         {
                             actionCell = "<a class='jp-action' href=\"" +
                                 Page.ClientScript.GetPostBackClientHyperlink( this, "skip:" + calc.Id ) + "\">Skip</a>";
@@ -911,6 +1041,7 @@ namespace RockWeb.Plugins.com_razayya.JourneyTrack
 .jp-target{color:#374151;}
 .jp-target.transient{color:#9ca3af;font-style:italic;}
 .jp-val{font-weight:700;color:#111827;}
+.jp-stale{font-weight:400;color:#9ca3af;text-decoration:line-through;text-decoration-color:#d1d5db;cursor:help;}
 .jp-skipped{display:inline-block;font-size:.66rem;font-weight:700;padding:.15rem .55rem;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;background:#fde68a;color:#92400e;}
 .jp-autoskipped{display:inline-block;font-size:.66rem;font-weight:700;padding:.15rem .55rem;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;background:#dbeafe;color:#1e40af;}
 .jp-th-act,.jp-td-act{text-align:right;white-space:nowrap;}

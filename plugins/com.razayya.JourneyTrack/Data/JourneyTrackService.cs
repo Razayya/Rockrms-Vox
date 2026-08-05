@@ -84,6 +84,19 @@ namespace com.razayya.JourneyTrack.Data
         private bool _suppressNoChangeRunLogs = false;
 
         /// <summary>
+        /// When true, the engine evaluates and writes sink values as normal but never
+        /// queues OnMatch / OnCompletion communications. Set by ad-hoc entry points —
+        /// a person-profile render, an admin re-sync — where the run is a data-freshness
+        /// pass, not the scheduled progression of the pathway.
+        ///
+        /// Without this, opening an admin page could fire a member-facing send: an
+        /// ad-hoc sync sees the same blank-to-matched transition the nightly job would
+        /// have seen hours later, and JourneyCommunicationLog dedup means the job then
+        /// treats it as already sent. Sending stays the job's job.
+        /// </summary>
+        public bool SuppressCommunications { get; set; }
+
+        /// <summary>
         /// Emits a progress message if a sink is wired. Never throws into the engine.
         /// </summary>
         private void Report( string message )
@@ -664,8 +677,12 @@ namespace com.razayya.JourneyTrack.Data
                         }
                         else
                         {
-                            newValue = ResolveNoMatchValue( calc );
-                            action = string.Equals( currentValue, newValue, StringComparison.OrdinalIgnoreCase ) ? "No Change" : "Update";
+                            newValue = calc.NoMatchBehavior == NoMatchBehavior.ClearValue
+                                ? string.Empty
+                                : ResolveNoMatchValue( calc );
+                            action = string.Equals( currentValue, newValue, StringComparison.OrdinalIgnoreCase )
+                                ? "No Change"
+                                : ( calc.NoMatchBehavior == NoMatchBehavior.ClearValue ? "Clear" : "Update" );
                         }
                     }
 
@@ -884,6 +901,7 @@ namespace com.razayya.JourneyTrack.Data
             {
                 Result = result,
                 Passers = finalPassers,
+                MatchedByCalcId = matchedByCalcId,
                 Summary = new StageRunSummary
                 {
                     Order = subGroup.Order,
@@ -1106,6 +1124,7 @@ namespace com.razayya.JourneyTrack.Data
             // for full-population syncs where most people are "done" with the step,
             // and for single-person syncs where the person has already completed it.
             var workingPopulationForEval = workingPopulation;
+            HashSet<int> stickySkipIds = null;
             int skippedCount = 0;
             if ( calc.SkipIfTargetHasValue && calc.PersonAttributeId.HasValue && workingPopulation.Count > 0 )
             {
@@ -1117,6 +1136,7 @@ namespace com.razayya.JourneyTrack.Data
                     .Select( kv => kv.Key ) );
                 if ( skipPersonIds.Count > 0 )
                 {
+                    stickySkipIds = skipPersonIds;
                     workingPopulationForEval = new HashSet<int>( workingPopulation );
                     workingPopulationForEval.ExceptWith( skipPersonIds );
                     skippedCount = skipPersonIds.Count;
@@ -1184,6 +1204,10 @@ namespace com.razayya.JourneyTrack.Data
             // before returning.
             if ( workingPopulationForEval.Count == 0 && ( skippedCount > 0 || skipFilterMatchedIds != null || manualSkipIds != null ) )
             {
+                if ( stickySkipIds != null )
+                {
+                    result.MatchedPersonIds.UnionWith( stickySkipIds );
+                }
                 if ( skipFilterMatchedIds != null )
                 {
                     result.MatchedPersonIds.UnionWith( skipFilterMatchedIds );
@@ -1202,6 +1226,17 @@ namespace com.razayya.JourneyTrack.Data
             result.MatchedPersonIds = new HashSet<int>( matchedResults.Keys );
 
             // Fold skipped people into the matched set (they pass without a sink write).
+            //
+            // Sticky-skip (SkipIfTargetHasValue) belongs here too: those people were held
+            // back from evaluation precisely BECAUSE they already have a value — i.e. they
+            // already satisfied this step. Leaving them out of MatchedPersonIds made them
+            // fail the stage gate forever the moment the checkbox was ticked, silently
+            // regressing everyone who had completed the step. Latent until now only because
+            // no active calc sets the flag.
+            if ( stickySkipIds != null )
+            {
+                result.MatchedPersonIds.UnionWith( stickySkipIds );
+            }
             if ( skipFilterMatchedIds != null )
             {
                 result.MatchedPersonIds.UnionWith( skipFilterMatchedIds );
@@ -1263,8 +1298,13 @@ namespace com.razayya.JourneyTrack.Data
 
             foreach ( var personId in workingPopulation )
             {
-                // Skipped people (filter or manual) pass via the matched set but get NO sink write (left blank).
-                if ( ( skipFilterMatchedIds != null && skipFilterMatchedIds.Contains( personId ) )
+                // Skipped people pass via the matched set and get NO sink write. For filter
+                // and manual skips that means the sink stays blank; for sticky skips it means
+                // their existing value stands. Sticky especially must not fall through — it
+                // never entered matchedResults, so a NoMatchBehavior.WriteLava calc would
+                // stamp the no-match value over the very completion that made it sticky.
+                if ( ( stickySkipIds != null && stickySkipIds.Contains( personId ) )
+                    || ( skipFilterMatchedIds != null && skipFilterMatchedIds.Contains( personId ) )
                     || ( manualSkipIds != null && manualSkipIds.Contains( personId ) ) )
                 {
                     continue;
@@ -1282,6 +1322,14 @@ namespace com.razayya.JourneyTrack.Data
                     {
                         result.Skipped++;
                         continue;
+                    }
+                    else if ( calc.NoMatchBehavior == NoMatchBehavior.ClearValue )
+                    {
+                        // Empty (not null) so it flows through the diff below: people who
+                        // already have no value compare equal and are skipped, so a clearing
+                        // calc never inserts empty rows across the population — it only
+                        // updates the people who actually had a value.
+                        newValue = string.Empty;
                     }
                     else
                     {
@@ -1365,6 +1413,11 @@ namespace com.razayya.JourneyTrack.Data
             RockContext rockContext,
             SyncResult result )
         {
+            // Ad-hoc runs (profile render, admin re-sync) freshen data but never send.
+            // Guarded here rather than at the three call sites so no future trigger can
+            // route around it. The nightly job leaves the flag clear and sends as usual.
+            if ( SuppressCommunications ) return;
+
             var candidateSet = candidatePersonIds as ICollection<int> ?? candidatePersonIds.ToList();
             if ( candidateSet.Count == 0 ) return;
 
@@ -1872,6 +1925,15 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
             /// not persist these passer sets as real state.
             /// </summary>
             public bool EvaluationFailed { get; set; }
+
+            /// <summary>
+            /// Per-calc matched sets for this stage (calc Id -> matched person Ids), as
+            /// computed during evaluation. Surfaced so single-person callers get live
+            /// per-step truth as a byproduct of the sync they already ran — the profile
+            /// block needs it to tell an earned completion apart from a stale sink value
+            /// that NoMatchBehavior.LeaveUnchanged left behind.
+            /// </summary>
+            public Dictionary<int, HashSet<int>> MatchedByCalcId { get; set; }
         }
 
         private class AttributeWrite
@@ -1886,10 +1948,20 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
         #region Read-only progress for UI surfaces
 
         /// <summary>
-        /// Read-only progress for one person across one Journey Program. Evaluates every
-        /// Stage's calculations against a 1-person population but does NOT write any
-        /// AttributeValues. Designed for the Person Profile progress block (WP9) - a
-        /// single page-load should clock well under 50ms even with 10 Stages.
+        /// Progress for one person across one Journey Program, for the Person Profile
+        /// progress block (WP9).
+        ///
+        /// Default path serves the engine-maintained enrollment stage status — one indexed
+        /// row read, no evaluation. <paramref name="forceLive"/> instead runs a real
+        /// single-person sync of every Stage: it evaluates the cascade, WRITES sink
+        /// AttributeValues, and persists stage status. (An earlier version of this comment
+        /// claimed the method never writes — that was never true of the live path, which
+        /// goes through ExecuteCalculation like any other sync.) Callers wanting live truth
+        /// with no side effects at all want GetStageCalcProgressForPerson, which is built on
+        /// DescribeProgress rather than Evaluate.
+        ///
+        /// Ad-hoc callers should set <see cref="SuppressCommunications"/> so a data-freshness
+        /// pass can't trigger member-facing sends.
         /// </summary>
         public ProgramProgressResult GetProgramProgressForPerson( int programId, int personId, bool forceLive = false )
         {
@@ -1970,6 +2042,19 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                         if ( subResult.EvaluationFailed )
                         {
                             erroredStageIds.Add( stage.Id );
+                        }
+
+                        // Per-calc truth, free: the stage already computed these sets to
+                        // feed its logic tree. Only record calcs that actually ran — a
+                        // stage that short-circuited or failed leaves MatchedByCalcId null,
+                        // and those calcs must stay absent so the UI reads them as unknown
+                        // rather than lapsed. (See ProgramProgressResult.CalcMatched.)
+                        if ( subResult.MatchedByCalcId != null && !subResult.EvaluationFailed )
+                        {
+                            foreach ( var kv in subResult.MatchedByCalcId )
+                            {
+                                result.CalcMatched[kv.Key] = kv.Value != null && kv.Value.Contains( personId );
+                            }
                         }
                     }
                     catch ( Exception ex )
@@ -2628,6 +2713,19 @@ INNER JOIN ( VALUES {values} ) AS v ([Id], [Json]) ON v.[Id] = e.[Id]";
         /// <summary>True when served from persisted enrollment stage status; false = live engine evaluation.</summary>
         public bool FromStoredState { get; set; }
         public List<StageProgressEntry> Stages { get; set; } = new List<StageProgressEntry>();
+
+        /// <summary>
+        /// Live per-calculation truth for this person, keyed by calc Id — populated only
+        /// on the live path (<c>forceLive</c>), left empty when served from stored state.
+        ///
+        /// Key present = that calc was actually evaluated this pass; the value is whether
+        /// the person matched. A calc is ABSENT when it was never evaluated — the stage
+        /// short-circuited on an empty working population, its DataView blew up, or the
+        /// calc itself threw. Absent is "unknown", NOT "did not match": callers must fall
+        /// back to sink-value display rather than reporting a step as lapsed on the
+        /// strength of a calc that never ran.
+        /// </summary>
+        public Dictionary<int, bool> CalcMatched { get; set; } = new Dictionary<int, bool>();
     }
 
     public class StageProgressEntry

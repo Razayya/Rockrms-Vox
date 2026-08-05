@@ -158,7 +158,7 @@
                         <div class="col-md-6">
                             <Rock:RockDropDownList ID="ddlNoMatchBehavior" runat="server" Label="No Match Behavior"
                                 AutoPostBack="true" OnSelectedIndexChanged="ddlNoMatchBehavior_SelectedIndexChanged"
-                                Help="What happens when a person does not match the Calculation criteria." />
+                                Help="What happens when a person does not match the Calculation criteria. Leave Unchanged keeps whatever the attribute already holds — right for steps that record something permanent (a baptism, a class attended), but it means a step whose condition can lapse keeps the date it was last met. Clear Value blanks the attribute for anyone who no longer matches — right for living conditions like group membership, serving, or attendance. Write Lava Value stamps a specific value instead." />
                             <asp:Panel ID="pnlNoMatchLava" runat="server" Visible="false">
                                 <Rock:CodeEditor ID="ceNoMatchLava" runat="server" Label="No Match Lava Template"
                                     EditorMode="Lava" EditorTheme="Rock" EditorHeight="80"
