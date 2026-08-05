@@ -246,14 +246,32 @@ Set-Content -LiteralPath $slnPath -Value $sln -Encoding UTF8 -NoNewline
 # ============================================================
 # 4. NuGet restore (PackageReference + packages.config in one pass)
 # ============================================================
-$msbuild = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\2022\*\MSBuild\Current\Bin\MSBuild.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($null -eq $msbuild) {
-    Write-Warning "MSBuild not found under VS 2022; skipping restore. Run manually before building."
+# Ask vswhere for the newest install rather than globbing a hard-coded year:
+# this used to look only under 'Visual Studio\2022\', so on a box running any
+# other VS build it silently warned and skipped the restore, leaving the tree
+# unbuildable in a way that only surfaced later as missing-assembly errors.
+$msbuild = $null
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+    $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+    if ($vsPath) {
+        $candidate = Join-Path $vsPath 'MSBuild\Current\Bin\MSBuild.exe'
+        if (Test-Path $candidate) { $msbuild = $candidate }
+    }
+}
+if (-not $msbuild) {
+    # Fallback: any Visual Studio version, newest path last.
+    $msbuild = Get-ChildItem 'C:\Program Files*\Microsoft Visual Studio\*\*\MSBuild\Current\Bin\MSBuild.exe' `
+        -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+}
+
+if (-not $msbuild) {
+    Write-Warning "MSBuild not found (tried vswhere and a Visual Studio glob); skipping restore. Run manually before building."
 } else {
-    Write-Host "Restoring NuGet packages (PackageReference + packages.config) ..."
+    Write-Host "Restoring NuGet packages using $msbuild ..."
     Push-Location $TargetDir
     try {
-        & $msbuild.FullName 'Rock.sln' -t:Restore -p:RestorePackagesConfig=true -p:Configuration=Debug -m -nologo -v:minimal
+        & $msbuild 'Rock.sln' -t:Restore -p:RestorePackagesConfig=true -p:Configuration=Debug -m -nologo -v:minimal
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "Restore exited with code $LASTEXITCODE - inspect output above and rerun manually if needed."
         }
