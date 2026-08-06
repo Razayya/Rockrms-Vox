@@ -404,6 +404,7 @@ namespace com.razayya.GroupFinder.Controllers
 
                                 Select g.Id
 		                                ,s.WeeklyDayOfWeek
+		                                ,s.iCalendarContent
 		                                ,dv1.Guid as CategoryOption
 		                                ,dv2.Guid as SecondaryCategoryOption
                                 From [Group] g
@@ -418,14 +419,25 @@ namespace com.razayya.GroupFinder.Controllers
             {
                 GroupId = s["Id"].ToStringSafe().AsInteger(),
                 WeeklyDayOfWeek = s["WeeklyDayOfWeek"].ToStringSafe().AsIntegerOrNull(),
+                ICalendarContent = s["iCalendarContent"].ToStringSafe(),
                 CategoryOption = s["CategoryOption"].ToStringSafe(),
                 SecondaryCategoryOption = s["SecondaryCategoryOption"].ToStringSafe(),
-            } );
+            } ).ToList();
 
-            groupFinderInfo.MeetingDayOptions = optionsQry.Where( g => g.WeeklyDayOfWeek.HasValue ).Select( g => g.WeeklyDayOfWeek.Value ).Distinct().ToList().Select( w => new FilterOption
+            // Days come from both shapes of schedule: the queryable column, and the RRULE of
+            // anything scheduled through iCal. Without the second the dropdown silently omits
+            // any day whose groups all happen to be iCal-scheduled.
+            var meetingDayValues = optionsQry.Where( g => g.WeeklyDayOfWeek.HasValue ).Select( g => ( DayOfWeek ) g.WeeklyDayOfWeek.Value ).Distinct().ToList();
+
+            foreach ( var day in GetDaysOfWeekFromICalContents( optionsQry.Where( g => !g.WeeklyDayOfWeek.HasValue ).Select( g => g.ICalendarContent ) ) )
             {
-                Text = ( ( DayOfWeek ) w ).ConvertToString( true ),
-                Value = w.ToString()
+                meetingDayValues.Add( day, true );
+            }
+
+            groupFinderInfo.MeetingDayOptions = meetingDayValues.OrderBy( w => w ).Select( w => new FilterOption
+            {
+                Text = w.ConvertToString( true ),
+                Value = w.ConvertToInt().ToString()
             } ).ToList();
 
             var categoryGuids = optionsQry.Where( g => g.CategoryOption != null ).Select( g => g.CategoryOption ).Distinct().ToList().AsGuidList();
@@ -569,7 +581,23 @@ namespace com.razayya.GroupFinder.Controllers
                 .AsQueryable();
 
             groupFinderInfo.TotalCount = qry.Count();
-            groupFinderInfo.MeetingDayOptions = qry.Where( g => g.Schedule.WeeklyDayOfWeek.HasValue ).Select( g => g.Schedule.WeeklyDayOfWeek.Value ).Distinct().ToList().Select( w => new FilterOption
+            // Days come from both shapes of schedule: the queryable column, and the RRULE of
+            // anything scheduled through iCal. Without the second the dropdown silently omits
+            // any day whose groups all happen to be iCal-scheduled.
+            var meetingDayValues = qry.Where( g => g.Schedule.WeeklyDayOfWeek.HasValue ).Select( g => g.Schedule.WeeklyDayOfWeek.Value ).Distinct().ToList();
+
+            var iCalBodies = qry
+                .Where( g => g.Schedule.WeeklyDayOfWeek == null && g.Schedule.iCalendarContent != null && g.Schedule.iCalendarContent != string.Empty )
+                .Select( g => g.Schedule.iCalendarContent )
+                .Distinct()
+                .ToList();
+
+            foreach ( var day in GetDaysOfWeekFromICalContents( iCalBodies ) )
+            {
+                meetingDayValues.Add( day, true );
+            }
+
+            groupFinderInfo.MeetingDayOptions = meetingDayValues.OrderBy( w => w ).Select( w => new FilterOption
             {
                 Text = w.ConvertToString( true ),
                 Value = w.ConvertToInt().ToString()
@@ -1208,6 +1236,100 @@ namespace com.razayya.GroupFinder.Controllers
         }
 
         /// <summary>
+        /// The weekdays an iCal recurrence meets on.
+        ///
+        /// Only Schedule.WeeklyDayOfWeek is queryable in SQL, so anything scheduled through
+        /// iCal used to be invisible to the meeting-day filter even though its day was right
+        /// there in the RRULE. Matching the raw string is not an option: monthly rules carry
+        /// an ordinal prefix on BYDAY (2TU, 4WE, -1TH) and a rule can list several days
+        /// (MO,WE), so a LIKE would both miss real matches and hit substrings. This resolves
+        /// through iCal.NET instead, and is the single source of truth for both the displayed
+        /// day and the filter so the two can never disagree.
+        ///
+        /// Returns empty when there is no fixed weekday — a FREQ=MONTHLY;BYMONTHDAY=15 rule
+        /// genuinely has none, and callers render that as "Varies" / never match it.
+        /// </summary>
+        /// <param name="calendarEvent">The parsed calendar event.</param>
+        private static List<DayOfWeek> GetDaysOfWeekFromICal( CalendarEvent calendarEvent )
+        {
+            var days = new List<DayOfWeek>();
+            if ( calendarEvent == null || calendarEvent.Start == null )
+            {
+                return days;
+            }
+
+            if ( calendarEvent.RecurrenceRules.Any() )
+            {
+                foreach ( var weekDay in calendarEvent.RecurrenceRules[0].ByDay )
+                {
+                    days.Add( weekDay.DayOfWeek, true );
+                }
+
+                return days;
+            }
+
+            if ( calendarEvent.RecurrenceDates.Any() )
+            {
+                foreach ( var startTime in calendarEvent.RecurrenceDates.SelectMany( d => d.Select( d1 => d1.StartTime ) ) )
+                {
+                    days.Add( startTime.DayOfWeek, true );
+                }
+
+                days.Add( calendarEvent.Start.Value.DayOfWeek, true );
+            }
+
+            return days;
+        }
+
+        /// <summary>
+        /// The distinct weekdays covered by a set of iCalendar bodies. Parses each distinct
+        /// body once — the same schedule is commonly shared across many rows of a result set.
+        /// </summary>
+        /// <param name="iCalendarContents">The iCalendar bodies.</param>
+        private static List<DayOfWeek> GetDaysOfWeekFromICalContents( IEnumerable<string> iCalendarContents )
+        {
+            var days = new List<DayOfWeek>();
+            foreach ( var content in iCalendarContents.Where( c => c.IsNotNullOrWhiteSpace() ).Distinct() )
+            {
+                foreach ( var day in GetDaysOfWeekFromICal( InetCalendarHelper.CreateCalendarEvent( content ) ) )
+                {
+                    days.Add( day, true );
+                }
+            }
+
+            return days;
+        }
+
+        /// <summary>
+        /// Ids of the iCal-scheduled schedules behind <paramref name="groupQry"/> that meet on
+        /// any of <paramref name="days"/>.
+        ///
+        /// Scoped to the schedules actually reachable from the caller's already-filtered group
+        /// query, so only a handful of bodies are parsed per request rather than every schedule
+        /// in the database. Schedules carrying WeeklyDayOfWeek are skipped — those match in SQL.
+        /// </summary>
+        /// <param name="rockContext">The rock context.</param>
+        /// <param name="groupQry">The group query filtered so far.</param>
+        /// <param name="days">The requested meeting days.</param>
+        private static List<int> GetICalScheduleIdsMeetingOn( RockContext rockContext, IQueryable<Group> groupQry, List<DayOfWeek> days )
+        {
+            var scheduleIdQry = groupQry.Where( g => g.ScheduleId.HasValue ).Select( g => g.ScheduleId.Value );
+
+            var candidates = new ScheduleService( rockContext ).Queryable().AsNoTracking()
+                .Where( s => scheduleIdQry.Contains( s.Id )
+                    && s.WeeklyDayOfWeek == null
+                    && s.iCalendarContent != null
+                    && s.iCalendarContent != string.Empty )
+                .Select( s => new { s.Id, s.iCalendarContent } )
+                .ToList();
+
+            return candidates
+                .Where( c => GetDaysOfWeekFromICal( InetCalendarHelper.CreateCalendarEvent( c.iCalendarContent ) ).Any( d => days.Contains( d ) ) )
+                .Select( c => c.Id )
+                .ToList();
+        }
+
+        /// <summary>
         /// Builds the group schedule.
         /// </summary>
         /// <param name="group">The group.</param>
@@ -1251,24 +1373,16 @@ namespace com.razayya.GroupFinder.Controllers
                                 groupInfo.Frequency = string.Format( "Bi{0}", rrule.Frequency.ToString().ToLower() );
                             }
 
-                            if ( rrule.ByDay.Count == 1 )
-                            {
-                                var byDay = rrule.ByDay.First();
-                                groupInfo.DayOfWeek = byDay.DayOfWeek.ConvertToString().Substring( 0, 3 );
-                            }
-                            else
-                            {
-                                groupInfo.DayOfWeek = "Varies";
-                            }
+                            var ruleDays = GetDaysOfWeekFromICal( calendarEvent );
+                            groupInfo.DayOfWeek = ruleDays.Count == 1
+                                ? ruleDays.First().ConvertToString().Substring( 0, 3 )
+                                : "Varies";
                         }
                         else
                         {
                             if ( calendarEvent.RecurrenceDates.Any() )
                             {
-                                var dates = calendarEvent.RecurrenceDates.SelectMany( d => d.Select( d1 => d1.StartTime ) );
-                                var weekDays = dates.Select( d => d.DayOfWeek ).Distinct().ToList();
-
-                                weekDays.Add( calendarEvent.Start.Value.DayOfWeek, true );
+                                var weekDays = GetDaysOfWeekFromICal( calendarEvent );
 
                                 if ( weekDays.Count() == 1 )
                                 {
@@ -1612,7 +1726,16 @@ namespace com.razayya.GroupFinder.Controllers
 
                 if ( meetingDayList.Any() && !includeNonWeeklySchedules )
                 {
-                    qry = qry.Where( g => g.Schedule.WeeklyDayOfWeek != null && meetingDayList.Contains( g.Schedule.WeeklyDayOfWeek.Value ) );
+                    // Groups scheduled through iCal keep their meeting day in the RRULE, not in
+                    // WeeklyDayOfWeek, so this filter used to drop them entirely. They are
+                    // resolved out of band and folded back in by Id, which keeps the result an
+                    // IQueryable — every caller pages and counts against it in SQL.
+                    var iCalScheduleIds = GetICalScheduleIdsMeetingOn( rockContext, qry, meetingDayList );
+
+                    qry = qry.Where( g =>
+                                        ( g.Schedule.WeeklyDayOfWeek != null && meetingDayList.Contains( g.Schedule.WeeklyDayOfWeek.Value ) ) ||
+                                        ( g.ScheduleId.HasValue && iCalScheduleIds.Contains( g.ScheduleId.Value ) )
+                                    );
                 }
 
                 if ( !meetingDayList.Any() && includeNonWeeklySchedules )
@@ -1979,6 +2102,7 @@ namespace com.razayya.GroupFinder.Controllers
     {
         public int GroupId { get; set; }
         public int? WeeklyDayOfWeek { get; set; }
+        public string ICalendarContent { get; set; }
         public string CategoryOption { get; set; }
         public string SecondaryCategoryOption { get; set; }
     }

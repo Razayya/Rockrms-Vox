@@ -66,8 +66,16 @@ namespace com.razayya.RSVPReminders.Services
             calendarEvent.RecurrenceRules.Add( recurrence );
 
             schedule.iCalendarContent = InetCalendarHelper.SerializeToCalendarString( calendarEvent );
-            schedule.WeeklyDayOfWeek = null;
-            schedule.WeeklyTimeOfDay = null;
+
+            // WeeklyDayOfWeek/WeeklyTimeOfDay are deliberately LEFT POPULATED. Rock itself
+            // reads the iCal event first and only falls back to these columns when there is
+            // none (Schedule.Logic ScheduleType/HasSchedule/ToFriendlyScheduleText), so they
+            // are inert to Rock once iCalendarContent is set. Vox surfaces are not so lucky:
+            // the Men's/Women's/Spanish Ministry and VoxKids group cards gate their meeting
+            // day on "{% if group.Schedule.WeeklyDayOfWeek != null %}", and the Campus
+            // Breakdown / Attendance Report Card / Attendance Dashboard / Groups Audit
+            // reports join DaysOfWeek on this column. Clearing it here would silently blank
+            // the meeting day on all of them the first time a leader skips a date.
         }
 
         /// <summary>
