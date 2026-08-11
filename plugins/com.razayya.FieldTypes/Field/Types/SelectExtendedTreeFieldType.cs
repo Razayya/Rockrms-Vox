@@ -129,6 +129,13 @@ namespace com.razayya.FieldTypes.Field.Types
                 var pipeIndex = value.IndexOf( '|' );
                 var childValue = pipeIndex >= 0 ? value.Substring( pipeIndex + 1 ) : value;
 
+                // An empty child part (e.g. the "0|" empty-state sentinel the legacy
+                // WebForms control stored as a default) represents no selection.
+                if ( childValue.IsNullOrWhiteSpace() )
+                {
+                    continue;
+                }
+
                 if ( children == null )
                 {
                     children = GetQueryItems( privateConfigurationValues?.GetValueOrNull( ConfigurationKey.ChildValues ) );
