@@ -16,6 +16,7 @@ namespace com.razayya.JourneyTrack.Constants
         // Person filter JourneyCalculation
         public const string FilterConditions = "FilterConditions";
         public const string MatchAll = "MatchAll";
+        public const string MergeFieldAttributes = "MergeFieldAttributes";
 
         // DataView inclusion JourneyCalculation
         public const string DataView = "DataView";

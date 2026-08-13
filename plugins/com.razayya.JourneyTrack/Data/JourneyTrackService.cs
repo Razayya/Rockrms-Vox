@@ -625,6 +625,7 @@ namespace com.razayya.JourneyTrack.Data
 
                 calc.LoadAttributes( rockContext );
                 var matchedResults = component.Evaluate( rockContext, calc, population );
+                JourneyCalculationTypeComponent.AddMergeFieldAttributeValues( calc, matchedResults, rockContext );
                 preview.MatchedCount = matchedResults.Count;
 
                 if ( !calc.PersonAttributeId.HasValue )
@@ -1222,6 +1223,10 @@ namespace com.razayya.JourneyTrack.Data
             }
 
             var matchedResults = component.Evaluate( rockContext, calc, workingPopulationForEval );
+
+            // Central merge-field enrichment: expose any configured person attributes to
+            // the Result Lava Template, identically for every calculation type.
+            JourneyCalculationTypeComponent.AddMergeFieldAttributeValues( calc, matchedResults, rockContext );
 
             result.MatchedPersonIds = new HashSet<int>( matchedResults.Keys );
 

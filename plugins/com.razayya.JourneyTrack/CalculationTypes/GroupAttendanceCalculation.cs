@@ -56,6 +56,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         private struct AttendanceSummary
         {
             public int AttendanceCount;
+            public System.DateTime FirstAttendanceDate;
             public System.DateTime LastAttendanceDate;
         }
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (System.DateTime CachedAt, Dictionary<int, AttendanceSummary> Map)> _attCache
@@ -84,13 +85,14 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 {
                     PersonId = g.Key,
                     AttendanceCount = g.Count(),
+                    FirstAttendanceDate = g.Min( a => a.StartDateTime ),
                     LastAttendanceDate = g.Max( a => a.StartDateTime )
                 } )
                 .ToList();
 
             var map = rows.ToDictionary(
                 r => r.PersonId,
-                r => new AttendanceSummary { AttendanceCount = r.AttendanceCount, LastAttendanceDate = r.LastAttendanceDate } );
+                r => new AttendanceSummary { AttendanceCount = r.AttendanceCount, FirstAttendanceDate = r.FirstAttendanceDate, LastAttendanceDate = r.LastAttendanceDate } );
 
             _attCache[key] = ( System.DateTime.UtcNow, map );
             return map;
@@ -124,6 +126,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 .Select( g => new
                 {
                     AttendanceCount = g.Count(),
+                    FirstAttendanceDate = g.Min( a => a.StartDateTime ),
                     LastAttendanceDate = g.Max( a => a.StartDateTime )
                 } )
                 .FirstOrDefault();
@@ -133,7 +136,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 return null;
             }
 
-            return new AttendanceSummary { AttendanceCount = row.AttendanceCount, LastAttendanceDate = row.LastAttendanceDate };
+            return new AttendanceSummary { AttendanceCount = row.AttendanceCount, FirstAttendanceDate = row.FirstAttendanceDate, LastAttendanceDate = row.LastAttendanceDate };
         }
 
         /// <inheritdoc/>
@@ -165,6 +168,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                     {
                         { "Matched", true },
                         { "AttendanceCount", personSummary.Value.AttendanceCount },
+                        { "FirstAttendanceDate", personSummary.Value.FirstAttendanceDate },
                         { "LastAttendanceDate", personSummary.Value.LastAttendanceDate }
                     };
                 }
@@ -183,6 +187,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 {
                     { "Matched", true },
                     { "AttendanceCount", summary.AttendanceCount },
+                    { "FirstAttendanceDate", summary.FirstAttendanceDate },
                     { "LastAttendanceDate", summary.LastAttendanceDate }
                 };
             }
@@ -206,6 +211,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var withinDays = calc.GetAttributeValue( AttributeKey.WithinDays ).AsIntegerOrNull() ?? 90;
 
             int count = 0;
+            System.DateTime? firstAttendance = null;
             System.DateTime? lastAttendance = null;
 
             if ( groupGuids.Any() )
@@ -214,6 +220,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 if ( personSummary.HasValue )
                 {
                     count = personSummary.Value.AttendanceCount;
+                    firstAttendance = personSummary.Value.FirstAttendanceDate;
                     lastAttendance = personSummary.Value.LastAttendanceDate;
                 }
             }
@@ -226,6 +233,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 { "AttendanceCount", count },
                 { "Remaining", System.Math.Max( 0, minimumCount - count ) },
                 { "WithinDays", withinDays },
+                { "FirstAttendanceDate", firstAttendance },
                 { "LastAttendanceDate", lastAttendance }
             };
         }
@@ -237,6 +245,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             {
                 new MergeFieldInfo { Name = "Matched", Description = "True if attendance criteria were met.", DataType = "Boolean" },
                 new MergeFieldInfo { Name = "AttendanceCount", Description = "Number of attendances in the date range.", DataType = "Integer" },
+                new MergeFieldInfo { Name = "FirstAttendanceDate", Description = "Earliest attendance date in the date range.", DataType = "DateTime" },
                 new MergeFieldInfo { Name = "LastAttendanceDate", Description = "Most recent attendance date.", DataType = "DateTime" }
             };
         }

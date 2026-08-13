@@ -49,10 +49,12 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// <inheritdoc/>
         public override string IconCssClass => "fa fa-users";
 
-        // Per-(groupTypes set, role, activeOnly) cache.
+        // Per-(groupTypes set, role, activeOnly) cache. JoinDate is the effective
+        // date added: DateTimeAdded when set, else CreatedDateTime (imported
+        // memberships can carry a CreatedDateTime long after the real add date).
         private struct GtmRow
         {
-            public System.DateTime? CreatedDateTime;
+            public System.DateTime? JoinDate;
             public string GroupRoleName;
             public string GroupName;
         }
@@ -81,6 +83,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             {
                 gm.PersonId,
                 gm.CreatedDateTime,
+                gm.DateTimeAdded,
                 GroupRoleName = gm.GroupRole.Name,
                 GroupName = gm.Group.Name
             } ).ToList();
@@ -89,8 +92,8 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 .GroupBy( r => r.PersonId )
                 .ToDictionary(
                     g => g.Key,
-                    g => g.OrderBy( r => r.CreatedDateTime )
-                          .Select( r => new GtmRow { CreatedDateTime = r.CreatedDateTime, GroupRoleName = r.GroupRoleName, GroupName = r.GroupName } )
+                    g => g.OrderBy( r => r.DateTimeAdded ?? r.CreatedDateTime )
+                          .Select( r => new GtmRow { JoinDate = r.DateTimeAdded ?? r.CreatedDateTime, GroupRoleName = r.GroupRoleName, GroupName = r.GroupName } )
                           .ToList() );
 
             _gtmCache[key] = ( System.DateTime.UtcNow, map );
@@ -123,24 +126,28 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             return query.Select( gm => new
                 {
                     gm.CreatedDateTime,
+                    gm.DateTimeAdded,
                     GroupRoleName = gm.GroupRole.Name,
                     GroupName = gm.Group.Name
                 } )
                 .ToList()
-                .OrderBy( r => r.CreatedDateTime )
-                .Select( r => new GtmRow { CreatedDateTime = r.CreatedDateTime, GroupRoleName = r.GroupRoleName, GroupName = r.GroupName } )
+                .OrderBy( r => r.DateTimeAdded ?? r.CreatedDateTime )
+                .Select( r => new GtmRow { JoinDate = r.DateTimeAdded ?? r.CreatedDateTime, GroupRoleName = r.GroupRoleName, GroupName = r.GroupName } )
                 .ToList();
         }
 
         private static Dictionary<string, object> BuildMembershipEntry( List<GtmRow> memberships )
         {
+            // Memberships arrive ordered by effective join date ascending (nulls first),
+            // so First() is the earliest join and Last() the most recent.
             var memList = memberships.Select( r => new Dictionary<string, object>
             {
                 { "GroupName", r.GroupName },
                 { "GroupRole", r.GroupRoleName },
-                { "JoinDate", r.CreatedDateTime }
+                { "JoinDate", r.JoinDate }
             } ).ToList();
             var earliest = memList.First();
+            var latest = memList.Last();
 
             return new Dictionary<string, object>
             {
@@ -148,6 +155,8 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 { "GroupName", earliest["GroupName"] },
                 { "GroupRole", earliest["GroupRole"] },
                 { "JoinDate", earliest["JoinDate"] },
+                { "LastJoinDate", latest["JoinDate"] },
+                { "LastGroupName", latest["GroupName"] },
                 { "Groups", memList },
                 { "GroupCount", memList.Count }
             };
@@ -204,7 +213,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 new MergeFieldInfo { Name = "Matched", Description = "True if person is a member.", DataType = "Boolean" },
                 new MergeFieldInfo { Name = "GroupName", Description = "Name of the earliest-joined group.", DataType = "String" },
                 new MergeFieldInfo { Name = "GroupRole", Description = "Role in the earliest-joined group.", DataType = "String" },
-                new MergeFieldInfo { Name = "JoinDate", Description = "Earliest group membership creation date.", DataType = "DateTime" },
+                new MergeFieldInfo { Name = "JoinDate", Description = "Earliest effective join date (DateTimeAdded, falling back to record creation date).", DataType = "DateTime" },
+                new MergeFieldInfo { Name = "LastJoinDate", Description = "Most recent effective join date across matching memberships.", DataType = "DateTime" },
+                new MergeFieldInfo { Name = "LastGroupName", Description = "Name of the most recently joined group.", DataType = "String" },
                 new MergeFieldInfo { Name = "GroupCount", Description = "Total number of matching groups.", DataType = "Integer" },
                 new MergeFieldInfo { Name = "Groups", Description = "Array of all memberships. Each has GroupName, GroupRole, JoinDate. Use: {% for g in Groups %}{{ g.GroupName }}{% endfor %}", DataType = "Array" }
             };

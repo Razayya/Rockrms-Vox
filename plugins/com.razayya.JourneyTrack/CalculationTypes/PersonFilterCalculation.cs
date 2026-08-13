@@ -277,7 +277,8 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         {
             return new List<MergeFieldInfo>
             {
-                new MergeFieldInfo { Name = "Matched", Description = "True if filter conditions were satisfied.", DataType = "Boolean" }
+                new MergeFieldInfo { Name = "Matched", Description = "True if filter conditions were satisfied.", DataType = "Boolean" },
+                new MergeFieldInfo { Name = "<attribute key>", Description = "Raw value of each person attribute listed in Merge Field Attributes, keyed by attribute key.", DataType = "String" }
             };
         }
     }
