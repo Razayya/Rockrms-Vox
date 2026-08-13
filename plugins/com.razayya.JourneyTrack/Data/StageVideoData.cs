@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data.Entity;
 using System.Linq;
+using System.Runtime.CompilerServices;
 
 using com.razayya.JourneyTrack.CalculationTypes;
 using com.razayya.JourneyTrack.Model;
@@ -97,11 +98,50 @@ namespace com.razayya.JourneyTrack.Data
         /// </summary>
         public static List<StageVideoItem> GetForStageAndPerson( Guid stageGuid, int personId, RockContext rockContext, string groupRef = null, bool showCompletedOnly = false )
         {
-            var output = new List<StageVideoItem>();
             if ( rockContext == null )
             {
-                return output;
+                return new List<StageVideoItem>();
             }
+
+            // The stage pages call this tag 1 + 2-per-series times in a single render
+            // (allVideos + per-series slices), and every call used to recompute the whole
+            // stage. The full sequenced list is memoized per (stage, person) for the
+            // lifetime of the render's shared RockContext, so the per-series calls become
+            // in-memory slices of one compute. The weak table ties the memo's lifetime to
+            // the context — nothing outlives the render.
+            var memo = _renderMemo.GetOrCreateValue( rockContext );
+            var memoKey = stageGuid.ToString( "N" ) + ":" + personId;
+            List<StageVideoItem> full;
+            lock ( memo )
+            {
+                if ( !memo.TryGetValue( memoKey, out full ) )
+                {
+                    full = BuildFullListForStageAndPerson( stageGuid, personId, rockContext );
+                    memo[memoKey] = full;
+                }
+            }
+
+            // Group / completed narrowing works on sub-lists of the memoized items; lock
+            // state was computed per-sequence during the build, so slices stay correct.
+            var filtered = FilterToGroup( full, groupRef );
+            if ( showCompletedOnly )
+            {
+                filtered = filtered.Where( it => it.Matched ).ToList();
+            }
+
+            return filtered;
+        }
+
+        /// <summary>
+        /// Per-render memo of fully-sequenced stage video lists, keyed by the render's
+        /// shared RockContext (see GetForStageAndPerson).
+        /// </summary>
+        private static readonly ConditionalWeakTable<RockContext, Dictionary<string, List<StageVideoItem>>> _renderMemo
+            = new ConditionalWeakTable<RockContext, Dictionary<string, List<StageVideoItem>>>();
+
+        private static List<StageVideoItem> BuildFullListForStageAndPerson( Guid stageGuid, int personId, RockContext rockContext )
+        {
+            var output = new List<StageVideoItem>();
 
             var stage = new StageService( rockContext ).Queryable().AsNoTracking()
                 .FirstOrDefault( s => s.Guid == stageGuid && s.IsActive );
@@ -139,13 +179,16 @@ namespace com.razayya.JourneyTrack.Data
                 .Select( pa => pa.Id )
                 .ToList();
 
+            // ONE attribute-value load for every calc in the stage (was one query per calc —
+            // 18 round trips on Behold; the same bulk load the engine's stage prefetch uses).
+            calcs.LoadAttributes( rockContext );
+
             // Batch-resolve calc → MediaElement Guid in one pass over loaded attribute values,
             // then batch-load all MediaElement records in a single query. Avoids the per-calc
             // round trip when a Stage's typical 5-10 calcs each point at a distinct media.
             var calcToMediaGuid = new Dictionary<int, Guid>();
             foreach ( var calc in calcs )
             {
-                calc.LoadAttributes( rockContext );
                 var mediaGuid = calc.GetAttributeValue( "MediaElement" ).AsGuidOrNull();
                 if ( mediaGuid.HasValue )
                 {
@@ -164,6 +207,22 @@ namespace com.razayya.JourneyTrack.Data
             // materialize first. Cardinality is bounded (one person × ~10 medias × N sessions
             // each, typically < 50 rows), so the over-the-wire cost is negligible.
             var latestByMediaId = new Dictionary<int, (Guid InteractionGuid, string InteractionData)>();
+
+            // The same Interaction batch also feeds the per-calc Evaluate calls below via
+            // the engine's ambient StageEvalContext slot (the PrefetchPersonAggregates
+            // shape, minus its second Interaction query). Every media id gets an entry —
+            // null = no decodable watches — so Evaluate never falls back to a per-calc
+            // Interaction query, even for a person who has watched nothing.
+            var prefetchCtx = new StageEvalContext
+            {
+                SinglePersonId = personId,
+                MediaAggregateByElementId = new Dictionary<int, object>()
+            };
+            foreach ( var me in mediaElementsByGuid.Values )
+            {
+                prefetchCtx.MediaAggregateByElementId[me.Id] = null;
+            }
+
             if ( personAliasIds.Count > 0 && mediaElementsByGuid.Count > 0 )
             {
                 var mediaIds = mediaElementsByGuid.Values.Select( me => me.Id ).ToList();
@@ -186,8 +245,16 @@ namespace com.razayya.JourneyTrack.Data
                 {
                     var latest = grp.OrderByDescending( r => r.InteractionDateTime ).First();
                     latestByMediaId[grp.Key] = (latest.Guid, latest.InteractionData);
+
+                    prefetchCtx.MediaAggregateByElementId[grp.Key] =
+                        MediaWatchedCalculation.BuildBoxedAggregate( grp.Select( r => r.InteractionData ) );
                 }
             }
+
+            var priorAmbientCtx = StageEvalContext.Current;
+            try
+            {
+            StageEvalContext.Current = prefetchCtx;
 
             foreach ( var calc in calcs )
             {
@@ -200,7 +267,7 @@ namespace com.razayya.JourneyTrack.Data
                     continue;
                 }
 
-                // Engine evaluation against the single person.
+                // Engine evaluation against the single person (served from the prefetch).
                 var evalResult = component.Evaluate( rockContext, calc, singlePersonPopulation );
 
                 bool matched = false;
@@ -273,25 +340,18 @@ namespace com.razayya.JourneyTrack.Data
                 } );
             }
 
-            // Partition into ordered sequences (named Media Groups + the default sequence)
-            // and compute per-item lock state for the resolved person.
-            var sequenced = ApplyMediaGroups( output, stage.MediaGroupsJson );
-
-            // Optional: narrow to a single sequence, addressed by group Name or Key. Lock
-            // state is computed per-sequence, so post-filtering the already-sequenced list
-            // keeps each kept item's correct lock/availability.
-            var filtered = FilterToGroup( sequenced, groupRef );
-
-            // Optional: keep only the videos the person has completed (Matched == watched to the
-            // calc threshold) — e.g. for a "completed" carousel. Default returns the full set so
-            // existing callers (and the "Up Next" surface, which picks the first available item)
-            // are unaffected.
-            if ( showCompletedOnly )
+            }
+            finally
             {
-                filtered = filtered.Where( it => it.Matched ).ToList();
+                // Always restore the ambient slot — this runs on pooled ASP.NET threads,
+                // and a leaked context would be visible to the next request on the thread.
+                StageEvalContext.Current = priorAmbientCtx;
             }
 
-            return filtered;
+            // Partition into ordered sequences (named Media Groups + the default sequence)
+            // and compute per-item lock state for the resolved person. Group / completed
+            // narrowing happens in GetForStageAndPerson on the memoized result.
+            return ApplyMediaGroups( output, stage.MediaGroupsJson );
         }
 
         /// <summary>Sequence key used for every video that isn't in a named Media Group.</summary>

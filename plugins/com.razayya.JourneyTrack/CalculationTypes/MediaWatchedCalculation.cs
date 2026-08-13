@@ -246,6 +246,20 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         }
 
         /// <summary>
+        /// Builds the boxed watch aggregate for one person's InteractionData rows for a
+        /// single media element — the exact value shape
+        /// <see cref="Data.StageEvalContext.MediaAggregateByElementId"/> stores (null =
+        /// no decodable watches). Lets callers that already hold the person's Interaction
+        /// rows (StageVideoData's batched resume query) populate the prefetch slot
+        /// without a second Interaction query.
+        /// </summary>
+        internal static object BuildBoxedAggregate( IEnumerable<string> interactionDataRows )
+        {
+            var agg = BuildAggregate( interactionDataRows );
+            return agg.HasValue ? ( object ) agg.Value : null;
+        }
+
+        /// <summary>
         /// Unions one person's raw InteractionData rows into a watch aggregate.
         /// Returns null when no row carries a decodable WatchMap.
         /// </summary>
