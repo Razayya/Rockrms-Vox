@@ -47,6 +47,12 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         Order = 1,
         Key = AttributeKey.MatchAll )]
 
+    [TextField( "Merge Field Attributes",
+        Description = "Optional. Comma-delimited person attribute keys whose raw values are exposed to the Result Lava Template as merge fields (keyed by attribute key) for matched people. Lets the template stamp a source date (e.g. BaptismDate) instead of the sync date.",
+        IsRequired = false,
+        Order = 2,
+        Key = AttributeKey.MergeFieldAttributes )]
+
     public class PersonFilterCalculation : JourneyCalculationTypeComponent
     {
         /// <inheritdoc/>
@@ -69,7 +75,50 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             {
                 results[personId] = new Dictionary<string, object> { { "Matched", true } };
             }
+
+            AddMergeFieldAttributeValues( calc, results, rockContext );
+
             return results;
+        }
+
+        /// <summary>
+        /// Exposes the configured Merge Field Attributes' raw values to matched people's
+        /// merge fields, keyed by attribute key. Deliberately separate from the filter
+        /// conditions: the date a template wants to stamp (e.g. MembershipDate) is often
+        /// not an attribute the filter matches on.
+        /// </summary>
+        private static void AddMergeFieldAttributeValues( JourneyCalculation calc, Dictionary<int, Dictionary<string, object>> results, RockContext rockContext )
+        {
+            var mergeAttributeKeys = ( calc.GetAttributeValue( AttributeKey.MergeFieldAttributes ) ?? string.Empty )
+                .SplitDelimitedValues()
+                .Select( k => k.Trim() )
+                .Where( k => k != string.Empty )
+                .Distinct()
+                .ToList();
+
+            if ( !mergeAttributeKeys.Any() || results.Count == 0 )
+            {
+                return;
+            }
+
+            var matchedIds = new HashSet<int>( results.Keys );
+            var mergeValues = new AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                .Where( av =>
+                    av.Attribute.Key != null &&
+                    mergeAttributeKeys.Contains( av.Attribute.Key ) &&
+                    av.Attribute.EntityType.Name == "Rock.Model.Person" &&
+                    av.EntityId.HasValue &&
+                    matchedIds.Contains( av.EntityId.Value ) )
+                .Select( av => new { EntityId = av.EntityId.Value, av.Attribute.Key, av.Value } )
+                .ToList();
+
+            foreach ( var av in mergeValues )
+            {
+                if ( results.TryGetValue( av.EntityId, out var mergeFields ) )
+                {
+                    mergeFields[av.Key] = av.Value ?? string.Empty;
+                }
+            }
         }
 
         /// <summary>
@@ -277,7 +326,8 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         {
             return new List<MergeFieldInfo>
             {
-                new MergeFieldInfo { Name = "Matched", Description = "True if filter conditions were satisfied.", DataType = "Boolean" }
+                new MergeFieldInfo { Name = "Matched", Description = "True if filter conditions were satisfied.", DataType = "Boolean" },
+                new MergeFieldInfo { Name = "<attribute key>", Description = "Raw value of each person attribute listed in Merge Field Attributes, keyed by attribute key.", DataType = "String" }
             };
         }
     }
