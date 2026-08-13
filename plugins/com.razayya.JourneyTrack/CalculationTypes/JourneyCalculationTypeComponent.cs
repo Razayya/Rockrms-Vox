@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Data.Entity;
 using System.Linq;
 
+using Rock;
+using Rock.Attribute;
 using Rock.Data;
 using Rock.Extension;
 using Rock.Web.Cache;
@@ -11,7 +14,20 @@ namespace com.razayya.JourneyTrack.CalculationTypes
     /// <summary>
     /// Base class for all JourneyCalculation type components. Each implementation defines
     /// how to evaluate a population and produce per-person merge field results.
+    ///
+    /// The Merge Field Attributes setting declared here is inherited by every component
+    /// (Rock's UpdateAttributes reflects inherited FieldAttributes), so any calc type can
+    /// expose person-attribute raw values to its Result Lava Template without code. The
+    /// engine applies the enrichment centrally after Evaluate — components never need to.
+    /// Exception: MediaWatchedCalculation carries no direct field decorators (its settings
+    /// are SQL-registered), so EnsureContainerInitialized's guard skips its registration;
+    /// register the attribute by SQL there if it's ever needed.
     /// </summary>
+    [TextField( "Merge Field Attributes",
+        Description = "Optional. Comma-delimited person attribute keys whose raw values are exposed to the Result Lava Template as merge fields (keyed by attribute key) for matched people. Lets the template stamp a source date (e.g. BaptismDate) instead of the sync date.",
+        IsRequired = false,
+        Order = 10,
+        Key = Constants.AttributeKey.MergeFieldAttributes )]
     public abstract class JourneyCalculationTypeComponent : Component
     {
         /// <summary>
@@ -61,6 +77,48 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// Used for documentation and Lava template help.
         /// </summary>
         public abstract List<MergeFieldInfo> GetMergeFields();
+
+        /// <summary>
+        /// Exposes the calc's configured Merge Field Attributes' raw person-attribute
+        /// values to matched people's merge fields, keyed by attribute key. The engine
+        /// calls this centrally after every Evaluate, so it works identically for all
+        /// calculation types. Deliberately independent of the component's own matching
+        /// data: the date a template wants to stamp (e.g. MembershipDate) is often not
+        /// data the component matches on.
+        /// </summary>
+        public static void AddMergeFieldAttributeValues( Model.JourneyCalculation calc, Dictionary<int, Dictionary<string, object>> results, RockContext rockContext )
+        {
+            var mergeAttributeKeys = ( calc.GetAttributeValue( Constants.AttributeKey.MergeFieldAttributes ) ?? string.Empty )
+                .SplitDelimitedValues()
+                .Select( k => k.Trim() )
+                .Where( k => k != string.Empty )
+                .Distinct()
+                .ToList();
+
+            if ( !mergeAttributeKeys.Any() || results == null || results.Count == 0 )
+            {
+                return;
+            }
+
+            var matchedIds = new HashSet<int>( results.Keys );
+            var mergeValues = new Rock.Model.AttributeValueService( rockContext ).Queryable().AsNoTracking()
+                .Where( av =>
+                    av.Attribute.Key != null &&
+                    mergeAttributeKeys.Contains( av.Attribute.Key ) &&
+                    av.Attribute.EntityType.Name == "Rock.Model.Person" &&
+                    av.EntityId.HasValue &&
+                    matchedIds.Contains( av.EntityId.Value ) )
+                .Select( av => new { EntityId = av.EntityId.Value, av.Attribute.Key, av.Value } )
+                .ToList();
+
+            foreach ( var av in mergeValues )
+            {
+                if ( results.TryGetValue( av.EntityId, out var mergeFields ) )
+                {
+                    mergeFields[av.Key] = av.Value ?? string.Empty;
+                }
+            }
+        }
 
         /// <summary>
         /// Describes one person's progress toward this JourneyCalculation's requirement.

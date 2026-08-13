@@ -48,6 +48,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         private struct StepInfo
         {
             public System.DateTime? CompletedDateTime;
+            public System.DateTime? LastCompletedDateTime;
             public int? StepStatusId;
             public string StepStatusName;
         }
@@ -92,6 +93,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 map[personGroup.Key] = new StepInfo
                 {
                     CompletedDateTime = first.CompletedDateTime,
+                    LastCompletedDateTime = personGroup.Max( r => r.CompletedDateTime ),
                     StepStatusId = first.StepStatusId,
                     StepStatusName = first.StepStatusName
                 };
@@ -134,6 +136,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 {
                     { "Matched", true },
                     { "CompletedDateTime", info.CompletedDateTime },
+                    { "LastCompletedDateTime", info.LastCompletedDateTime },
                     { "StepStatusName", info.StepStatusName },
                     { "StepStatusId", info.StepStatusId },
                     { "StepTypeId", stepType.Id },
@@ -151,6 +154,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             {
                 new MergeFieldInfo { Name = "Matched", Description = "True if person has a matching Step record.", DataType = "Boolean" },
                 new MergeFieldInfo { Name = "CompletedDateTime", Description = "Earliest CompletedDateTime on the person's matching Step rows.", DataType = "DateTime" },
+                new MergeFieldInfo { Name = "LastCompletedDateTime", Description = "Most recent CompletedDateTime on the person's matching Step rows.", DataType = "DateTime" },
                 new MergeFieldInfo { Name = "StepStatusName", Description = "Name of the StepStatus on the matching Step.", DataType = "String" },
                 new MergeFieldInfo { Name = "StepStatusId", Description = "Id of the StepStatus on the matching Step.", DataType = "Integer" },
                 new MergeFieldInfo { Name = "StepTypeId", Description = "Id of the configured StepType.", DataType = "Integer" },
