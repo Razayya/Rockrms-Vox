@@ -38,6 +38,50 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# ============================================================
+# Junction-safe tree removal
+# ============================================================
+# Plugins are junctioned into the clone at TWO depths: the plugin dirs at the
+# clone root (step 2) and each plugin's RockWeb/ subtree, nested arbitrarily deep
+# under RockWeb/Plugins/<vendor>/<plugin> (step 2.5). Remove-Item -Recurse can
+# traverse a junction and delete the TARGET's contents - i.e. real plugin source
+# in plugins/ - so every reparse point must be unlinked before the recursive
+# delete. This used to unlink only the top-level ones, which left the RockWeb
+# overlays live inside the delete.
+#
+# The walk deliberately does not descend into a reparse point (that would
+# enumerate the plugin's own files and, on some PowerShell versions, follow it).
+function Get-ReparsePointsSafe {
+    param([string]$Root)
+    $found = New-Object System.Collections.Generic.List[string]
+    $stack = New-Object System.Collections.Generic.Stack[string]
+    $stack.Push($Root)
+    while ($stack.Count -gt 0) {
+        $dir = $stack.Pop()
+        try { $subs = [IO.Directory]::EnumerateDirectories($dir) } catch { continue }
+        foreach ($sub in $subs) {
+            try { $attr = [IO.File]::GetAttributes($sub) } catch { continue }
+            if ($attr -band [IO.FileAttributes]::ReparsePoint) { $found.Add($sub) }
+            else { $stack.Push($sub) }
+        }
+    }
+    return $found
+}
+
+function Remove-TreeSafely {
+    param([string]$Path)
+    $links = Get-ReparsePointsSafe -Root $Path
+    foreach ($l in $links) {
+        Write-Host "  unlink junction: $l"
+        [IO.Directory]::Delete($l, $false)
+    }
+    $remaining = Get-ReparsePointsSafe -Root $Path
+    if ($remaining.Count -gt 0) {
+        throw "Refusing to delete $Path - $($remaining.Count) reparse point(s) still present; a recursive delete could destroy plugin source."
+    }
+    Remove-Item -Recurse -Force $Path
+}
+
 $repoRoot = (& git rev-parse --show-toplevel).Trim().Replace('/', '\')
 $pluginDir = Join-Path $repoRoot 'plugins'
 $jsonPath  = Join-Path $repoRoot 'overlay\instance-versions.json'
@@ -71,10 +115,7 @@ Write-Host "Plugins to overlay: $($plugins.Count)"
 if (Test-Path $TargetDir) {
     if ($Force) {
         Write-Host "Removing existing $TargetDir (-Force)..."
-        Get-ChildItem $TargetDir -Directory -Force -ErrorAction SilentlyContinue | Where-Object {
-            $_.Attributes -band [IO.FileAttributes]::ReparsePoint
-        } | ForEach-Object { [IO.Directory]::Delete($_.FullName, $false) }
-        Remove-Item -Recurse -Force $TargetDir
+        Remove-TreeSafely -Path $TargetDir
     } else {
         Write-Host "Re-using existing clone at $TargetDir (pass -Force to re-clone)."
     }
