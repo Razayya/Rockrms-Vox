@@ -290,45 +290,13 @@ The same rule applies to per-project tasks: any `Task` row with `State = 'Active
 
 **One sub-project at a time** — when 2+ Active children exist, enumerate them with latest-comment context as a list of avenues and **stop**. Do not start investigating, planning, or executing across the set. The user picks which to take. After one is closed or paused, re-present the remaining list rather than auto-advancing. (See `memory/feedback_subprojects_one_at_a_time.md`.)
 
-## Time tracking — Jira worklogs
+## Time tracking — not part of this skill
 
-Time spent on Rock Request project work is logged against a per-month Jira ticket in the **VDR** project on **razayyafinancial.atlassian.net** (cloudId `fc43df40-d0b4-4b49-8888-dfa934ccedea`).
+**Do not log time, ask for `timeSpent`, or offer to log time when wrapping up project work.** Adam runs a dedicated end-of-day agent sweep (the `log-time` skill) that reviews the day's actual work across both jobs and books everything in one pass. Prompting mid-day interrupts, and booking a worklog here double-books against that sweep.
 
-### Finding the right ticket
+A project work block ends at the closure comment or the PENDING note — nothing further.
 
-Tickets are named **`<year>_<MonAbbr>`** — 3-letter English month abbreviation. Examples:
-- May 2026 → `2026_May` → `VDR-25`
-- Jun 2026 → `2026_Jun`
-- Jan 2027 → `2027_Jan`
-
-To resolve the current month's ticket, use `mcp__atlassian__searchJiraIssuesUsingJql` with JQL like `project = VDR AND summary ~ "2026_Jun"` rather than hardcoding the key — month tickets are pre-created but the user may not remember the next key.
-
-### When to log
-
-**One worklog per project per session**, booked at the natural end of that project's work block — e.g. after committing the last migration or after drafting the closure comment. Don't batch multiple projects into one worklog; don't log per-step within a single project.
-
-### What to log
-
-- **`timeSpent`** — Ask the user for the value every time before calling `addWorklogToJiraIssue`. Don't guess wall-clock time; the agent can't reliably tell how long the session actually took. A typical exchange: *"Wrapping up 4388. How much time should I log against VDR-25?"* — accept the answer verbatim (`2h`, `45m`, etc.) and pass it through.
-- **`commentBody`** — Project Id + a one-line summary of what was accomplished. Example: `"4388 — Room Capacity dashboard chronological sort fix"`. Match the existing month's worklog style (the previous worklog reads `"Special Needs Intake Adjustments"`).
-- **`started`** — Omit unless backdating; the API books at "now" by default.
-
-### Call shape
-
-```
-mcp__atlassian__addWorklogToJiraIssue({
-  cloudId: "fc43df40-d0b4-4b49-8888-dfa934ccedea",
-  issueIdOrKey: "VDR-25",       // resolve from current month via JQL
-  timeSpent: "<user-provided>",  // e.g. "2h 30m"
-  commentBody: "<projectId> — <one-line summary>"
-})
-```
-
-### Gotchas
-
-- **One worklog per call** — `addWorklogToJiraIssue` creates a *new* worklog by default. To update one that's already booked (wrong time, typo in comment), pass `worklogId`.
-- **Cross-month sessions:** if a session spans midnight on a month boundary, log against the month the work was *done in*, not the month the session started.
-- **The monthly ticket is just a time bucket** — don't transition its status, don't comment on it via `addCommentToJiraIssue`, don't link Rock Request project Ids as issue links. The Note thread in Rock is the source of truth for the project work itself; Jira is purely the timesheet.
+Log time only if Adam explicitly asks in that turn, or invokes `log-time`. If he does: all Rock Request time goes to the **VDR-27** retainer ticket (cloudId `fc43df40-d0b4-4b49-8888-dfa934ccedea`) — the old per-month `<year>_<MonAbbr>` buckets are retired. Ask for `timeSpent` verbatim rather than guessing wall-clock, use `<projectId> — <one-line summary>` as the comment body, and never transition/comment/link on VDR-27 itself; it's purely a time bucket. The ledger append is automatic via a PostToolUse hook — never hand-append. See `memory/reference_vdr_jira_timetracking.md` and `memory/feedback_jira_ledger_hook_no_manual_append.md`.
 
 ## Reference — pointers to related skills and memories
 
@@ -362,3 +330,12 @@ Make exceptions only if the thread is already developer-to-developer (the partic
 > [Verification ask:] Could you check the next [thing they'll see] and confirm it's working as expected? Let me know if anything still looks off.
 
 Match the project thread's existing tone (formal vs. casual) and the requester's voice — if they're conversational, you're conversational; if they're terse, match that.
+
+## Posting comments by email (preferred delivery)
+
+Drafted comments don't have to be hand-pasted into the UI — the BBM PM plugin posts inbound email as a comment. Validated end-to-end 2026-08-13 (project 7237, Note 380864); full mechanics in `memory/reference_rock_comment_via_email.md`.
+
+- **To:** `project-comment@mg.voxchurch.org`. **Subject:** anything containing the token `(#<projectId>/<personAliasId>)`. Alias `48347` = Razayya Rock Dev Admin, the account Vox comments post under.
+- Attribution comes from the alias token, not the sending mailbox — a **fresh draft** from adam.beard@Razayya.com works; no need to reply to the notification email (those live in the rock@razayya.com shared mailbox, which the ms365 MCP cannot access).
+- Body is plain text and becomes the Note verbatim; **attachments carry through** as `GetFile.ashx` links in the comment.
+- Flow: draft the comment text (plain .txt as usual) → `create-draft-email` on adam.beard@Razayya.com → `add-mail-attachment` for CSVs etc. → the user reviews and sends from Outlook. Never send it yourself.
