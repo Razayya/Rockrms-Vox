@@ -10,6 +10,7 @@ namespace com.razayya.JourneyTrack.Constants
         public const string GroupTypes = "GroupTypes";
         public const string MinimumCount = "MinimumCount";
         public const string WithinDays = "WithinDays";
+        public const string BlackoutRanges = "BlackoutRanges";
         public const string Schedule = "Schedule";
         public const string Campus = "Campus";
 
