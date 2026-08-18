@@ -5,6 +5,7 @@ using System.Data.Entity;
 using System.Linq;
 
 using com.razayya.JourneyTrack.Constants;
+using com.razayya.JourneyTrack.Logic;
 using com.razayya.JourneyTrack.Model;
 
 using Rock;
@@ -42,6 +43,12 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         Order = 2,
         Key = AttributeKey.WithinDays )]
 
+    [DefinedTypeField( "Blackout Ranges",
+        Description = "Optional. A defined type whose active values are recurring annual date ranges (MM-dd|MM-dd, both ends inclusive; a start later than its end wraps across year-end). Days inside a range do not consume the Within Days budget, so the window stretches across planned breaks. Attendance during a range still counts. Blank keeps the flat window.",
+        IsRequired = false,
+        Order = 3,
+        Key = AttributeKey.BlackoutRanges )]
+
     public class AttendanceCalculation : JourneyCalculationTypeComponent
     {
         /// <inheritdoc/>
@@ -51,8 +58,10 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         public override string IconCssClass => "fa fa-calendar-check";
 
         /// <inheritdoc/>
-        // Per-(groupTypeGuids set, withinDays) cache. Stores all candidate persons +
+        // Per-(groupTypeGuids set, windowStart) cache. Stores all candidate persons +
         // their attendance counts; the per-calc MinimumCount filter is applied at lookup.
+        // Keyed by the RESOLVED window start (not WithinDays) so blackout stretching is
+        // part of the identity; calcs with identical config still share one entry.
         private struct AttendanceSummary
         {
             public int AttendanceCount;
@@ -63,16 +72,16 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             = new System.Collections.Concurrent.ConcurrentDictionary<string, (System.DateTime, Dictionary<int, AttendanceSummary>)>();
         private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
 
-        private static Dictionary<int, AttendanceSummary> GetAttendanceSummaries( List<System.Guid> groupTypeGuids, int withinDays, RockContext rockContext )
+        private static Dictionary<int, AttendanceSummary> GetAttendanceSummaries( List<System.Guid> groupTypeGuids, System.DateTime windowStart, RockContext rockContext )
         {
-            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + withinDays;
+            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + windowStart.ToString( "yyyy-MM-dd" );
             if ( _attCache.TryGetValue( key, out var cached )
                 && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
             {
                 return cached.Map;
             }
 
-            var sinceDate = RockDateTime.Today.AddDays( -withinDays );
+            var sinceDate = windowStart;
             var rows = new AttendanceService( rockContext ).Queryable().AsNoTracking()
                 .Where( a =>
                     a.DidAttend == true &&
@@ -104,16 +113,16 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// instead of building the all-persons map. The shared cache is not
         /// written here — population runs keep their own rebuild cadence.
         /// </summary>
-        private static AttendanceSummary? GetPersonAttendanceSummary( List<System.Guid> groupTypeGuids, int withinDays, int personId, RockContext rockContext )
+        private static AttendanceSummary? GetPersonAttendanceSummary( List<System.Guid> groupTypeGuids, System.DateTime windowStart, int personId, RockContext rockContext )
         {
-            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + withinDays;
+            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + windowStart.ToString( "yyyy-MM-dd" );
             if ( _attCache.TryGetValue( key, out var cached )
                 && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
             {
                 return cached.Map.TryGetValue( personId, out var hit ) ? hit : ( AttendanceSummary? ) null;
             }
 
-            var sinceDate = RockDateTime.Today.AddDays( -withinDays );
+            var sinceDate = windowStart;
             var row = new AttendanceService( rockContext ).Queryable().AsNoTracking()
                 .Where( a =>
                     a.DidAttend == true &&
@@ -155,12 +164,16 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             if ( !groupTypeGuids.Any() ) return results;
             if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
 
+            var asOf = RockDateTime.Today;
+            var windowStart = BlackoutWindow.ResolveWindowStart( calc, withinDays, asOf );
+            var effectiveWithinDays = ( int ) ( asOf - windowStart ).TotalDays;
+
             // Render-path fast path: a single-person evaluation queries only that
             // person's attendance rather than the all-persons summary map.
             if ( populationPersonIds.Count == 1 )
             {
                 var singlePersonId = populationPersonIds.First();
-                var personSummary = GetPersonAttendanceSummary( groupTypeGuids, withinDays, singlePersonId, rockContext );
+                var personSummary = GetPersonAttendanceSummary( groupTypeGuids, windowStart, singlePersonId, rockContext );
                 if ( personSummary.HasValue && personSummary.Value.AttendanceCount >= minimumCount )
                 {
                     results[singlePersonId] = new Dictionary<string, object>
@@ -168,13 +181,15 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                         { "Matched", true },
                         { "AttendanceCount", personSummary.Value.AttendanceCount },
                         { "FirstAttendanceDate", personSummary.Value.FirstAttendanceDate },
-                        { "LastAttendanceDate", personSummary.Value.LastAttendanceDate }
+                        { "LastAttendanceDate", personSummary.Value.LastAttendanceDate },
+                        { "WindowStartDate", windowStart },
+                        { "EffectiveWithinDays", effectiveWithinDays }
                     };
                 }
                 return results;
             }
 
-            var attMap = GetAttendanceSummaries( groupTypeGuids, withinDays, rockContext );
+            var attMap = GetAttendanceSummaries( groupTypeGuids, windowStart, rockContext );
             if ( attMap.Count == 0 ) return results;
 
             foreach ( var personId in populationPersonIds )
@@ -187,7 +202,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                     { "Matched", true },
                     { "AttendanceCount", summary.AttendanceCount },
                     { "FirstAttendanceDate", summary.FirstAttendanceDate },
-                    { "LastAttendanceDate", summary.LastAttendanceDate }
+                    { "LastAttendanceDate", summary.LastAttendanceDate },
+                    { "WindowStartDate", windowStart },
+                    { "EffectiveWithinDays", effectiveWithinDays }
                 };
             }
 
@@ -209,13 +226,17 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             var minimumCount = calc.GetAttributeValue( AttributeKey.MinimumCount ).AsIntegerOrNull() ?? 1;
             var withinDays = calc.GetAttributeValue( AttributeKey.WithinDays ).AsIntegerOrNull() ?? 90;
 
+            var asOf = RockDateTime.Today;
+            var windowStart = BlackoutWindow.ResolveWindowStart( calc, withinDays, asOf );
+            var effectiveWithinDays = ( int ) ( asOf - windowStart ).TotalDays;
+
             int count = 0;
             System.DateTime? firstAttendance = null;
             System.DateTime? lastAttendance = null;
 
             if ( groupTypeGuids.Any() )
             {
-                var personSummary = GetPersonAttendanceSummary( groupTypeGuids, withinDays, personId, rockContext );
+                var personSummary = GetPersonAttendanceSummary( groupTypeGuids, windowStart, personId, rockContext );
                 if ( personSummary.HasValue )
                 {
                     count = personSummary.Value.AttendanceCount;
@@ -232,6 +253,8 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 { "AttendanceCount", count },
                 { "Remaining", System.Math.Max( 0, minimumCount - count ) },
                 { "WithinDays", withinDays },
+                { "EffectiveWithinDays", effectiveWithinDays },
+                { "WindowStartDate", windowStart },
                 { "FirstAttendanceDate", firstAttendance },
                 { "LastAttendanceDate", lastAttendance }
             };
@@ -245,7 +268,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 new MergeFieldInfo { Name = "Matched", Description = "True if attendance criteria were met.", DataType = "Boolean" },
                 new MergeFieldInfo { Name = "AttendanceCount", Description = "Number of attendances in the date range.", DataType = "Integer" },
                 new MergeFieldInfo { Name = "FirstAttendanceDate", Description = "Earliest attendance date in the date range.", DataType = "DateTime" },
-                new MergeFieldInfo { Name = "LastAttendanceDate", Description = "Most recent attendance date.", DataType = "DateTime" }
+                new MergeFieldInfo { Name = "LastAttendanceDate", Description = "Most recent attendance date.", DataType = "DateTime" },
+                new MergeFieldInfo { Name = "WindowStartDate", Description = "Start of the effective attendance window, stretched past any blackout ranges.", DataType = "DateTime" },
+                new MergeFieldInfo { Name = "EffectiveWithinDays", Description = "Calendar length of the effective window; equals Within Days when no blackout overlaps it.", DataType = "Integer" }
             };
         }
     }

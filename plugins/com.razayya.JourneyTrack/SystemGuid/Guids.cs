@@ -31,4 +31,14 @@ namespace com.razayya.JourneyTrack.SystemGuid
         public const string JOURNEY_TRACK_ENGINE         = "1A2B3C4D-5E6F-4A7B-8C9D-0E1F2A3B4C5D";
         public const string SEND_JOURNEY_COMMUNICATIONS  = "0123ABCD-EF45-6789-ABCD-EF0123456789";
     }
+
+    public static class DefinedType
+    {
+        public const string PATHWAY_BLACKOUT_RANGES      = "6F91822F-B6AD-40F2-9D7C-1E7B7AD5BCA1";
+    }
+
+    public static class DefinedValue
+    {
+        public const string BLACKOUT_SUMMER_SABBATICAL   = "181240EA-C8C6-4E70-AC06-078D29C675AE";
+    }
 }

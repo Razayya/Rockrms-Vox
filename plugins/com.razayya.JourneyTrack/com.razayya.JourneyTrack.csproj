@@ -66,6 +66,7 @@
     <Compile Include="Model\JourneyCalculationSkip.cs" />
     <Compile Include="Model\JourneyCalculationSkipService.cs" />
     <!-- Logic (shared nested ANY/ALL tree) -->
+    <Compile Include="Logic\BlackoutWindow.cs" />
     <Compile Include="Logic\LogicTree.cs" />
     <!-- Shared UI helpers (DLL-side, callable from any block) -->
     <Compile Include="UI\JourneyTrackUiHelper.cs" />
@@ -117,6 +118,7 @@
     <Compile Include="Migrations\014_AddSkipFilter.cs" />
     <Compile Include="Migrations\015_AddEnrollmentStageStatus.cs" />
     <Compile Include="Migrations\016_AddManualSkip.cs" />
+    <Compile Include="Migrations\017_AddBlackoutRanges.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
