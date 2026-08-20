@@ -17,13 +17,17 @@ namespace com.razayya.JourneyTrack.Logic
     /// planned breaks (group sabbatical, Christmas) instead of silently failing people —
     /// attendance recorded inside a blackout still counts, only the clock stops.
     ///
+    /// Each defined value is one named range: its Value is the label staff see, and its
+    /// Start Date / End Date attributes (Month Day field type, stored "M/d") are the
+    /// endpoints, both inclusive. A start later than its end wraps across year-end.
+    ///
     /// The window start is the LATEST date D on or before AsOf such that the count of
     /// non-blackout days in [D, AsOf) — D included, AsOf excluded — reaches WithinDays.
     /// With no ranges configured this is exactly AsOf - WithinDays, so a blank setting is
     /// a true no-op. AsOf's own blackout status never affects the result, and the returned
     /// date always lands on a countable (non-blackout) day.
     ///
-    /// dbo._com_razayya_JourneyTrack_ufnAttendanceWindowStart (plugin migration 017) mirrors
+    /// dbo._com_razayya_JourneyTrack_ufnAttendanceWindowStart (plugin migration 018) mirrors
     /// this algorithm for the T-SQL surfaces (mobile pages, dashboards). The two MUST stay
     /// in lockstep — change both or neither.
     /// </summary>
@@ -38,7 +42,7 @@ namespace com.razayya.JourneyTrack.Logic
 
         /// <summary>
         /// One recurring annual range, both endpoints inclusive, encoded as month*100+day
-        /// (e.g. 07-05 => 705). StartMonthDay later than EndMonthDay wraps across year-end.
+        /// (e.g. 7/5 => 705). StartMonthDay later than EndMonthDay wraps across year-end.
         /// </summary>
         public struct MonthDayRange
         {
@@ -47,41 +51,45 @@ namespace com.razayya.JourneyTrack.Logic
         }
 
         /// <summary>
-        /// Parses defined value strings in the pinned MM-dd|MM-dd format (zero-padded,
-        /// 11 characters, both ends inclusive). Throws on any malformed value rather than
-        /// skipping it — a silently-dropped range would shorten the window without anyone
+        /// Builds one range from a defined value's label and its Start Date / End Date
+        /// attribute text. Throws on a blank or malformed endpoint rather than skipping
+        /// the value — a silently-dropped range would shorten the window without anyone
         /// noticing, which is exactly the drift this feature exists to prevent.
         /// </summary>
-        public static List<MonthDayRange> ParseRanges( IEnumerable<string> values )
+        public static MonthDayRange ParseRange( string label, string startText, string endText )
         {
-            var ranges = new List<MonthDayRange>();
+            var start = ParseMonthDay( startText );
+            var end = ParseMonthDay( endText );
 
-            foreach ( var value in values ?? Enumerable.Empty<string>() )
+            if ( start == null || end == null )
             {
-                var start = ParseMonthDay( value, 0 );
-                var end = ParseMonthDay( value, 6 );
-
-                if ( value == null || value.Length != 11 || value[2] != '-' || value[5] != '|' || value[8] != '-'
-                    || start == null || end == null )
-                {
-                    throw new FormatException( $"Blackout range value '{value}' is not in the required MM-dd|MM-dd format." );
-                }
-
-                ranges.Add( new MonthDayRange { StartMonthDay = start.Value, EndMonthDay = end.Value } );
+                throw new FormatException( $"Blackout range '{label}' needs a valid Start Date and End Date (month/day); got Start Date '{startText}' and End Date '{endText}'." );
             }
 
-            return ranges;
+            return new MonthDayRange { StartMonthDay = start.Value, EndMonthDay = end.Value };
         }
 
-        private static int? ParseMonthDay( string value, int offset )
+        /// <summary>
+        /// Parses a Month Day field value ("M/d", zero padding tolerated) into month*100+day,
+        /// or null when it is blank or not a plausible month/day. Pure month-day parsing on
+        /// purpose: Rock's MonthDayStringAsDateTime validates against the current year, which
+        /// would reject 2/29 three years in four.
+        /// </summary>
+        public static int? ParseMonthDay( string text )
         {
-            if ( value == null || value.Length < offset + 5 )
+            if ( string.IsNullOrWhiteSpace( text ) )
             {
                 return null;
             }
 
-            var month = value.Substring( offset, 2 ).AsIntegerOrNull();
-            var day = value.Substring( offset + 3, 2 ).AsIntegerOrNull();
+            var parts = text.Trim().Split( '/' );
+            if ( parts.Length != 2 )
+            {
+                return null;
+            }
+
+            var month = parts[0].AsIntegerOrNull();
+            var day = parts[1].AsIntegerOrNull();
 
             if ( month == null || day == null || month < 1 || month > 12 || day < 1 || day > 31 )
             {
@@ -156,6 +164,21 @@ namespace com.razayya.JourneyTrack.Logic
         }
 
         /// <summary>
+        /// Reads every active value of the defined type into ranges via its Start Date /
+        /// End Date attributes. Throws on the first value that cannot be parsed.
+        /// </summary>
+        public static List<MonthDayRange> LoadRanges( DefinedTypeCache definedType )
+        {
+            return definedType.DefinedValues
+                .Where( v => v.IsActive )
+                .Select( v => ParseRange(
+                    v.Value,
+                    v.GetAttributeValue( AttributeKey.BlackoutStartDate ),
+                    v.GetAttributeValue( AttributeKey.BlackoutEndDate ) ) )
+                .ToList();
+        }
+
+        /// <summary>
         /// Resolves the window start for a calculation from its stored Blackout Ranges
         /// setting (a defined type guid; blank means the flat window). A configured guid
         /// that no longer resolves to a defined type throws rather than silently reverting
@@ -176,9 +199,7 @@ namespace com.razayya.JourneyTrack.Logic
                 throw new InvalidOperationException( $"JourneyCalculation {calc.Id} has Blackout Ranges pointing at defined type '{definedTypeGuid}', which does not exist." );
             }
 
-            var ranges = ParseRanges( definedType.DefinedValues
-                .Where( v => v.IsActive )
-                .Select( v => v.Value ) );
+            var ranges = LoadRanges( definedType );
 
             var windowStart = GetWindowStart( asOf, withinDays, ranges, out bool clamped );
 
