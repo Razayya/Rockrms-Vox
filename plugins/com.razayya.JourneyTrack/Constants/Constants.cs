@@ -11,6 +11,9 @@ namespace com.razayya.JourneyTrack.Constants
         public const string MinimumCount = "MinimumCount";
         public const string WithinDays = "WithinDays";
         public const string BlackoutRanges = "BlackoutRanges";
+        // Pathway Blackout Ranges defined VALUE attributes (Month Day field type, stored "M/d")
+        public const string BlackoutStartDate = "StartDate";
+        public const string BlackoutEndDate = "EndDate";
         public const string Schedule = "Schedule";
         public const string Campus = "Campus";
 

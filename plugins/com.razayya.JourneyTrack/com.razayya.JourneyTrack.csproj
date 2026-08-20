@@ -119,6 +119,7 @@
     <Compile Include="Migrations\015_AddEnrollmentStageStatus.cs" />
     <Compile Include="Migrations\016_AddManualSkip.cs" />
     <Compile Include="Migrations\017_AddBlackoutRanges.cs" />
+    <Compile Include="Migrations\018_BlackoutRangeMonthDayAttributes.cs" />
     <!-- Properties -->
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

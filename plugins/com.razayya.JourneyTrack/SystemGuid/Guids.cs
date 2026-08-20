@@ -41,4 +41,11 @@ namespace com.razayya.JourneyTrack.SystemGuid
     {
         public const string BLACKOUT_SUMMER_SABBATICAL   = "181240EA-C8C6-4E70-AC06-078D29C675AE";
     }
+
+    public static class Attribute
+    {
+        // Pathway Blackout Ranges defined-value attributes (Month Day field type)
+        public const string BLACKOUT_RANGE_START_DATE    = "A57BEF87-B8B1-4E05-B8E2-4F9A7011CB22";
+        public const string BLACKOUT_RANGE_END_DATE      = "F66B9C54-3749-4C34-879C-37644B43D37B";
+    }
 }

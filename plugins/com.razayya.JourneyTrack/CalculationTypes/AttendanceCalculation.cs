@@ -44,7 +44,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         Key = AttributeKey.WithinDays )]
 
     [DefinedTypeField( "Blackout Ranges",
-        Description = "Optional. A defined type whose active values are recurring annual date ranges (MM-dd|MM-dd, both ends inclusive; a start later than its end wraps across year-end). Days inside a range do not consume the Within Days budget, so the window stretches across planned breaks. Attendance during a range still counts. Blank keeps the flat window.",
+        Description = "Optional. A defined type whose active values are recurring annual date ranges, each with Start Date and End Date attributes (month and day; both ends inclusive; a start later than its end wraps across year-end). Days inside a range do not consume the Within Days budget, so the window stretches across planned breaks. Attendance during a range still counts. Blank keeps the flat window.",
         IsRequired = false,
         Order = 3,
         Key = AttributeKey.BlackoutRanges )]
