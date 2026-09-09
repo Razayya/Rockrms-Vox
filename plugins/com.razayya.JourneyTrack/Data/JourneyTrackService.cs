@@ -2331,6 +2331,12 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
         /// Writes the JourneyProgram's CompletionTargetPersonAttribute for every person
         /// in the base population. A person is "complete" when they appear in every
         /// Stage's passer set (AllStagesPass logic).
+        /// <para>
+        /// The target is a Date attribute, so the value written is the date the person
+        /// first completed the program; not complete reads as blank. The stamp is sticky —
+        /// once written it is never overwritten or cleared, so a completion survives a
+        /// later lapse in a rolling criterion and never wobbles to a newer date.
+        /// </para>
         /// </summary>
         private void WriteProgramRollup(
             JourneyProgram program,
@@ -2370,8 +2376,14 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                 existing = ReadExistingAttributeValues( targetAttribute.Id, basePopulation, readContext );
             }
 
-            // Track persons transitioning to complete this run (existing != True, new = True)
-            // so we can queue rollup-level communications after the write.
+            // The rollup target is a Date attribute, like every stage sink in the program,
+            // so completion is recorded as the date it happened rather than a True/False
+            // flag. A Date field type cannot render the literal "True", which is why the
+            // flag spelling read blank on every profile.
+            var completionDate = RockDateTime.Now.ToString( "yyyy-MM-dd" );
+
+            // Track persons transitioning to complete this run (previously blank, stamped
+            // now) so we can queue rollup-level communications after the write.
             var newlyCompletedPersonIds = program.OnCompleteSystemCommunicationId.HasValue
                 ? new HashSet<int>()
                 : null;
@@ -2380,24 +2392,35 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
             var pendingWrites = new List<AttributeWrite>();
             foreach ( var personId in basePopulation )
             {
-                var newValue = completed.Contains( personId ) ? "True" : "False";
+                var isComplete = completed.Contains( personId );
                 existing.TryGetValue( personId, out var oldValue );
-                oldValue = oldValue ?? string.Empty;
-                if ( string.Equals( oldValue, newValue, StringComparison.OrdinalIgnoreCase ) )
+
+                // Sticky. Anyone already carrying a value keeps it, untouched:
+                //  - a stamped date is a historical fact, and must survive a later lapse in
+                //    a rolling criterion (three stages gate on "actively attend a group",
+                //    so people do fall back out of complete);
+                //  - restamping would let the date wobble every time they re-qualify;
+                //  - a legacy "True"/"False" written by the old flag spelling is left alone
+                //    for the data correction to convert, so the deploy cannot overwrite a
+                //    real completion date with today's.
+                if ( !string.IsNullOrWhiteSpace( oldValue ) )
                 {
                     continue;
                 }
-                if ( newlyCompletedPersonIds != null
-                    && newValue.Equals( "True", StringComparison.OrdinalIgnoreCase )
-                    && !oldValue.Equals( "True", StringComparison.OrdinalIgnoreCase ) )
+
+                // Blank and not complete: nothing to record. A Date attribute reads blank
+                // as "has not completed", so there is no negative value to write.
+                if ( !isComplete )
                 {
-                    newlyCompletedPersonIds.Add( personId );
+                    continue;
                 }
+
+                newlyCompletedPersonIds?.Add( personId );
 
                 pendingWrites.Add( new AttributeWrite
                 {
                     PersonId = personId,
-                    NewValue = newValue,
+                    NewValue = completionDate,
                     IsUpdate = existing.ContainsKey( personId )
                 } );
             }
