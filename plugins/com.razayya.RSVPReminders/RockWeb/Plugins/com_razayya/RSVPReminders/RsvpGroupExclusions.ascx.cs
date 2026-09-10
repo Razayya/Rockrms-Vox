@@ -19,7 +19,7 @@ namespace RockWeb.Plugins.com_razayya.RSVPReminders
 {
     [DisplayName( "RSVP Group Exclusions" )]
     [Category( "Razayya > RSVP Reminders" )]
-    [Description( "Lets group leaders skip meeting dates from the Group Toolbox so no meetings — and no RSVP emails, where the group sends them — happen on those dates. On the Group Toolbox it renders as a link to the dedicated Meeting Exclusions page; on that page it renders the full manager. Only shows for groups the current person can manage." )]
+    [Description( "Lets group leaders set their meeting day and time and skip meeting dates from the Group Toolbox, so no meetings — and no RSVP emails, where the group sends them — happen on skipped dates. On the Group Toolbox it renders as a link to the dedicated Manage Group Schedule page; on that page it renders the full manager. Only shows for groups the current person can manage." )]
 
     [Rock.Attribute.GroupTypesField(
         "Group Types",
@@ -190,8 +190,23 @@ namespace RockWeb.Plugins.com_razayya.RSVPReminders
                 pnlExclusions.Visible = true;
 
                 lIntro.Text = _groupSendsRsvpEmails
-                    ? "<p class=\"text-muted\">Skip a date your group won't be meeting and RSVP emails won't go out for it. You can un-skip a date any time before it arrives.</p>"
-                    : "<p class=\"text-muted\">Skip a date your group won't be meeting and it will drop off the group's schedule. You can un-skip a date any time before it arrives.</p>";
+                    ? "<p class=\"text-muted\">Set the day and time your group meets. Skip a date your group won't be meeting and RSVP emails won't go out for it. You can un-skip a date any time before it arrives.</p>"
+                    : "<p class=\"text-muted\">Set the day and time your group meets. Skip a date your group won't be meeting and it will drop off the group's schedule. You can un-skip a date any time before it arrives.</p>";
+
+                var meetingDay = RsvpScheduleService.GetMeetingDay( group.Schedule );
+                pnlMeetingDayEdit.Visible = meetingDay.CanEdit;
+                pnlMeetingDayReadOnly.Visible = !meetingDay.CanEdit;
+                if ( meetingDay.CanEdit )
+                {
+                    dowMeeting.SelectedDayOfWeek = meetingDay.DayOfWeek;
+                    tpMeeting.SelectedTime = meetingDay.TimeOfDay;
+                }
+                else
+                {
+                    lMeetingDaySummary.Text = string.IsNullOrWhiteSpace( meetingDay.Summary )
+                        ? "<em>No meeting pattern is set.</em>"
+                        : "<strong>" + meetingDay.Summary.EncodeHtml() + "</strong>";
+                }
 
                 drpSkipRange.Help = _groupSendsRsvpEmails
                     ? "No RSVP emails will go out for anything scheduled between the two dates (inclusive). Leave the second date blank to skip a single date."
@@ -283,6 +298,48 @@ namespace RockWeb.Plugins.com_razayya.RSVPReminders
             ApplyRangeChange( lower.Value.Date, upper.Value.Date, add: true );
             drpSkipRange.LowerValue = null;
             drpSkipRange.UpperValue = null;
+        }
+
+        /// <summary>
+        /// Saves the meeting day and time (7478), re-checking authorization server-side.
+        /// Weekly-column groups get their columns set; simple weekly iCal groups get
+        /// DTSTART/BYDAY rewritten with EXDATEs preserved and the columns synced. The
+        /// service refuses anything else and nothing is written.
+        /// </summary>
+        protected void lbSaveMeetingDay_Click( object sender, EventArgs e )
+        {
+            var dayOfWeek = dowMeeting.SelectedDayOfWeek;
+            if ( !dayOfWeek.HasValue )
+            {
+                ShowMessage( Rock.Web.UI.Controls.NotificationBoxType.Warning, "Pick the day of the week your group meets." );
+                BindAll();
+                return;
+            }
+
+            using ( var rockContext = new RockContext() )
+            {
+                var group = ResolveAuthorizedGroup( rockContext );
+                if ( group == null )
+                {
+                    pnlLink.Visible = false;
+                    pnlExclusions.Visible = false;
+                    return;
+                }
+
+                if ( RsvpScheduleService.SetMeetingDay( group.Schedule, dayOfWeek.Value, tpMeeting.SelectedTime ) )
+                {
+                    rockContext.SaveChanges();
+                    ShowMessage( Rock.Web.UI.Controls.NotificationBoxType.Success,
+                        string.Format( "Your group now meets {0}.", group.Schedule.ToFriendlyScheduleText() ) );
+                }
+                else
+                {
+                    ShowMessage( Rock.Web.UI.Controls.NotificationBoxType.Warning,
+                        "This group's meeting pattern can't be changed here. Contact staff to change it." );
+                }
+            }
+
+            BindAll();
         }
 
         /// <summary>

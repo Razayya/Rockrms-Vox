@@ -45,6 +45,7 @@
   <ItemGroup>
     <Compile Include="Constants\Constants.cs" />
     <Compile Include="Jobs\AutoRSVPReminders.cs" />
+    <Compile Include="Migrations\007_RenameExclusionsPageToManageSchedule.cs" />
     <Compile Include="Migrations\006_AddExclusionsPage.cs" />
     <Compile Include="Migrations\005_AddRsvpGroupExclusionsBlock.cs" />
     <Compile Include="Migrations\004_AddRsvpInvitationCommunication.cs" />
