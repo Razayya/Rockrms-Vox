@@ -8,7 +8,7 @@
              current person can manage it. --%>
         <asp:Panel ID="pnlLink" runat="server" Visible="false" CssClass="margin-b-md">
             <asp:HyperLink ID="hlManage" runat="server" CssClass="btn btn-default btn-sm">
-                <i class="fa fa-calendar"></i> Manage Schedule
+                <i class="fa fa-calendar"></i> Manage Group Schedule
             </asp:HyperLink>
         </asp:Panel>
 
