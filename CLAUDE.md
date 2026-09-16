@@ -19,6 +19,7 @@ harness gives it an empty memory namespace and does not register these skills).
    | User says… | Read this skill |
    |---|---|
    | "project NNNN" / "review project NNNN" / "work on NNNN" / any Rock Request Id | `rock-project-review/SKILL.md` |
+   | draft / post / reply with a comment on a project — **always**, every comment | `rock-comment/SKILL.md` |
    | create a page / block / attribute | `rock-page-create/SKILL.md` |
    | build / deploy a workflow | `rock-workflow-deploy/SKILL.md` |
    | update Rock to a version | `rock-update/SKILL.md` |
@@ -28,6 +29,10 @@ harness gives it an empty memory namespace and does not register these skills).
 
 - "ticket" / "project" / "request" = a **Rock Request (BBM PM)**, not Jira.
   `project 6535` → Rock Request Id 6535 → use `rock-project-review`.
+- Every project comment is **two deliverables** — a lay-readable plain-text body and a
+  generated `.docx` carrying the technical detail, attached to the same draft. This holds
+  on every thread, including dev-to-dev ones, unless Adam says otherwise in that turn.
+  See `rock-comment/SKILL.md`.
 - `build\rock-source-<instance>-<tag>\` is a thin Rock **source checkout** — read
   it when planning; don't commit Claude artifacts into it.
 - "working dir" means `C:\Users\AdamC\source\repos\claudefiles\rock` (the

@@ -309,7 +309,8 @@ Log time only if Adam explicitly asks in that turn, or invokes `log-time`. If he
 
 ## Closure comment template
 
-When the work is done, draft something the user can paste.
+When the work is done, draft something the user can paste. Voice, vocabulary and the companion
+`.docx` are governed by `rock-comment/SKILL.md` — what follows is the closure-specific shape only.
 
 **Audience first — keep it non-technical but informative.** Project comments are read by ministry staff (HR, kids, admin), not developers. Default to plain language: describe the *symptom*, what *behavior* changed, and what they should *see now*. Skip the implementation detail. The thread is the wrong place to teach Lava, Defined Values, attribute Guids, action configuration, FieldTypes, or any internal Rock plumbing — that belongs in the migration file's header comment or the skill's own notes.
 
@@ -331,11 +332,18 @@ Make exceptions only if the thread is already developer-to-developer (the partic
 
 Match the project thread's existing tone (formal vs. casual) and the requester's voice — if they're conversational, you're conversational; if they're terse, match that.
 
-## Posting comments by email (preferred delivery)
+## Posting the comment — read `rock-comment/SKILL.md`
 
-Drafted comments don't have to be hand-pasted into the UI — the BBM PM plugin posts inbound email as a comment. Validated end-to-end 2026-08-13 (project 7237, Note 380864); full mechanics in `memory/reference_rock_comment_via_email.md`.
+**Every comment is two deliverables: a lay-readable plain-text body, and a generated `.docx`
+carrying the technical write-up, attached to the same draft.** That holds on every thread,
+including dev-to-dev ones. `rock-comment/SKILL.md` (peer folder) owns the body rules, the doc
+generator, the naming, the attachment upload path, and the verification checklist — read it before
+composing anything, don't reconstruct it from here.
 
-- **To:** `project-comment@mg.voxchurch.org`. **Subject:** anything containing the token `(#<projectId>/<personAliasId>)`. Alias `48347` = Razayya Rock Dev Admin, the account Vox comments post under.
-- Attribution comes from the alias token, not the sending mailbox — a **fresh draft** from adam.beard@Razayya.com works; no need to reply to the notification email (those live in the rock@razayya.com shared mailbox, which the ms365 MCP cannot access).
+The essentials, so this section isn't a dead end:
+
+- **"Draft a comment" means build the Outlook draft, not a `.txt`.** The BBM PM plugin posts inbound email as a comment; validated end-to-end 2026-08-13 (project 7237, Note 380864).
+- **To:** `project-comment@mg.voxchurch.org`. **Subject:** anything containing the token `(#<projectId>/48347)`. Alias `48347` = Razayya Rock Dev Admin, the account Vox comments post under; attribution comes from that token, not the sending mailbox.
 - Body is plain text and becomes the Note verbatim; **attachments carry through** as `GetFile.ashx` links in the comment.
-- Flow: draft the comment text (plain .txt as usual) → `create-draft-email` on adam.beard@Razayya.com → `add-mail-attachment` for CSVs etc. → the user reviews and sends from Outlook. Never send it yourself.
+- **Never send it yourself** — show the body in-conversation, the user sends from Outlook.
+- If ms365 isn't connected, say so up front and fall back to a `.txt`; don't silently skip the draft.
