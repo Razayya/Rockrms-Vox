@@ -236,7 +236,15 @@ personal data beyond what the thread already discusses.
 
 **Use an upload session, not `add-mail-attachment`.** A ~40 KB docx is ~53 KB of base64 and gets
 truncated in transit — it fails with `UnableToDeserializePostBody`, or worse, succeeds with a corrupt
-file. The upload path works at any size:
+file.
+
+> `create-mail-attachment-upload-session`'s own description says Graph rejects anything under 3 MB
+> with `ErrorAttachmentSizeShouldNotBeLessThanMinimumSize` and to use `add-mail-attachment` instead.
+> **That does not hold here** — a 40,720-byte docx went through the session path cleanly on
+> 2026-09-16 (201, byte-identical round trip), as a 28 KB xlsx did on 2026-08-18. Use the session
+> path at any size and don't be talked out of it by the tool description.
+
+The upload path, start to finish:
 
 1. `create-mail-attachment-upload-session` with
    `{AttachmentItem: {attachmentType: 'file', name: '<Title>.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: <exact bytes>}}`
