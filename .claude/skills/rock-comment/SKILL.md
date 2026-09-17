@@ -50,22 +50,41 @@ exhaustive; it is not a template for inventing new exemptions.
 ```
 Hi <first name>,                       ("Hi Bru and Everett," when it's both)
 
-<one line naming the shape of the comment>
-  e.g. "Two answers, and one thing still open."
-       "This one is done - one thing to check on your end."
+<status line: what is done, live, or blocked - and who moves next>
 
-<short paragraph per topic, each opening with what the topic is>
+<2-4 bullets: what changed, in outcomes>
 
-<the ask, last, as a direct question>
+<the ask, as a direct question - or "Nothing needed from you.">
 ```
 
 No sign-off — the comment posts under the Vox admin account and the thread shows who wrote it.
 Match the thread's tone: conversational with Bru, terser with Everett.
 
-Target 120–250 words. If it runs longer, the excess is almost always technical — move it to the doc.
+**Target 60–150 words.** The doc carries the detail, so the body has no reason to be long. Every
+sentence must be one of three things: a state change, a deliverable, or an action someone takes. If
+a sentence is none of those, cut it — it is not "context", it is padding the reader has to wade
+through to find their action.
+
+**Cut on sight, now that the attachment exists:**
+
+| Cut | Why |
+|---|---|
+| How we found it, what we ruled out, what we checked | method — doc |
+| Why the fix works | reasoning — doc |
+| Counts beyond the one or two that show the outcome | evidence — doc |
+| Caveats that don't change what anyone does | noise |
+| Restating their question back to them | they know what they asked |
+| "As discussed", "just to confirm", "I wanted to let you know" | filler |
+
+The exception is anything that changes what the reader decides or does — a judgment call they'd
+want to challenge, a correction to something they believe. Those stay in the body, stated in one
+sentence each, with the reasoning in the doc.
 
 ### Voice
 
+- **Lead with the state, not the story.** "This is live and verified" first; never build up to it.
+- **Outcomes, not activity.** "94 people no longer show as having scheduled a baptism" — not
+  "we rewired the writers and re-pointed the step".
 - **Symptom, not mechanism.** What someone would have noticed, not what caused it.
 - **Numbers survive, ids don't.** "84 forms in the last 90 days" is exactly right. "WT 315 fired 84
   times" is not. Counts, dates and durations are plain English; object ids never are.
@@ -94,13 +113,15 @@ Also banned from the body: Lava, Defined Value, FieldType, AttributeValue, Workf
 
 ### Worked example
 
-**Technical draft (wrong for the body):**
+**1. Technical — wrong audience:**
 
 > Calc 86's `Active` AttributeValue is False but that flag is vestigial — `JourneyCalculation.IsActive`
 > is 1 and the run log shows 1,567 updates since 08-17, so the OR on `BaptismInterest` is live. 93
 > people have attr 4936 = True with no BaptismDate and no registration on templates 216/222/283.
 
-**Lay body (right):**
+**2. Lay but wordy — right audience, still wrong.** This is the trap once the doc exists: the
+jargon is gone, so it *feels* finished, but the reader still has to mine four sentences for the one
+fact that changes what they do.
 
 > One correction to what's in the request. I'd said this wasn't switched on yet — it is. The Pathway
 > has been marking Schedule Baptism complete off the Baptism Interest mark since mid-August.
@@ -108,7 +129,15 @@ Also banned from the body: Lava, Defined Value, FieldType, AttributeValue, Workf
 > That matters because the mark means two different things today. 93 people carry it who have never
 > registered for a baptism and have never been baptized — they're reading as having scheduled one.
 
-The ids, the run counts, the filter JSON and the query behind "93" all go in the doc.
+**3. Tight — right:**
+
+> Correction: the Pathway step is live, not switched off as the request says. 93 people are being
+> credited with scheduling a baptism they never booked.
+>
+> Does that change when you want the fix?
+
+The ids, run counts, filter JSON and the query behind "93" go in the doc. The correction and the ask
+stay in the body because both change what he does next.
 
 ### The body has to stand on its own
 
@@ -265,6 +294,9 @@ The upload path, start to finish:
       `$w=New-Object -ComObject Word.Application; $d=$w.Documents.Open($path,$false,$true)`
       (Outlook COM does **not** — `REGDB_E_CLASSNOTREG`.)
 - [ ] Body has no markdown, no em-dashes, no object ids, no jargon from the banned list.
+- [ ] Body is 60–150 words, and every sentence is a state change, a deliverable, or an action.
+      Read it once as the recipient: how far in is the thing you have to do? It should be the
+      first line or the last.
 - [ ] Every question in the comment is answerable without opening the doc.
 - [ ] Every number in the body appears in the doc with the query and date behind it.
 - [ ] Subject token matches the project — a wrong id posts the comment on the wrong request.
