@@ -1,6 +1,6 @@
 ---
 name: bema-pipeline-skill
-description: Use this skill any time you read, modify, debug, or extend a BEMA Pipeline (BlueBoxMoon Pipeline / `_com_bemaservices_BemaPipeline_*`). Triggers on the words "pipeline", "BEMA pipeline", "BBM pipeline", "connection pipeline", "pipeline step", "pipeline action", "ProcessLogic" / "Process Logic", or any reference to per-step Lava that determines whether a pipeline action runs. Pairs with rock-project-review (which routes here when a Rock Request involves pipeline work) and rock-workflow-deploy (for the workflows that pipeline actions launch).
+description: Use this skill any time you read, modify, debug, or extend a BEMA Pipeline (BlueBoxMoon Pipeline / `_com_bemaservices_BemaPipeline_*`). Triggers on the words "pipeline", "BEMA pipeline", "BBM pipeline", "connection pipeline", "pipeline step", "pipeline action", "ProcessLogic" / "Process Logic", or any reference to per-step Lava that determines whether a pipeline action runs. Also covers inserting a step into a pipeline people are already moving through (the in-flight backfill), and the data-driven "one workflow, N pipelines" pattern. Pairs with rock-project-review (which routes here when a Rock Request involves pipeline work) and rock-workflow-deploy (for the workflows that pipeline actions launch).
 ---
 
 # BEMA Pipeline reference
@@ -17,6 +17,8 @@ The BEMA Pipeline plugin (`com.bemaservices.BemaPipeline`) layers a step-wise pi
 
 If a 6188 investigation script already exists for the exact thing you're about to do, **mirror its shape** instead of inventing one — the BGC ProcessLogic fixes and AddCglFailNotificationStep are the most reusable templates.
 
+**For adding a step to pipelines that are already running**, the worked example is project 7749 (onboarding completion stamp, five pipelines, shipped 2026-09-16): `claudefiles/rock/projects/7749/` has six numbered scripts with paired backouts, plus `NOTE-adding-a-future-onboarding-pipeline.md` — the hand-off doc for extending it to a sixth ministry. See "Adding a step to a pipeline that is already running" below.
+
 ## Schema map (`_com_bemaservices_BemaPipeline_*`)
 
 | Table | Purpose | Key columns |
@@ -31,12 +33,23 @@ If a 6188 investigation script already exists for the exact thing you're about t
 
 ### State enum values
 
-**`BemaPipelineActionState`** (best-guess from framework convention; 4=Completed and 6=Skipped verified from data; the rest match the C# enum order):
-`0 Pending · 1 ReadyToProcess · 2 WaitingOnItems · 3 Errored · 4 Completed · 5 Failed · 6 Skipped`
+**`BemaPipelineActionState`** — read from source, `com.bemaservices.BemaPipeline/Model/BemaPipelineAction.cs:205-216`:
+
+| Int | Name |
+|---|---|
+| 0 | Skipped |
+| 1 | ReadyToProcess |
+| 2 | **Completed** |
+| 3 | TimedOut |
+| 4 | **WaitingOnItems** |
+| 5 | ReadyForManualAction |
+| 6 | ActionTypeArchived |
+
+⚠️ **Earlier versions of this skill published a guessed enum** — `0 Pending · 1 ReadyToProcess · 2 WaitingOnItems · 3 Errored · 4 Completed · 5 Failed · 6 Skipped` — which had **Completed and WaitingOnItems transposed**. SQL written against that table silently inverts "done" and "still waiting". The table above is confirmed twice: against the C# source, and against prod — on 2026-09-16 the 7749 stamp steps showed 9 rows at state **2**, every one carrying a `CompletedDateTime`, and 563 rows at state **4**, every one with `CompletedDateTime` null.
 
 **`BemaPipelineState`**: `0 Pending · 1 Active · 2 Completed`
 
-Skipped rows **do** populate `CompletedDateTime` (verified 5011/5011 in the BGC Conversation fix). So a `CompletedDateTime IS NOT NULL` check correctly treats Skipped as "done" for downstream "wait for previous actions" loops.
+Skipped rows **do** populate `CompletedDateTime` (verified 5011/5011 in the BGC Conversation fix). So a `CompletedDateTime IS NOT NULL` check correctly treats Skipped as "done" for downstream "wait for previous actions" loops — and it is the sturdier predicate than a state comparison precisely because it survives getting the enum backwards.
 
 ## Component classes and the per-action AttributeId map (critical)
 
@@ -217,6 +230,41 @@ When you need a new pipeline action that mirrors an existing one (only differing
 5. Verify counts: source vs new should match. `RAISERROR + ROLLBACK` on mismatch. (See `AddCglFailNotificationStep.sql` in 6188 investigations for the canonical 3-step.)
 6. Override only the fields that need to differ (Name, Description, optionally ProcessLogic).
 
+## Adding a step to a pipeline that is already running
+
+Cloning an action type gets you the step *definition*. Dropping one into a pipeline people are already moving through is a different job, and the trap is quiet: **step instance rows are created once, when a pipeline launches.** A new `BemaPipelineActionType` therefore only reaches pipelines that start after it exists. Everyone already in flight walks straight past it — and if the step is a gate, they arrive at the thing it was meant to gate, ungated.
+
+### The four moves
+
+1. **Insert the action type**, shifting the anchor step's `[Order]` and everything after it by +1. Use the insert mechanics from "Cloning a pipeline action" — the component-scoped `AttributeValue` copy in particular — but configure the new step for its own job. You are not cloning the anchor; you are borrowing its position, and in the next move its ProcessLogic.
+2. **Copy the anchor step's ProcessLogic verbatim.** This is what puts the step in the right place in the *sequence* rather than merely in the list: the anchor's logic already waits on every earlier step, and the anchor now waits on yours because yours became one of its earlier steps. The anchor itself is never edited.
+3. **Backfill the in-flight rows** — one `BemaPipelineAction` per open pipeline whose anchor step hasn't completed, at state **4 WaitingOnItems**, with `ActivatedDateTime`, `LastProcessedDateTime` and `CompletedDateTime` all null. Pipelines whose anchor step already completed are past helping by insertion; those people need a data backfill instead. `04-inflight-stamp-actions.sql` in 7749 is the shape.
+4. **Verify the auto-path separately from the backfill.** Pipelines that launch after step 1 create the row themselves — a different code path from your INSERT, and worth its own count. On 7749: 570 backfilled rows, plus 2 self-created within three hours, checked independently.
+
+### Backout order is the reverse, and it bites
+
+Instance rows reference the action type, so **run the instance backout before the action-type backout** — 7749's 03 teardown refuses while 04's rows exist. Paired backouts that are each individually correct still fail when run in file order.
+
+### Decide the anchor before you write anything
+
+**Pipelines that place twice.** Hospitality adds to a First Serve group early (step **64**) and to the campus team later (step **65**). A gate belongs in front of the one it is actually meant to govern; in front of the early add it fires at the start of onboarding and means nothing. Check for this shape rather than assuming the first "Add to..." step is the placement.
+
+**Requirement enforcement on the placement workflow.** If the new step feeds a Group Requirement, the workflow that performs the add must have **Ignore Group Member Requirements = False**, or the add sails straight past the requirement. WF 303 has it False; WF 328 (Hospitality) was True until 2026-09-16. Rock evaluates requirements when the group member is saved, so this governs workflow adds and not just manual ones — which is exactly why the flag is load-bearing.
+
+### One workflow for N pipelines (the 7749 stamp pattern)
+
+Five pipelines needed the same step writing to five *different* person attributes. The wrong shape is five copies of a workflow; the right one is a single workflow that learns which attribute to write at run time.
+
+- The step passes its own pipeline type to the workflow it launches:
+  `ConnectionRequest^{{ ConnectionRequest.Guid }}|PipelineType^{{ ActionType.BemaPipelineType.Guid }}`
+  `ActionType` resolves per step, so **the same Workflow Attributes string is correct on all five steps** — and a cloned step cannot accidentally write another ministry's attribute.
+- A Defined Type carries the pipeline type → person attribute map (DT **244** Onboarding Completion Attributes). A sixth pipeline is then a new person attribute, a new defined value, and a new step — no workflow change at all.
+- **`Set Person Attribute` cannot do this.** Its attribute picker is fixed at design time. Use **Entity Attribute Set**, which takes the attribute key as a run-time value.
+
+Design the failure mode to be visible rather than silent. On 7749 a missing defined-type value yields a blank attribute key → the stamp and verify actions skip on their own `IsNotBlank` criteria → Complete Workflow's `Stamp Verified = True` criteria never passes → the workflow stays open and the step sits pending, holding placement behind it. Nobody is placed ungated, and the stuck step is visible on the pipeline card. It also self-heals: the step keeps a reference to the workflow it launched and re-processes that same workflow on each tick, so adding the missing value finishes it on the next tick with nothing relaunched by hand.
+
+One more thing worth doing at build time: if the step writes a person attribute that gates eligibility, **set its Edit security before it goes live** — allow the admin role, then Deny All Users beneath it. Person attributes otherwise inherit Edit from the Person entity-type default, which is wider than you want for a value a requirement depends on.
+
 ## The Retrigger Pipeline Activity pattern (resend email, re-fire activity)
 
 When a pipeline action launches a workflow that sends an email (Sign MLE, Application form, Background-check intake, etc.), Vox staff frequently need to **re-fire that email** without restarting the whole pipeline — typical reasons: the recipient's email was typo'd and now corrected; they missed a deadline; the original send landed in spam.
@@ -335,9 +383,10 @@ ORDER BY bp.Id DESC;
 
 ## Recurrent debugging recipes
 
-- **"This pipeline is stuck"** — pull `BemaPipelineAction` rows for the BemaPipeline, find the lowest `[Order]` action with `BemaPipelineActionState` not in (4, 6). Look at its ProcessLogic, then at the merge-field values it depends on (StopProcessing, BackgroundCheckResult, etc.). 6188 has `UnstickPipeline4597.sql` / `CleanupStuckPipelines.sql` / `CheckPipelineIsProcessing.sql` as references.
+- **"This pipeline is stuck"** — pull `BemaPipelineAction` rows for the BemaPipeline, find the lowest `[Order]` action that isn't finished. Prefer `CompletedDateTime IS NULL` over a state test; if you do test state, "finished" is `not in (2, 0)` — Completed or Skipped — **not** `(4, 6)`, which is the transposed old enum. Look at its ProcessLogic, then at the merge-field values it depends on (StopProcessing, BackgroundCheckResult, etc.). 6188 has `UnstickPipeline4597.sql` / `CleanupStuckPipelines.sql` / `CheckPipelineIsProcessing.sql` as references.
+- **"The new step works for new people but everyone already in the pipeline skipped it"** — the in-flight backfill was missed, or it was scoped too narrowly. Step rows are created at pipeline launch, so an action type added today exists only on pipelines that launched after it. Count `BemaPipelineAction` rows for the new action type against open pipelines of that type; the gap is the people who will reach the anchor step with nothing holding them.
 - **"This action is firing when it shouldn't"** — dump the ProcessLogic with the actual current values of the merge fields substituted in (run the Lava manually in the Rock Lava tester at `/admin/cms/lava-tester`).
-- **"Action 90 shows 'state 4' for all recent runs but never completed properly"** — `BemaPipelineActionState = 4` is `Completed`. If `CompletedDateTime IS NULL` on those, something fired the state change directly without going through the component (e.g. a `ProcessBemaPipelines` job tick caught a Skipped → Completed handler). Cross-check the linked Workflow status.
+- **"Action 90 sits at 'state 4' for every recent run and never completes"** — state 4 is `WaitingOnItems`, so on its own this is a step doing what it was told: holding. It is not evidence of a fault, and reading it as `Completed` (the old transposed enum) is how this gets misdiagnosed. Go to the step's ProcessLogic and ask what it is waiting *on* — an earlier action with no `CompletedDateTime`, a merge field that never got set (`StopProcessing`, `BackgroundCheckResult`), or a workflow criteria that never passes. A genuinely broken row looks different: state **2** with `CompletedDateTime IS NULL`, meaning something set the state directly instead of going through the component. Cross-check the linked Workflow status there.
 
 ## Related skills and memories
 
@@ -345,6 +394,8 @@ ORDER BY bp.Id DESC;
 - `rock-workflow-deploy` — for the workflows that pipeline actions launch (which is most of them).
 - `memory/feedback_pipeline_docs_one_at_a_time.md` — when authoring the DOCX docs, one pipeline per turn, skip pipelines 2/3/6/8.
 - `memory/reference_qa_pipeline_sql.md` — pointer to 6188's QA scripts.
+- `memory/reference_bema_pipeline_action_state_enum.md` — the source citation behind the corrected state enum above. Worth re-reading if you find SQL anywhere that still tests `state IN (4, 6)` for "done".
+- `memory/project_7749_onboarding_stamp.md` — the onboarding-stamp build: what shipped, what is still unexercised, and who owns the next move.
 
 ## Pipeline-by-pipeline reference (the 6188 audit body)
 
@@ -358,8 +409,11 @@ The 8 active Vox pipelines, their entry mechanisms, action maps, and Vox-specifi
 | WF 449 Background Check (Volunteer Pipeline - MD) | 449 | `5455C7DC-16F9-440F-88DB-3F98FD95DDCD` | MD background-check wrapper used by Kids, Security, CGL. Pre-populates address/birthdate, hands off to Rock's BG workflow. Each caller passes a `Ministry` Guid identifying the placement. |
 | WF 322 Failed Background Check Notification | 322 | `723CF3EE-0B51-4360-8DFB-838089B0213E` | Sends fail email, sets `StopProcessing=Yes`. Used by Kids/Security/CGL. |
 | WF 303 Add Person to Placement Group | 303 | `1470A135-0A47-4354-940A-928DAACF9071` | Adds CR's person to its `AssignedGroup`; falls back to SQL-derived campus-matched placement group. Used by Kids/Security/Hospitality/Prayer/Media. |
+| WF 328 Add to Hospitality Serving Group | 328 | `36079A7A-C8CF-4FF1-9866-E46FA5D5AF99` | Hospitality's *campus team* add (step 65) — the placement a serving requirement gates. Distinct from the earlier First Serve add (step 64), which uses WF 303. Its `IgnoreGroupMemberRequirements` was **True** until 2026-09-16 and is now False; it has to stay False or requirements on those groups do nothing. |
+| WT 530 Stamp Onboarding Completion | 530 | `A69FC573-FA00-4F44-AF7E-4425D05F0A42` | Writes today's date to whichever person attribute DT 244 maps the *calling* pipeline's type to. Launched by the Record Onboarding Completion step on pipelines 4/5/7/11/13 — one workflow for five pipelines, with nothing ministry-specific inside it. See "One workflow for N pipelines". |
 | WF 299 Alternate Recommendation | 299 | `CA0071FA-0A27-467A-A8D2-B01434455A89` | The "Not a good fit for X" off-ramp. Opens recommendation form, transfers CR to a different opp, sets default connector there, sets `StopProcessing=Yes`, inactivates CR. Used by Kids/Security/Hospitality. |
 | GroupRequirementType 1 "Background Check Required" | 1 | — | Points at DataView 6 ("Background check is still valid": age<18 OR `BackgroundChecked=True AND BackgroundCheckDate within 1095 days AND BackgroundCheckResult=Pass`). Drives the BG-required gating across Kids/Security/CGL. |
+| DT 244 Onboarding Completion Attributes | 244 | `E91DF3D2-CF1C-4A8E-9422-BF8FD76328A1` | Pipeline Type → Person Attribute map, read by WT 530 at run time. Five values as of 2026-09-16 (DV 5818–5822 → person attrs 37793–37797). Extending the stamp to a sixth pipeline is a row here, not a workflow change. |
 | ServiceJob 128 Process Bema Pipeline | 128 | — | Generic 10-min ticker (`com.bemaservices.RoomManagement.Jobs.ProcessBemaPipelines`). Re-evaluates every open pipeline's ProcessLogic and advances ready actions. |
 | ServiceJob 257 Process Stuck VoxKids/VoxSecurity Pipelines | 257 | — | Kids+Security-specific 10-min `RunSQL` job that force-marks BG Completed steps as Completed when the wrapper workflow leaves them stuck despite a valid recent pass. Stamps tagged rows with `ForeignKey='AutoFixed by Job'`. Doesn't apply to CGL. |
 | Retrigger Resend WT family — WT 388 Prayer, 469 Media, 366 Hospitality, 214 P&E, 480 CGL MLE, plus 474/493 generic templates | various | various | Re-fire a pipeline action's email-send activity without restarting the workflow. See "Retrigger Pipeline Activity pattern" section below. |
@@ -391,6 +445,7 @@ The 8 active Vox pipelines, their entry mechanisms, action maps, and Vox-specifi
 | Key gating | Actions 2 + 3 use the `ProcessLogicWithRequirement.lava` include against GroupRequirementType 1 (BG Required). Action 4 fires only when `BackgroundCheckResult == 'Fail'`. Other actions skip on `StopProcessing == 'Yes'`. Action 11 inverts: only Ready while any prior action is in progress. |
 | Stop-Processing sources | Action 3 (auto on BG Fail), Action 4 (Fail Notification workflow), Action 11 off-ramp. |
 | Ministry Guid (passed into WF 449) | `d6d026ca-f500-418d-abb3-7e0bbd46a43d` |
+| Onboarding stamp | Step type **106** "Record Onboarding Completion" at order 8, immediately in front of placement step **37** (order 9). Launches WT 530, which writes person attr **37793** `VoxKidsOnboardingComplete`. Added 2026-09-16 (project 7749). |
 | Docs | `04-Kids-Volunteer-Onboarding-Overview.docx`, `-Triggers.docx` |
 
 ### Pipeline 5 — Security Volunteer Onboarding
@@ -404,6 +459,7 @@ The 8 active Vox pipelines, their entry mechanisms, action maps, and Vox-specifi
 | Action Map (11 actions) | 0 Background Check Coming Email (SystemCommunication 80 `12DC2E1B-…`) · 1 Membership Check (WF 475 `554FB694-…`) · 2 Initiate BG Check (WF 449, Ministry Guid `1c588dca-2973-449f-a2f0-e76c9d69b8b6`) · 3 BG Completed (UpdateConnectionRequest — sets `StopProcessing` on Fail, also sets CR State=Active) · 4 BG Fail Notification (WF 322) · 5 After BC Pass — Send Next Steps Email (SystemCommunication 81 `7F458520-…`) · 6 Interview (WF 329 VoxSecurity New Interview, `9EB27576-…`) · 7 E-Forms (WF 320 Security volunteer e-Forms, `1B50DF12-…`, **single signature** — no separate P&P like Kids has) · 8 Placement Group (WF 303) · 9 Sync to PCO (UpdateConnectionRequest, gated by PCO SQL) · 10 Send Completion Communications (WF 321 `2EB5229E-…`, 3 emails: volunteer/team/coordinator) · 11 Not a good fit off-ramp (WF 299) |
 | Key gating | Same Requirement pattern as Kids on actions 0/2/3. Action 1 (Membership) is `Ready if MembershipDate is empty, Skipped if populated`. Action 2 also requires `MembershipDate` populated — i.e., membership precedes BG check. |
 | Stuck-pipeline auto-fix | ServiceJob 257 force-marks Action 3 Completed when wrapper leaves it stuck despite a recent valid pass. |
+| Onboarding stamp | Step type **107** at order 8, immediately in front of placement step **46** (order 9). Writes person attr **37794** `SecurityOnboardingComplete` via WT 530. Added 2026-09-16 (project 7749). |
 | Docs | `05-Security-Volunteer-Onboarding-Overview.docx`, `-Triggers.docx` |
 
 ### Pipeline 7 — Hospitality Volunteer Onboarding
@@ -415,6 +471,7 @@ The 8 active Vox pipelines, their entry mechanisms, action maps, and Vox-specifi
 | Action Map (7 actions) | 1 First Touchpoint (WF "VoxHospitality - FirstTouchPoint") · 2 Add to First Serve Group (WF 303) · 3 Volunteer Logistics Email + E-Form (WF "Vox Hospitality volunteer e-Forms") · 4 Notify Connector after PCO sync (Lava `{% sql %}` against PCO IdentifierMap, then SystemCommunication) · 5 Add to Campus Hospitality Team (WF "Add to Hospitality Serving Group") · 6 Mark as Connected (UpdateConnectionRequest) · 7 Not a good fit off-ramp (WF 299) |
 | Key gating | All non-off-ramp actions skip on `StopProcessing == 'Yes'`. Action 4 holds on PCO sync. Off-ramp (action 7) is inverted: Ready while any prior is incomplete; Skipped when all prior done. No BG check (Hospitality doesn't require one in current config). |
 | Stop-Processing sources | Off-ramp only. |
+| Onboarding stamp | Step type **108** at order 4, in front of step **65** Add to Campus Hospitality Team — **not** the earlier First Serve add (step 64), which happens at the start of onboarding and would make the stamp meaningless. Writes person attr **37795** `HospitalityOnboardingComplete` via WT 530. The only one of the five to have fired as of 2026-09-16 (9 people, 0 mismatches). Its placement workflow WF 328 had `IgnoreGroupMemberRequirements` flipped True → False the same day. |
 | Doc | `07-Hospitality-Volunteer-Onboarding.docx` |
 
 ### Pipeline 10 — Vox Residency
@@ -444,6 +501,7 @@ The 8 active Vox pipelines, their entry mechanisms, action maps, and Vox-specifi
 | Key gating | Action 79 (Membership Check) uses a custom ProcessLogic that does `Skipped` when MembershipDate populated and `ReadyToProcess` when empty. All other actions use canonical wait-on-previous + StopProcessing pattern. |
 | Stop-Processing sources | WF 381 Cancel Request (action 4786), WF 383 Opt Out (action 4778), WF 384 Decline (action 4802). |
 | Follow Up | WF 381's Follow Up branch sets `FutureFollowUp` state but does NOT set StopProcessing — pipeline pauses on Step 1, review reactivates. |
+| Onboarding stamp | Step type **109** at order 5, immediately in front of placement step **82** (order 6). Writes person attr **37796** `PrayerTeamOnboardingComplete` via WT 530. Added 2026-09-16 (project 7749). |
 | Docs | `11-Prayer-Team-Onboarding-Overview.docx`, `-Triggers.docx` |
 
 ### Pipeline 12 — Community Group Leader Onboarding (CGL)
@@ -471,6 +529,7 @@ The 8 active Vox pipelines, their entry mechanisms, action maps, and Vox-specifi
 | Action Map (4 actions, ActionTypeIds 94–97) | 0 Media Team Application (WF 464 `54C9827B-…`, has Opt Out + Alternate Opt Out paths; Opt Out sets `StopProcessing=Yes`) · 1 Application Review (WF 468 `8C413F7D-…`, Decision dropdown: 0=Yes/1=Follow Up/2=No; **none of these set StopProcessing** — see note) · 2 Add to Media Team (WF 303, picks campus-specific Media group from 12 configured on CO 106) · 3 Sync to PCO (UpdateConnectionRequest, **gated** by inline `{% sql %}` against `_9embers_CommonSync_IdentifierMap`) |
 | Key gating | All actions use canonical wait-on-previous + StopProcessing pattern. Action 97 layers SQL check for PCO sync on top. |
 | Stop-Processing sources | **Only WF 464 Opt Out** (action 5638). WF 468's Cancel/Follow Up paths change CR state but do NOT set StopProcessing — meaning a "No" decision on step 1 leaves later actions still attempting to fire. Action 96 may try to add to a placement group; Action 97 will hold indefinitely waiting for PCO sync that won't happen. **This is a known wart** — worth flagging if work in this area surfaces it. |
+| Onboarding stamp | Step type **110** at order 2, immediately in front of placement step **96** (order 3). Writes person attr **37797** `MediaTeamOnboardingComplete` via WT 530. Added 2026-09-16 (project 7749). |
 | Doc | `13-Media-Volunteer-Onboarding-Overview.docx`, `-Triggers.docx` |
 
 ### Pipeline launch mechanisms — summary
