@@ -80,6 +80,22 @@ namespace com.bemaservices.BemaPipeline.BemaPipelineActionTypes
         #endregion Attribute Keys
 
         /// <summary>
+        /// Written onto a launched workflow that a retention timer closed, so the step stays held even if the
+        /// workflow type's max age is later changed, and the pipeline card shows why the step has not moved.
+        /// </summary>
+        private const string RetentionClosedStatus = "Closed at max age - pipeline step held";
+
+        /// <summary>
+        /// Statuses that mean a retention timer closed the workflow. The second is written by the Vox
+        /// "Cancel Stale Workflows Before Cleanup" job, which closes the same instances ahead of Rock Cleanup.
+        /// </summary>
+        private static readonly string[] RetentionClosedStatuses = new[]
+        {
+            RetentionClosedStatus,
+            "Cancelled by Cancel Stale Workflows Before Cleanup (max age)"
+        };
+
+        /// <summary>
         /// Categories for the attributes
         /// </summary>
         protected class AttributeCategories : BaseAttributeCategories
@@ -154,6 +170,18 @@ namespace com.bemaservices.BemaPipeline.BemaPipelineActionTypes
 
             var entityObject = action.BemaPipeline.GetPipelineEntity( rockContext );
 
+            // A workflow that a retention timer closed never finished its work, so it must not complete the step.
+            if ( workflow != null && IsClosedByRetention( workflow, workflowType ) )
+            {
+                if ( !RetentionClosedStatuses.Contains( workflow.Status ) )
+                {
+                    workflow.Status = RetentionClosedStatus;
+                    rockContext.SaveChanges();
+                }
+
+                return false;
+            }
+
             if ( workflow == null )
             {
                 string workflowName = "New " + workflowType.WorkTerm;
@@ -217,7 +245,11 @@ namespace com.bemaservices.BemaPipeline.BemaPipelineActionTypes
 
             }
 
-            workflowService.Process( workflow, entityObject, out errorMessages );
+            // Processing a closed workflow re-runs MarkComplete, which rewrites its completion times to now.
+            if ( !workflow.CompletedDateTime.HasValue )
+            {
+                workflowService.Process( workflow, entityObject, out errorMessages );
+            }
 
             if ( workflow.CompletedDateTime != null && workflow.CompletedDateTime <= RockDateTime.Now )
             {
@@ -461,6 +493,28 @@ namespace com.bemaservices.BemaPipeline.BemaPipelineActionTypes
             }
 
             
+        }
+
+        /// <summary>
+        /// Whether a retention timer closed the workflow rather than its own actions. Rock Cleanup closes an instance
+        /// once it is older than its type's MaxWorkflowAgeDays, and a close ahead of it selects the same instances,
+        /// so a workflow closed at or past that age was closed by the timer.
+        /// </summary>
+        private static bool IsClosedByRetention( Rock.Model.Workflow workflow, WorkflowTypeCache workflowType )
+        {
+            if ( !workflow.CompletedDateTime.HasValue )
+            {
+                return false;
+            }
+
+            if ( RetentionClosedStatuses.Contains( workflow.Status ) )
+            {
+                return true;
+            }
+
+            return workflowType.MaxWorkflowAgeDays.HasValue
+                && workflow.ActivatedDateTime.HasValue
+                && workflow.CompletedDateTime.Value >= workflow.ActivatedDateTime.Value.AddDays( workflowType.MaxWorkflowAgeDays.Value );
         }
 
         #endregion
