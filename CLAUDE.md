@@ -18,6 +18,7 @@ harness gives it an empty memory namespace and does not register these skills).
 
    | User says… | Read this skill |
    |---|---|
+   | "assess my projects" / "what's on my plate" / "board audit" / "what's waiting on me" | `rock-board-audit/SKILL.md` |
    | "project NNNN" / "review project NNNN" / "work on NNNN" / any Rock Request Id | `rock-project-review/SKILL.md` |
    | draft / post / reply with a comment on a project — **always**, every comment | `rock-comment/SKILL.md` |
    | create a page / block / attribute | `rock-page-create/SKILL.md` |

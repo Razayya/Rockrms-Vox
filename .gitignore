@@ -48,6 +48,7 @@ Packages/*
 .claude/*
 !.claude/skills/
 .claude/skills/*
+!.claude/skills/rock-board-audit/
 !.claude/skills/rock-project-review/
 !.claude/skills/rock-comment/
 !.claude/skills/rock-update/
