@@ -115,6 +115,14 @@ namespace com.razayya.JourneyTrack.Jobs
             {
                 Logger.LogError( ex, "JourneyTrack retention sweep failed" );
             }
+
+            // Rock marks a job Exception only when Execute throws; a run that merely collected
+            // errors would otherwise report Success. Rock replaces the status message with the
+            // exception message, so carry the full summary in it.
+            if ( result.Errors.Any() )
+            {
+                throw new System.Exception( $"JourneyTrack finished with {result.Errors.Count} error(s).\n\n{Result}" );
+            }
         }
     }
 }

@@ -1094,8 +1094,32 @@ namespace com.razayya.JourneyTrack.Data
             HashSet<int> workingPopulation,
             RockContext rockContext )
         {
-            var result = new SyncResult();
             var runStart = RockDateTime.Now;
+            try
+            {
+                return ExecuteCalculationCore( calc, workingPopulation, rockContext, runStart );
+            }
+            catch ( Exception ex )
+            {
+                // A calc that throws never reaches the run-record calls in the core, so without
+                // this it leaves no row at all - indistinguishable from a stage the cascade
+                // drained. Record the failure (which also makes it reprocessable), then rethrow
+                // so every caller keeps its existing error handling.
+                var failed = new SyncResult();
+                failed.Errors.Add( $"JourneyCalculation '{calc.Name}' threw: {ex.Message}" );
+                RecordJourneyCalculationRun( calc.Id, runStart, workingPopulation.Count, 0, failed );
+                ExceptionLogService.LogException( ex );
+                throw;
+            }
+        }
+
+        private SyncResult ExecuteCalculationCore(
+            JourneyCalculation calc,
+            HashSet<int> workingPopulation,
+            RockContext rockContext,
+            DateTime runStart )
+        {
+            var result = new SyncResult();
 
             var entityType = EntityTypeCache.Get( calc.CalculationTypeEntityTypeId );
             if ( entityType == null )
