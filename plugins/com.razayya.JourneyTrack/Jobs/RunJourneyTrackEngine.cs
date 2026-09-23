@@ -80,7 +80,11 @@ namespace com.razayya.JourneyTrack.Jobs
                 foreach ( var st in prog.Stages )
                 {
                     var calcs = $"{st.CalcCount} calc{( st.CalcCount == 1 ? "" : "s" )}";
-                    if ( st.Skipped )
+                    if ( st.Failed )
+                    {
+                        sb.AppendLine( $"  {st.Name} ({calcs}): FAILED — held at last known state, {st.Passers:N0} carried forward" );
+                    }
+                    else if ( st.Skipped )
                     {
                         sb.AppendLine( $"  {st.Name} ({calcs}): skipped — nobody reached this stage" );
                     }
@@ -89,7 +93,11 @@ namespace com.razayya.JourneyTrack.Jobs
                         sb.AppendLine( $"  {st.Name} ({calcs}): {st.Passers:N0} of {st.Evaluated:N0} passed · {st.Written:N0} written, {st.Unchanged:N0} unchanged" );
                     }
                 }
-                if ( prog.HasRollup )
+                if ( prog.RollupHeld )
+                {
+                    sb.AppendLine( "  Completion rollup: skipped — a stage failed this run" );
+                }
+                else if ( prog.HasRollup )
                 {
                     sb.AppendLine( $"  Completion rollup ({prog.RollupAttributeName}): {prog.RollupCompleted:N0} of {prog.Enrollees:N0} finished all stages — wrote the flag for {prog.RollupWritten:N0}" );
                 }

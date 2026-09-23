@@ -306,6 +306,7 @@ namespace com.razayya.JourneyTrack.Data
 
                 var subGroupPassers = new Dictionary<int, HashSet<int>>();
                 var erroredStageIds = new HashSet<int>();
+                Dictionary<int, Dictionary<int, bool>> storedState = null;
 
                 foreach ( var subGroup in subGroups )
                 {
@@ -313,17 +314,23 @@ namespace com.razayya.JourneyTrack.Data
                     {
                         var subResult = ProcessSubGroupInternal( subGroup, singlePersonPopulation, subGroupPassers, rockContext );
                         result.Merge( subResult.Result );
-                        subGroupPassers[subGroup.Id] = subResult.Passers;
                         if ( subResult.EvaluationFailed )
                         {
                             erroredStageIds.Add( subGroup.Id );
+                            storedState = storedState ?? LoadStoredStageStatus( group.Id, singlePersonPopulation, rockContext );
+                            subGroupPassers[subGroup.Id] = HeldPassers( subGroup.Id, singlePersonPopulation, storedState );
+                        }
+                        else
+                        {
+                            subGroupPassers[subGroup.Id] = subResult.Passers;
                         }
                     }
                     catch ( Exception ex )
                     {
                         result.Errors.Add( $"SubGroup '{subGroup.Name}': {ex.Message}" );
-                        subGroupPassers[subGroup.Id] = singlePersonPopulation;
                         erroredStageIds.Add( subGroup.Id );
+                        storedState = storedState ?? LoadStoredStageStatus( group.Id, singlePersonPopulation, rockContext );
+                        subGroupPassers[subGroup.Id] = HeldPassers( subGroup.Id, singlePersonPopulation, storedState );
                     }
                 }
 
@@ -336,7 +343,12 @@ namespace com.razayya.JourneyTrack.Data
                 // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries).
                 // Only safe when every Stage has been evaluated — a partial stagePassers map would
                 // make the AllStagesPass intersection report false completions.
-                if ( maxStageOrder == int.MaxValue )
+                if ( erroredStageIds.Any() )
+                {
+                    // The rollup stamp is sticky; never write it off a run with a held stage.
+                    result.Log.Add( $"  (program rollup skipped — a stage failed this run)" );
+                }
+                else if ( maxStageOrder == int.MaxValue )
                 {
                     WriteProgramRollup( group, singlePersonPopulation, subGroupPassers, result, rockContext );
                 }
@@ -384,6 +396,7 @@ namespace com.razayya.JourneyTrack.Data
 
                 var subGroupPassers = new Dictionary<int, HashSet<int>>();
                 var erroredStageIds = new HashSet<int>();
+                Dictionary<int, Dictionary<int, bool>> storedState = null;
                 var progSummary = new ProgramRunSummary { ProgramName = group.Name, Enrollees = basePopulation.Count };
 
                 int stageIndex = 0;
@@ -394,26 +407,46 @@ namespace com.razayya.JourneyTrack.Data
                     {
                         var subResult = ProcessSubGroupInternal( subGroup, basePopulation, subGroupPassers, rockContext, stageIndex, subGroups.Count );
                         result.Merge( subResult.Result );
-                        subGroupPassers[subGroup.Id] = subResult.Passers;
                         if ( subResult.EvaluationFailed )
                         {
                             erroredStageIds.Add( subGroup.Id );
+                            storedState = storedState ?? LoadStoredStageStatus( group.Id, basePopulation, rockContext );
+                            subGroupPassers[subGroup.Id] = HeldPassers( subGroup.Id, basePopulation, storedState );
+                        }
+                        else
+                        {
+                            subGroupPassers[subGroup.Id] = subResult.Passers;
                         }
                         if ( subResult.Summary != null )
                         {
+                            if ( subResult.EvaluationFailed )
+                            {
+                                subResult.Summary.Passers = subGroupPassers[subGroup.Id].Count;
+                            }
                             progSummary.Stages.Add( subResult.Summary );
                         }
                     }
                     catch ( Exception ex )
                     {
                         result.Errors.Add( $"SubGroup '{subGroup.Name}': {ex.Message}" );
-                        subGroupPassers[subGroup.Id] = basePopulation;
                         erroredStageIds.Add( subGroup.Id );
+                        storedState = storedState ?? LoadStoredStageStatus( group.Id, basePopulation, rockContext );
+                        subGroupPassers[subGroup.Id] = HeldPassers( subGroup.Id, basePopulation, storedState );
+                        progSummary.Stages.Add( new StageRunSummary { Order = subGroup.Order, Name = subGroup.Name, Failed = true, Passers = subGroupPassers[subGroup.Id].Count } );
                     }
                 }
 
-                // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries)
-                WriteProgramRollup( group, basePopulation, subGroupPassers, result, rockContext, progSummary );
+                // Top-level rollup (Optimization O10: in-memory from stagePassers, zero extra queries).
+                // The stamp is sticky, so a run with a held stage must not write it.
+                if ( erroredStageIds.Any() )
+                {
+                    result.Log.Add( $"Program '{group.Name}': rollup skipped — a stage failed this run" );
+                    progSummary.RollupHeld = true;
+                }
+                else
+                {
+                    WriteProgramRollup( group, basePopulation, subGroupPassers, result, rockContext, progSummary );
+                }
 
                 // Persist per-stage state for the whole population so render-path reads
                 // (personjourneyprogress) stay a single-row lookup for every enrollee.
@@ -768,7 +801,8 @@ namespace com.razayya.JourneyTrack.Data
                         {
                             Result = result,
                             Passers = basePopulation,
-                            EvaluationFailed = true
+                            EvaluationFailed = true,
+                            Summary = new StageRunSummary { Order = subGroup.Order, Name = subGroup.Name, Failed = true }
                         };
                     }
                 }
@@ -815,6 +849,7 @@ namespace com.razayya.JourneyTrack.Data
             StageEvalContext.Current = BuildStageEvalContext( calculations, workingPopulation, rockContext, result );
 
             int calcIndex = 0;
+            bool calcFailed = false;
             try
             {
                 foreach ( var calc in calculations )
@@ -842,12 +877,37 @@ namespace com.razayya.JourneyTrack.Data
                     catch ( Exception ex )
                     {
                         result.Errors.Add( $"JourneyCalculation '{calc.Name}': {ex.Message}" );
+                        calcFailed = true;
                     }
                 }
             }
             finally
             {
                 StageEvalContext.Current = null;
+            }
+
+            // A crashed calc drops out of the gate below, which would make the stage easier
+            // to pass. Fail the stage instead: callers hold it at its last stored state,
+            // keep that state unwritten, and skip the sticky rollup. No stage communication.
+            if ( calcFailed )
+            {
+                result.Log.Add( $"    Stage '{subGroup.Name}': a calculation failed — stage held at last known state" );
+                return new SubGroupProcessResult
+                {
+                    Result = result,
+                    Passers = workingPopulation,
+                    EvaluationFailed = true,
+                    Summary = new StageRunSummary
+                    {
+                        Order = subGroup.Order,
+                        Name = subGroup.Name,
+                        CalcCount = calculations.Count,
+                        Evaluated = workingPopulation.Count,
+                        Written = result.Updated,
+                        Unchanged = result.Skipped,
+                        Failed = true
+                    }
+                };
             }
 
             HashSet<int> finalPassers;
@@ -2057,6 +2117,7 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                 // persist what was computed so the next render takes the fast path.
                 var stagePassers = new Dictionary<int, HashSet<int>>();
                 var erroredStageIds = new HashSet<int>();
+                Dictionary<int, Dictionary<int, bool>> heldState = null;
                 bool sawIncomplete = false;
 
                 foreach ( var stage in stages )
@@ -2066,12 +2127,17 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                     try
                     {
                         var subResult = ProcessSubGroupInternal( stage, population, stagePassers, rockContext );
-                        stagePassers[stage.Id] = subResult.Passers;
-                        stageEntry.Passed = subResult.Passers.Contains( personId );
                         if ( subResult.EvaluationFailed )
                         {
                             erroredStageIds.Add( stage.Id );
+                            heldState = heldState ?? LoadStoredStageStatus( program.Id, population, rockContext );
+                            stagePassers[stage.Id] = HeldPassers( stage.Id, population, heldState );
                         }
+                        else
+                        {
+                            stagePassers[stage.Id] = subResult.Passers;
+                        }
+                        stageEntry.Passed = stagePassers[stage.Id].Contains( personId );
 
                         // Per-calc truth, free: the stage already computed these sets to
                         // feed its logic tree. Only record calcs that actually ran — a
@@ -2088,10 +2154,11 @@ WHERE NOT EXISTS ( SELECT 1 FROM [AttributeValue] av WHERE av.[AttributeId] = @p
                     }
                     catch ( Exception ex )
                     {
-                        stageEntry.Passed = false;
                         stageEntry.ErrorMessage = ex.Message;
-                        stagePassers[stage.Id] = population;
                         erroredStageIds.Add( stage.Id );
+                        heldState = heldState ?? LoadStoredStageStatus( program.Id, population, rockContext );
+                        stagePassers[stage.Id] = HeldPassers( stage.Id, population, heldState );
+                        stageEntry.Passed = stagePassers[stage.Id].Contains( personId );
                     }
 
                     if ( !stageEntry.Passed && !sawIncomplete )
@@ -2621,6 +2688,43 @@ INNER JOIN ( VALUES {values} ) AS v ([Id], [Json]) ON v.[Id] = e.[Id]";
         }
 
         /// <summary>Parses a StageStatusJson map, returning an empty map for null/invalid input.</summary>
+        /// <summary>
+        /// Stored stage state (StageStatusJson) per person for a program, one row per person
+        /// (lowest active row Id wins, as in WriteEnrollmentStageStatusBulk). Loaded only when
+        /// a stage fails, so the happy path pays nothing.
+        /// </summary>
+        private static Dictionary<int, Dictionary<int, bool>> LoadStoredStageStatus( int programId, HashSet<int> population, RockContext rockContext )
+        {
+            int? singlePersonId = population.Count == 1 ? population.First() : ( int? ) null;
+            return new JourneyProgramEnrollmentService( rockContext ).Queryable().AsNoTracking()
+                .Where( e => e.JourneyProgramId == programId && e.IsActive
+                    && ( singlePersonId == null || e.PersonAlias.PersonId == singlePersonId ) )
+                .Select( e => new { e.Id, e.PersonAlias.PersonId, e.StageStatusJson } )
+                .ToList()
+                .Where( r => population.Contains( r.PersonId ) )
+                .GroupBy( r => r.PersonId )
+                .ToDictionary( g => g.Key, g => ParseStageStatus( g.OrderBy( r => r.Id ).First().StageStatusJson ) );
+        }
+
+        /// <summary>
+        /// Passers for a stage that failed this run: the people whose stored state says they
+        /// passed it. Later stages gate on this rather than on the failed evaluation, so a
+        /// failure freezes the Pathway at its last known state instead of loosening it.
+        /// </summary>
+        private static HashSet<int> HeldPassers( int stageId, HashSet<int> population, Dictionary<int, Dictionary<int, bool>> storedState )
+        {
+            var held = new HashSet<int>();
+            foreach ( var personId in population )
+            {
+                if ( storedState.TryGetValue( personId, out var state )
+                    && state.TryGetValue( stageId, out var passed ) && passed )
+                {
+                    held.Add( personId );
+                }
+            }
+            return held;
+        }
+
         private static Dictionary<int, bool> ParseStageStatus( string json )
         {
             if ( string.IsNullOrWhiteSpace( json ) )
@@ -2710,6 +2814,7 @@ INNER JOIN ( VALUES {values} ) AS v ([Id], [Json]) ON v.[Id] = e.[Id]";
         public string RollupAttributeName { get; set; }
         public int RollupCompleted { get; set; }   // people who passed every stage
         public int RollupWritten { get; set; }      // rollup attribute values written this run
+        public bool RollupHeld { get; set; }        // rollup skipped because a stage failed
     }
 
     /// <summary>
@@ -2726,6 +2831,7 @@ INNER JOIN ( VALUES {values} ) AS v ([Id], [Json]) ON v.[Id] = e.[Id]";
         public int Written { get; set; }     // attribute values written by this stage's calcs
         public int Unchanged { get; set; }   // people this stage's calcs left unchanged
         public bool Skipped { get; set; }    // stage skipped because nobody reached it
+        public bool Failed { get; set; }     // stage failed; held at its last stored state
     }
 
     /// <summary>
