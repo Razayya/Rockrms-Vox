@@ -275,6 +275,25 @@ Common attribute settings:
 | `UpdatePage`, `StoredProcedure`, `PaneledGrid` | `False` | Standard for filtered dashboards |
 | `ShowExcelExport`, `ShowMergeTemplate`, `ShowCommunicate` | `False` | Toolbar buttons usually irrelevant when using FormattedOutput |
 
+### Obsidian Dynamic Data (BlockType 1090) - what Vox mostly uses
+
+The table above is the legacy WebForms block (143). **131 Vox blocks use the Obsidian one, BlockType 1090**
+(`Rock.Blocks.Reporting.DynamicData`, source `Rock.Blocks/Reporting/DynamicData.cs`) - check the sibling
+blocks on the page before choosing. Its settings differ:
+
+| Key | Value | Notes |
+|---|---|---|
+| `ResultsDisplayMode` | `grid` or `lavaTemplate` | replaces "FormattedOutput suppresses the grid" |
+| `ColumnConfigurations` | JSON array, one object per result column | `ColumnType` `person` / `text` / `date` / `number`; `HideFromGrid`, `ExcludeFromExport`, `EnableFiltering`; `VisiblePriority` `xs` |
+| `PersonReport` | `True` | only works if a column has `ColumnType: "person"` - its value is the Person Id; that column is the communication key |
+| `ShowCommunicate` / `ShowExcelExport` / `ShowMergePerson` / `ShowBulkUpdate` / `ShowLaunchWorkflow` / `ShowMergeTemplate` | booleans | all default True - turn off what the ask doesn't need (Merge Person merges records) |
+| `UrlMask` | `~/Person/{Person}` | `{Column}` resolves to the column's value; for a person column, to its Id |
+| `PanelTitle`, `GridHeaderContent` | text / Lava | grid title and intro |
+
+The column header is the result column name split at capitals (`PersonId` -> "Person Id"), so name the SQL
+columns for display. Working precedents: block 6020 on page 2451 (Welcome Card report), block 6633 on page 1632
+(7411 Baptism Interest List, generator `claudefiles/rock/projects/7411/36-make-baptism-list.py`).
+
 ### Lava merge-field guard pattern in the SQL body
 
 ```sql
