@@ -54,8 +54,11 @@ Hi <first name>,                       ("Hi Bru and Everett," when it's both)
 
 <2-4 bullets: what changed, in outcomes>
 
-<the ask, as a direct question - or "Nothing needed from you.">
+<the ask, as a direct question - or nothing at all>
 ```
+
+**No "Nothing needed from you." sign-off.** When there is no question, end on the last finding. No ask
+already means no action; stating it on every comment is repetitive (Adam, 2026-09-28).
 
 No sign-off — the comment posts under the Vox admin account and the thread shows who wrote it.
 Match the thread's tone: conversational with Bru, terser with Everett.
