@@ -36,7 +36,13 @@ do exist (25573, 30919, 30501, 35519) belong to other project types.
 
 **No Work Order is not "low priority."** It means the project sits outside Everett's ranking. An
 unranked project can be the most urgent thing on the board - 7303 was due in three days with no
-Work Order. Report the two groups separately and never merge them into one ranked list.
+Work Order. Report the two groups separately in the tables - the ordering across both happens in
+the Work queue (below), not by pretending the unranked rows have a rank.
+
+**Children inherit their parent's Work Order.** A child with no Work Order of its own takes its
+parent's (`EffWO` in query 1) and sits in the prioritized table with "(via <parent>)". The 7260
+Next Steps children carry no Work Order themselves while 7260 is WO 1 - reporting them as
+unranked buried the top-priority work on the board.
 
 See `memory/reference_rock_request_work_order.md`.
 
@@ -66,6 +72,7 @@ lastnote AS (
 )
 SELECT
   ISNULL(av.Value,'-')                         AS WorkOrder,
+  ISNULL(av.Value, ISNULL(pav.Value,'-'))      AS EffWO,
   m.Id,
   LEFT(m.Name,60)                              AS Name,
   m.State,
@@ -80,11 +87,12 @@ SELECT
   ISNULL(m.ParentProjectId,0)                  AS Parent
 FROM mine m
 LEFT JOIN AttributeValue av ON av.AttributeId = 28481 AND av.EntityId = m.Id AND av.Value <> ''
+LEFT JOIN AttributeValue pav ON pav.AttributeId = 28481 AND pav.EntityId = m.ParentProjectId AND pav.Value <> ''
 LEFT JOIN lastnote ln ON ln.ProjectId = m.Id AND ln.rn = 1
 LEFT JOIN PersonAlias lpa ON ln.CreatedByPersonAliasId = lpa.Id
 LEFT JOIN Person pp ON lpa.PersonId = pp.Id
-ORDER BY CASE WHEN TRY_CAST(av.Value AS int) IS NULL THEN 1 ELSE 0 END,
-         TRY_CAST(av.Value AS int), ln.CreatedDateTime DESC;
+ORDER BY CASE WHEN TRY_CAST(ISNULL(av.Value, pav.Value) AS int) IS NULL THEN 1 ELSE 0 END,
+         TRY_CAST(ISNULL(av.Value, pav.Value) AS int), m.DueDate, ln.CreatedDateTime DESC;
 ```
 
 `OpenKids > 0` marks an umbrella project; `Parent <> 0` marks a child. Both go in the table with
@@ -203,8 +211,31 @@ Two tables, prioritized first, then unprioritized. Same columns on both:
 - **Waiting on you** is Yes / No / Partly / Split, then the specific owed item, or the named
   person and how long they have had it.
 - Bold dates that fall inside a week or have already passed.
-- Order the prioritized table by Work Order ascending. Order the unprioritized table by how live
-  the work is - commitments due first, then active threads, then unstarted, then parked.
+- Order the prioritized table by effective Work Order ascending (inherited ranks included), then
+  DueDate. Order the unprioritized table by nearest date, then by how long the ask has waited.
+
+### The Work queue - the answer to "what next?"
+
+After the two tables, give **one numbered queue** of every row whose waiting-on call is Yes,
+Partly or Split. The tables show state; the queue is the order to work in. Build it by these rules,
+in this order:
+
+1. **Overdue or due today first.** A passed `DueDate`, or a date committed in the thread (a
+   promised go-live, "by Wednesday") that has passed or is today.
+2. **Then effective Work Order ascending.** Children inherit their parent's rank. Ties break on
+   `DueDate`, then on the oldest unanswered ask.
+3. **Then unranked rows**, nearest date first (DueDate or a thread-committed date), then the age of
+   the unanswered ask. Unstarted briefs with no date go last, oldest first.
+4. **Fixed-time events are not queue positions.** A meeting at 2 PM today goes above the queue as
+   "at a fixed time" - it happens then regardless of rank.
+5. **Rows not waiting on Adam stay out of the queue.** They are in the tables for reference.
+
+Columns: `# | Id | Why here | Next action`. "Why here" names the rule that placed it (`WO 1 (via
+7260), due 09-27, overdue`). Only 9 of 31 projects carried a DueDate on the 2026-09-28 sweep - most
+dates come from the thread, so read them out of query 2.
+
+If small dated unranked items could reasonably jump ahead of large ranked ones, say so in one line
+under the queue; do not reorder on your own.
 
 **Close with a short recommendation**, two to four sentences: the commitment that is due, the
 largest block of silence, and the finished work still counted as open. Lead with the
@@ -212,11 +243,12 @@ recommendation, do not bury it. Never attach hour estimates - describe scope rel
 `memory/feedback_project_assessment_lead_with_recommendation.md` and
 `memory/feedback_time_estimates_overestimate.md`.
 
-## After the table - stop
+## After the queue - stop
 
-Present both tables and the recommendation, then **stop**. Do not start investigating a row, do
-not draft a comment, do not open a project folder. The user picks what to take next; hand that one
-to `rock-project-review/SKILL.md`.
+Present both tables, the Work queue and the recommendation, then **stop**. Do not start
+investigating a row, do not draft a comment, do not open a project folder. The default next pick is
+queue item 1; when the user says "go" / "pick up the top one", hand that one to
+`rock-project-review/SKILL.md`.
 
 When the user picks one, re-present the remaining list afterwards rather than auto-advancing. See
 `memory/feedback_check_in_after_assess.md` and `memory/feedback_subprojects_one_at_a_time.md`.
