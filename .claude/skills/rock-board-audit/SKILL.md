@@ -177,7 +177,8 @@ Judgement, not a formula. In rough order of reliability:
 | Adam's own last comment, no question either way | **Read it** - his comments carry self-directed action notes |
 | PENDING note says built / staged / dry-run, not committed | **Yes** |
 | PENDING note says comment DRAFTED, not sent | **Yes** |
-| Work shipped, closure comment posted, project still open | **Yes - ready to close** |
+| Work shipped, closure comment posted, client has not confirmed | **No - waiting on the client's OK** (name them, count the days) |
+| Work shipped and the client confirmed they're happy, project still open | **No - Everett's to complete** (flag it; Adam may nudge) |
 | Only comment(s) are Everett's brief, no reply from Adam | **Yes** - state the days of silence |
 | Umbrella with open children | **No** - it closes when the children do |
 | Everett or Roza's build, Adam co-assigned | **No** - say whose lane it is |
@@ -291,9 +292,11 @@ the only brief that will ever exist. Read it.
 MCP-driven. Read them as briefs rather than as conversation, and expect them to be long,
 structured, and to contain their own corrections. See `memory/project_everett_mcp_changes.md`.
 
-**4. Shipped is not closed.** Projects routinely sit Active for weeks after the work landed and
-the closure comment posted, waiting only on a snapshot table drop or a stakeholder confirmation.
-These are the cheapest wins on the board - surface them as a group.
+**4. Shipped is not closed - and closing is not ours.** A project stays open until the client
+confirms they are happy with it, and Everett usually clicks Complete, not Adam. Never recommend
+Adam complete a project, and never call shipped work "ready to close" before the client's OK. Surface
+shipped work as a group by what it waits on: our leftover tidy-up (a snapshot table drop - that part
+is Adam's), the client's confirmation (name them and the days), or Everett's click once confirmed.
 
 **5. Note times are Eastern, `GETDATE()` is UTC.** Do not compute "days since last comment" by
 subtracting `GETDATE()` from `Note.CreatedDateTime`. Use a date boundary, or compare against
