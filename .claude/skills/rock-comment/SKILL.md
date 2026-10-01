@@ -68,6 +68,13 @@ sentence must be one of three things: a state change, a deliverable, or an actio
 a sentence is none of those, cut it — it is not "context", it is padding the reader has to wade
 through to find their action.
 
+**Brevity never outranks being understood.** The word target is a default, not a cap. Cut padding,
+never meaning: each answer must say *what* happened and *why it matters* in words the reader can
+follow without the doc. "Yes, same cause", "that double start-up", "the replacement hits the same
+timer" are too compressed — they only make sense to someone who already read the investigation.
+When answering a numbered list of questions, give each answer its own complete sentence or two,
+even if the body runs past 150 words (Adam, 2026-09-29, 7907).
+
 **Cut on sight, now that the attachment exists:**
 
 | Cut | Why |
@@ -297,7 +304,9 @@ The upload path, start to finish:
       `$w=New-Object -ComObject Word.Application; $d=$w.Documents.Open($path,$false,$true)`
       (Outlook COM does **not** — `REGDB_E_CLASSNOTREG`.)
 - [ ] Body has no markdown, no em-dashes, no object ids, no jargon from the banned list.
-- [ ] Body is 60–150 words, and every sentence is a state change, a deliverable, or an action.
+- [ ] Body is around 60–150 words (longer when several questions each need a real answer), and every
+      sentence is a state change, a deliverable, or an action. Read each answer cold: would the
+      reader know what you mean without the doc? If not, add the missing clause.
       Read it once as the recipient: how far in is the thing you have to do? It should be the
       first line or the last.
 - [ ] Every question in the comment is answerable without opening the doc.
@@ -320,12 +329,13 @@ silent fallback (`memory/feedback_surface_ms365_outage_immediately.md`).
 
 **1. An Outlook draft updated after Adam opened it resends the old copy.** If you revise a draft that
 has already been opened in the Outlook client, the client can hold and send the stale version. When a
-draft changes materially, say so explicitly and confirm the posted Note afterwards
+draft changes materially, say so explicitly before he sends it
 (`memory/reference_outlook_draft_update_stale.md`).
 
-**2. A drafted comment is not a posted comment.** Don't record a thread as answered, or write
-"replied" into a PENDING note, until the Note exists on the project. Verify with the Note query in
-`rock-project-review`.
+**2. A drafted comment is not a posted comment - but "sent" is.** Don't record a thread as answered
+until Adam says he sent it. Once he does, that closes it: mark the PENDING note "sent (Adam)" and move
+on. Don't query prod for the Note, and don't offer or promise to check it - a failed ingest errors on
+his side, so he'll know (`memory/feedback_trust_sent_no_note_verify.md`).
 
 **3. The doc is not cover for a vague body.** Moving an uncomfortable detail into the attachment so
 the body reads cleaner is the failure mode this skill exists to prevent. If it changes what the
