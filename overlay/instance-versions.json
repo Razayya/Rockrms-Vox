@@ -16,6 +16,14 @@
                                   "clone_dir":  "build/rock-source-dev-18.3.5",
                                   "pinned_at":  "2026-08-05",
                                   "pinned_by":  "user-supplied"
-                              }
+                              },
+                      "v19-preview":  {
+                                          "friendly_version":  "Rock McKinley 19.6",
+                                          "file_version":  "19.6.0",
+                                          "tag":  "19.6.0-alpha",
+                                          "clone_dir":  "build/rock-source-v19-preview-19.6.0-alpha",
+                                          "pinned_at":  "2026-10-12",
+                                          "pinned_by":  "user-supplied"
+                                      }
                   }
 }
