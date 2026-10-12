@@ -157,10 +157,14 @@ FROM _com_blueboxmoon_ProjectManagement_Project WHERE Id IN (<ids>);
 
 ### 4. Prior-session notes
 
-Glob `claudefiles/rock/projects/<id>/PENDING_*.md` for every Id on the board and read the head of
-each. These are the highest-fidelity status source on the sweep - they record what is committed
-versus staged, what is drafted versus sent, and what decision is outstanding. A PENDING note
-regularly contradicts what the comment thread implies, and the note wins.
+Glob `claudefiles/rock/projects/<id>/PENDING_*.md` for every Id on the board and read the **tail** of
+each (`tail -40`), not just the head. The notes are append-only logs: the title and first paragraph
+go stale and the newest dated section at the bottom is the current state. 8008's head said "caller NOT
+identified (needs the IIS log)" while its tail recorded the caller traced and a decision pending - the
+2026-10-12 sweep reported it as blocked from the head. These are the highest-fidelity status source on
+the sweep - they record what is committed versus staged, what is drafted versus sent, and what
+decision is outstanding. A PENDING note regularly contradicts what the comment thread implies, and the
+note's latest entry wins; a "drafted, not sent" line is superseded by the thread once the Note is there.
 
 Watch for `> **CORRECTED <date>**` blocks at the top - a note whose title says "nothing shipped"
 may have been corrected in place. Read the correction before the body.
