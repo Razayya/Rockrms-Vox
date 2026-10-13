@@ -161,13 +161,66 @@ Glob `claudefiles/rock/projects/<id>/PENDING_*.md` for every Id on the board and
 each (`tail -40`), not just the head. The notes are append-only logs: the title and first paragraph
 go stale and the newest dated section at the bottom is the current state. 8008's head said "caller NOT
 identified (needs the IIS log)" while its tail recorded the caller traced and a decision pending - the
-2026-10-12 sweep reported it as blocked from the head. These are the highest-fidelity status source on
-the sweep - they record what is committed versus staged, what is drafted versus sent, and what
-decision is outstanding. A PENDING note regularly contradicts what the comment thread implies, and the
-note's latest entry wins; a "drafted, not sent" line is superseded by the thread once the Note is there.
+2026-10-12 sweep reported it as blocked from the head. They record what is committed versus staged and what decision is outstanding - things the thread
+never shows. **They do not outrank the live ticket.** A note is true as of its last dated entry; any
+live activity after that date reopens the call (step 5). A "drafted, not sent" line is superseded the
+moment the Note is on the thread.
 
 Watch for `> **CORRECTED <date>**` blocks at the top - a note whose title says "nothing shipped"
 may have been corrected in place. Read the correction before the body.
+
+### 5. Reassess every row against live state
+
+Local context - PENDING notes, project memories, prior sweeps, and this skill's own "No" rules - goes
+stale the moment the ticket moves. Run this pass after the waiting-on calls are drafted and before
+the tables go out:
+
+```sql
+SET NOCOUNT ON;
+WITH mine AS ( /* same mine CTE as query 1, Id + ParentProjectId */ ),
+hn AS (  -- human comments only
+  SELECT n.EntityId Pid, n.CreatedDateTime Dt, al.PersonId, LEN(CAST(n.Text AS nvarchar(max))) L
+  FROM Note n JOIN NoteType nt ON n.NoteTypeId = nt.Id
+  LEFT JOIN PersonAlias al ON n.CreatedByPersonAliasId = al.Id
+  WHERE nt.EntityTypeId = 963
+    AND CAST(n.Text AS nvarchar(max)) NOT LIKE '%pm-comment-reference-task%'
+    AND CAST(n.Text AS nvarchar(max)) NOT IN ('cancelled project','re-opened project')),
+st AS (  -- project state changes, which the human filter drops
+  SELECT n.EntityId Pid, MAX(n.CreatedDateTime) Dt FROM Note n JOIN NoteType nt ON n.NoteTypeId = nt.Id
+  WHERE nt.EntityTypeId = 963 AND CAST(n.Text AS nvarchar(max)) IN ('cancelled project','re-opened project')
+  GROUP BY n.EntityId)
+SELECT m.Id,
+  (SELECT CONVERT(varchar(10),MAX(Dt),120) FROM hn WHERE hn.Pid = m.Id AND hn.PersonId = 48259) AdamLast,
+  (SELECT CONVERT(varchar(10),MAX(Dt),120) FROM hn WHERE hn.Pid = m.Id AND ISNULL(hn.PersonId,0) <> 48259) OtherLast,
+  (SELECT MAX(L) FROM hn WHERE hn.Pid = m.Id AND ISNULL(hn.PersonId,0) <> 48259
+     AND hn.Dt > ISNULL((SELECT MAX(Dt) FROM hn h2 WHERE h2.Pid = m.Id AND h2.PersonId = 48259),'1900-01-01')) LongestUnanswered,
+  (SELECT CONVERT(varchar(10),Dt,120) FROM st WHERE st.Pid = m.Id) StateChange,
+  (SELECT CONVERT(varchar(10),MAX(t.ModifiedDateTime),120) FROM _com_blueboxmoon_ProjectManagement_Task t
+    WHERE t.ProjectId = m.Id) TaskTouched
+FROM mine m ORDER BY m.Id;
+```
+
+Then check each row against four tests. Any hit means **re-derive the call from the live thread**, not
+from the note or the rule that produced it:
+
+1. **Note older than the thread.** The PENDING note's last dated entry predates `OtherLast`,
+   `AdamLast`, `StateChange` or `TaskTouched`. The thread wins. Say "note stale since <date>" in the
+   row so the note gets a fresh entry next time the project is opened. (2026-10-13: 7469 and 8008
+   notes both still said "comment drafted, NOT sent" - both comments were posted and answered.)
+2. **Substantive post, never answered by Adam.** `LongestUnanswered` over ~1,000 characters means
+   someone delivered a brief, report or finding set after Adam's last word. That is a **Yes** -
+   a read and response is owed - even when every task sits on Everett and no question is addressed
+   to Adam. For the 7511 audit tree this is an independent review
+   (`memory/feedback_everett_review_asks_are_independent_reviews.md`). (7553: WO 3, Everett's
+   5,262-character audit report of 09-28, no reply from Adam, called "Everett's lane" on every sweep.)
+3. **State change with no comment.** A `StateChange` (cancelled, re-opened) or a newly added
+   assignee is a live signal even though it is a system note. Find out why - usually the parent,
+   a sibling or a blocker moved. (7649: cancelled 10-07 "can't test until Rock v19", silently
+   re-opened 10-09 - it now hangs on 7915.)
+4. **High rank called "No".** Any row at effective WO 1-5 called "No" must name live evidence in
+   the cell: the person, their open ask or task, and the days. A "No" that rests only on a note, a
+   memory, or a generic rule row ("Everett's build") is downgraded to **"Check"** and listed under
+   the queue for Adam to confirm.
 
 ## Calling "waiting on you"
 
