@@ -29,6 +29,8 @@ namespace com.razayya.JourneyTrack.Constants
         public const string GroupTypes_Membership = "GroupTypes_Membership";
         public const string GroupRole = "GroupRole";
         public const string ActiveMembersOnly = "ActiveMembersOnly";
+        public const string IncludePendingMembers = "IncludePendingMembers";
+        public const string ActiveGroupsOnly = "ActiveGroupsOnly";
 
         // Group attendance JourneyCalculation (attendance against specific groups).
         // MinimumCount / WithinDays are shared keys — they resolve to distinct Attribute

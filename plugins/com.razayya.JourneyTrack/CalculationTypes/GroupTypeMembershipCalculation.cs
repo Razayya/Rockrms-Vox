@@ -41,6 +41,20 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         Order = 2,
         Key = AttributeKey.ActiveMembersOnly )]
 
+    [BooleanField( "Include Pending Members",
+        Description = "When Active Members Only is enabled, also count members whose status is Pending. Inactive members are still left out.",
+        IsRequired = false,
+        DefaultBooleanValue = false,
+        Order = 3,
+        Key = AttributeKey.IncludePendingMembers )]
+
+    [BooleanField( "Active Groups Only",
+        Description = "When enabled, memberships in inactive or archived groups are left out.",
+        IsRequired = false,
+        DefaultBooleanValue = false,
+        Order = 4,
+        Key = AttributeKey.ActiveGroupsOnly )]
+
     public class GroupTypeMembershipCalculation : JourneyCalculationTypeComponent
     {
         /// <inheritdoc/>
@@ -49,7 +63,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// <inheritdoc/>
         public override string IconCssClass => "fa fa-users";
 
-        // Per-(groupTypes set, role, activeOnly) cache. JoinDate is the effective
+        // Per-(groupTypes set, role, activeOnly, includePending, activeGroupsOnly) cache. JoinDate is the effective
         // date added: DateTimeAdded when set, else CreatedDateTime (imported
         // memberships can carry a CreatedDateTime long after the real add date).
         private struct GtmRow
@@ -63,9 +77,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         private static readonly System.TimeSpan _cacheTtl = System.TimeSpan.FromSeconds( 30 );
 
         private static Dictionary<int, List<GtmRow>> GetMembershipMap(
-            List<System.Guid> groupTypeGuids, System.Guid? roleGuid, bool activeOnly, RockContext rockContext )
+            List<System.Guid> groupTypeGuids, System.Guid? roleGuid, bool activeOnly, bool includePending, bool activeGroupsOnly, RockContext rockContext )
         {
-            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + roleGuid + "|" + activeOnly;
+            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + roleGuid + "|" + activeOnly + "|" + includePending + "|" + activeGroupsOnly;
             if ( _gtmCache.TryGetValue( key, out var cached )
                 && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
             {
@@ -74,8 +88,12 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
             var query = new GroupMemberService( rockContext ).Queryable().AsNoTracking()
                 .Where( gm => groupTypeGuids.Contains( gm.Group.GroupType.Guid ) );
-            if ( activeOnly )
+            if ( activeOnly && includePending )
+                query = query.Where( gm => gm.GroupMemberStatus == GroupMemberStatus.Active || gm.GroupMemberStatus == GroupMemberStatus.Pending );
+            else if ( activeOnly )
                 query = query.Where( gm => gm.GroupMemberStatus == GroupMemberStatus.Active );
+            if ( activeGroupsOnly )
+                query = query.Where( gm => gm.Group.IsActive && !gm.Group.IsArchived );
             if ( roleGuid.HasValue )
                 query = query.Where( gm => gm.GroupRole.Guid == roleGuid.Value );
 
@@ -107,9 +125,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
         /// written here — population runs keep their own rebuild cadence.
         /// </summary>
         private static List<GtmRow> GetPersonMemberships(
-            List<System.Guid> groupTypeGuids, System.Guid? roleGuid, bool activeOnly, int personId, RockContext rockContext )
+            List<System.Guid> groupTypeGuids, System.Guid? roleGuid, bool activeOnly, bool includePending, bool activeGroupsOnly, int personId, RockContext rockContext )
         {
-            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + roleGuid + "|" + activeOnly;
+            var key = string.Join( ",", groupTypeGuids.OrderBy( g => g ) ) + "|" + roleGuid + "|" + activeOnly + "|" + includePending + "|" + activeGroupsOnly;
             if ( _gtmCache.TryGetValue( key, out var cached )
                 && ( System.DateTime.UtcNow - cached.CachedAt ) < _cacheTtl )
             {
@@ -118,8 +136,12 @@ namespace com.razayya.JourneyTrack.CalculationTypes
 
             var query = new GroupMemberService( rockContext ).Queryable().AsNoTracking()
                 .Where( gm => gm.PersonId == personId && groupTypeGuids.Contains( gm.Group.GroupType.Guid ) );
-            if ( activeOnly )
+            if ( activeOnly && includePending )
+                query = query.Where( gm => gm.GroupMemberStatus == GroupMemberStatus.Active || gm.GroupMemberStatus == GroupMemberStatus.Pending );
+            else if ( activeOnly )
                 query = query.Where( gm => gm.GroupMemberStatus == GroupMemberStatus.Active );
+            if ( activeGroupsOnly )
+                query = query.Where( gm => gm.Group.IsActive && !gm.Group.IsArchived );
             if ( roleGuid.HasValue )
                 query = query.Where( gm => gm.GroupRole.Guid == roleGuid.Value );
 
@@ -175,6 +197,9 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 .AsGuidList();
             var groupRoleGuid = calc.GetAttributeValue( AttributeKey.GroupRole ).AsGuidOrNull();
             var activeMembersOnly = calc.GetAttributeValue( AttributeKey.ActiveMembersOnly ).AsBoolean();
+            // Pending only widens Active Members Only; with that off there is no status filter, so Pending is already counted.
+            var includePending = calc.GetAttributeValue( AttributeKey.IncludePendingMembers ).AsBoolean();
+            var activeGroupsOnly = calc.GetAttributeValue( AttributeKey.ActiveGroupsOnly ).AsBoolean();
 
             if ( !groupTypeGuids.Any() ) return results;
             if ( populationPersonIds == null || populationPersonIds.Count == 0 ) return results;
@@ -184,7 +209,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
             if ( populationPersonIds.Count == 1 )
             {
                 var singlePersonId = populationPersonIds.First();
-                var personMemberships = GetPersonMemberships( groupTypeGuids, groupRoleGuid, activeMembersOnly, singlePersonId, rockContext );
+                var personMemberships = GetPersonMemberships( groupTypeGuids, groupRoleGuid, activeMembersOnly, includePending, activeGroupsOnly, singlePersonId, rockContext );
                 if ( personMemberships.Count > 0 )
                 {
                     results[singlePersonId] = BuildMembershipEntry( personMemberships );
@@ -192,7 +217,7 @@ namespace com.razayya.JourneyTrack.CalculationTypes
                 return results;
             }
 
-            var membershipMap = GetMembershipMap( groupTypeGuids, groupRoleGuid, activeMembersOnly, rockContext );
+            var membershipMap = GetMembershipMap( groupTypeGuids, groupRoleGuid, activeMembersOnly, includePending, activeGroupsOnly, rockContext );
             if ( membershipMap.Count == 0 ) return results;
 
             foreach ( var personId in populationPersonIds )
