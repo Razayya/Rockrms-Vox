@@ -2,11 +2,11 @@
     "_schema":  "Vox Rock instance -\u003e SparkDev version pointer. All fields are user-supplied (System Information drawer in Rock, Version Info tab, + the deployed SparkDev tag). The pin is authoritative; skills trust it without SQL validation. Update via scripts/repin-instance.ps1 when the user announces a Rock update.",
     "instances":  {
                       "prod":  {
-                                   "friendly_version":  "Rock McKinley 18.3",
-                                   "file_version":  "18.3.5",
-                                   "tag":  "18.3.5",
-                                   "clone_dir":  "build/rock-source-prod-18.3.5",
-                                   "pinned_at":  "2026-08-05",
+                                   "friendly_version":  "Rock McKinley 19.7",
+                                   "file_version":  "19.7.0",
+                                   "tag":  "19.7.0",
+                                   "clone_dir":  "build/rock-source-prod-19.7.0",
+                                   "pinned_at":  "2026-11-03",
                                    "pinned_by":  "user-supplied"
                                },
                       "dev":  {
