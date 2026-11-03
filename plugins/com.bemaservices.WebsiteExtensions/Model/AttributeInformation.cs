@@ -19,7 +19,6 @@ using System.Collections.Generic;
 using System.Data.Entity;
 using System.Drawing;
 using System.Linq;
-using DDay.iCal;
 using Rock;
 using Rock.Data;
 using Rock.Model;
