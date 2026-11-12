@@ -37,7 +37,7 @@ If an instance isn't in the JSON, **stop** and route to the `rock-update` skill 
 1. **Load full context up front.** Pull the project record, every comment, **download every attached file** (audit docs, screenshots, specs), **enumerate every sub-project and per-project task**, AND check `claudefiles/rock/projects/<projectId>/` for any `PENDING_*.md` notes left from prior sessions — read those first so you pick up where the last session left off. (See `memory/feedback_project_review_fetch_attachments.md`. Sub-project handling: gotcha #7.)
 2. **Anchor scope to title + description, not attachments.** Audits and specs often raise more than the project asks for; surface that explicitly as out-of-scope rather than folding it in. (See `memory/feedback_project_scope_from_title_not_attachments.md`.)
 3. **Map comments to system state.** For each substantive comment, find what part of Rock it concerns (workflow, pipeline, page, attribute, etc.) and inspect current values + ModifiedDateTime to see whether the work has been done.
-4. **Step-by-step execution with check-ins.** When doing work, pause for confirmation between each planned step. (See `memory/feedback_project_work_check_in_each_step.md`.)
+4. **Step-by-step execution with check-ins.** When doing work that writes, pause for confirmation between each planned step. Read-only investigation runs straight through and is reported together. (See `memory/feedback_project_work_check_in_each_step.md` and `memory/feedback_check_in_after_assess.md`.)
 5. **Per-project SQL files.** Migrations and queries land in `claudefiles/rock/projects/<projectId>/<NN-description>.sql`. (See `memory/reference_project_id_sql_folders.md`.)
 6. **Closure comment at the end.** When work is functionally complete, draft a status comment for the user to post — but never recommend interim comments when the latest comment already prompts the next action. (See `memory/feedback_recommend_comment_on_project_completion.md` and `memory/feedback_no_redundant_comment_recs.md`.)
 
@@ -221,11 +221,11 @@ Naming: `NN-description.<ext>`, lowercase, dash-separated. Mixed extensions are 
 - **Check for prior-session notes:** if `claudefiles/rock/projects/<projectId>/` exists, glob for `PENDING_*.md` and read each. These capture state from prior sessions: what's done, what's pending, decisions awaiting user input, and resume instructions. Treat them as the highest-priority context — they often supersede what you'd infer from the comment thread alone.
 - Identify the latest comment and *who's prompted to act next* (you, a stakeholder, the manager).
 
-**2. Assess + check in on the ask.**
+**2. Assess + investigate, then propose.**
 - State the project's actual scope (pulled from title + description, not the audit).
-- Summarize back to the user: *the latest ask*, *who it's from*, *what action items it implies*, and *any deadline cues*. Then **stop and ask the user how they want to proceed** before doing further investigation.
-- Do NOT start probing the schema, querying for the underlying setting, or drafting a plan in the same turn as the load-context output. The user may want to reframe, scope down, defer, or hand the action item to someone else — none of which you can predict from the comment thread alone.
-- Map any "review", "validate", or "is this done" question to specific Rock objects with ModifiedDateTime evidence — but only after the user confirms that's the path forward.
+- **Do the initial read-only investigation in the same pass** - the Rock objects behind each ask, the 18.3.5 source, read-only prod queries, ModifiedDateTime evidence. Don't stop after loading context to ask whether to look; Adam said "pick it up" (2026-10-01, 7987: "do at least initial investigation and then propose what you found, as opposed to running the methodology of investigation by me").
+- Then report: *the latest ask* and *who it's from*, *what you found* per ask, *what you propose*, and *the decision that's actually his*. The gate is on writes, not reading.
+- Stop before investigating only when the scope itself is ambiguous - several unrelated asks with no obvious one, or 2+ active sub-projects (gotcha #7). Then ask *which*, not *how*.
 - Surface attachments' out-of-scope content explicitly as "would be a separate Rock Request".
 
 **3. Plan.**

@@ -208,9 +208,13 @@ from the note or the rule that produced it:
    row so the note gets a fresh entry next time the project is opened. (2026-10-13: 7469 and 8008
    notes both still said "comment drafted, NOT sent" - both comments were posted and answered.)
 2. **Substantive post, never answered by Adam.** `LongestUnanswered` over ~1,000 characters means
-   someone delivered a brief, report or finding set after Adam's last word. That is a **Yes** -
-   a read and response is owed - even when every task sits on Everett and no question is addressed
-   to Adam. For the 7511 audit tree this is an independent review
+   someone delivered a brief, report or finding set after Adam's last word. Read who it is
+   **addressed to** before calling it. Directed at Adam or Razayya, or delivered for our review,
+   it is a **Yes**: a read and response is owed, even when every task sits on Everett. Vox staff
+   discussing an idea among themselves is **No** - "<names> discussing <topic>; not asked of us".
+   The ops team sometimes takes projects itself, so a post waits on us only when it names us or
+   asks us for something (`memory/feedback_ours_only_when_specifically_asked.md`; 7469 on
+   2026-11-02: Roza and Everett's baptism check-in idea, nobody had asked us). For the 7511 audit tree this is an independent review
    (`memory/feedback_everett_review_asks_are_independent_reviews.md`). (7553: WO 3, Everett's
    5,262-character audit report of 09-28, no reply from Adam, called "Everett's lane" on every sweep.)
 3. **State change with no comment.** A `StateChange` (cancelled, re-opened) or a newly added
@@ -231,6 +235,7 @@ Judgement, not a formula. In rough order of reliability:
 | Open task assigned to 48259 | **Yes**, regardless of thread activity |
 | Latest comment ends in a question aimed at Adam | **Yes** |
 | Latest comment ends in a question Adam aimed at someone else | **No** - name them and count the days |
+| Vox staff discussing a new idea among themselves, nothing asked of us | **No** - ops sometimes takes these; ours only once someone asks us |
 | Adam's own last comment, no question either way | **Read it** - his comments carry self-directed action notes |
 | PENDING note says built / staged / dry-run, not committed | **Yes** |
 | PENDING note says comment DRAFTED, not sent | **Yes** |

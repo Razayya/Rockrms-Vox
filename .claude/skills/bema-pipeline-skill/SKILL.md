@@ -351,9 +351,10 @@ Reference: `claudefiles/rock/projects/6250/06-mle-resend-show-with-launch.sql` d
 2. **Find the activity Guid on that target type that sends the email** — usually a "Send Email" activity. Get its Guid.
 3. **Clone an existing Resend WT** (e.g. WT 480, WT 388, WT 469) — copy the 5 actions + the 4 workflow attrs into a new WT. Update the `Activity` attribute on the cloned action 2 ("Activate Send Email") to point at the target activity Guid from step 2.
 4. **UPDATE the source pipeline action's DisplayedLava** — prepend the two `{% sql %}` blocks (workflowId + latest), insert the button block. Reference implementation: `claudefiles/rock/projects/6250/05-wire-mle-resend.sql`.
-5. **Clear Rock cache** so the new DisplayedLava + the new WT are visible.
+5. **Confirm the Resend WT is active** (`WorkflowType.IsActive = 1`), and make it a pre-flight in the wiring script, not just an existence check. Workflow Entry refuses an inactive type with "Sorry — This type of workflow is not active." (`RockWeb/Blocks/WorkFlow/WorkflowEntry.ascx.cs:530-533`), so the button renders but every click dead-ends. WT 480 sat inactive from at least 2026-08-29 until project 8300 (2026-10-27) because the 6250/05 pre-flight only checked that it existed. The Resend WTs are not persisted, so an empty `Workflow` table proves nothing about whether anyone has clicked.
+6. **Clear Rock cache** so the new DisplayedLava + the new WT are visible.
 
-The two pieces are independent — you can build the WT first, leave the UI unwired (Roza did this with WT 480 for 6+ weeks before we wired it up), or vice versa. The button URL just won't work until both exist.
+The two pieces are independent — you can build the WT first, leave the UI unwired (Roza did this with WT 480 for 6+ weeks before we wired it up), or vice versa. The button URL just won't work until both exist and the WT is active.
 
 ## Cache: always tell the user to clear it after editing
 
