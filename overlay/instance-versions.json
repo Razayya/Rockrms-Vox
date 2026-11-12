@@ -10,11 +10,11 @@
                                    "pinned_by":  "user-supplied"
                                },
                       "dev":  {
-                                  "friendly_version":  "Rock McKinley 19.7",
-                                  "file_version":  "19.7.0",
-                                  "tag":  "19.7.0",
-                                  "clone_dir":  "build/rock-source-dev-19.7.0",
-                                  "pinned_at":  "2026-10-27",
+                                  "friendly_version":  "Rock McKinley 19.8",
+                                  "file_version":  "19.8.1",
+                                  "tag":  "19.8.1",
+                                  "clone_dir":  "build/rock-source-dev-19.8.1",
+                                  "pinned_at":  "2026-11-11",
                                   "pinned_by":  "user-supplied"
                               },
                       "v19-preview":  {
