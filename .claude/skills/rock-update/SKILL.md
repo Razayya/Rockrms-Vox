@@ -156,8 +156,17 @@ Single markdown file the user reviews before touching the live instance. Suggest
 
 ## Production cutover
 - [ ] Database backup taken
-- [ ] Deploy window scheduled
+- [ ] Deploy window scheduled, clear of fixed job start times (run `fixed-job-start-slots.sql`;
+      busiest slots on 2026-11-11 were 09:00, 05:00, 07:00) and of check-in hours
 - [ ] Rollback plan: <reference>
+
+## After every restart in the window - SAME DAY, before midnight
+Every restart counts: the binary update, each Rock Shop plugin install, any app-pool recycle.
+- [ ] Write down each outage window in Rock time (Rock went down -> Rock answering again)
+- [ ] Run `missed-starts-check.sql` once per window
+- [ ] Run Now every job it lists that still needs to run today - same day, so jobs that only
+      look at "today" (day-of birthday notices) still fire; record what was run in the runbook
+- [ ] Next morning: overnight jobs ran once per slot, no new exceptions
 ```
 
 ## Gotchas
@@ -177,6 +186,18 @@ Most SparkDev tags are `<major>.<minor>.<patch>` (`18.2.4`) but some have suffix
 ### 5. Per-instance pinning, not global
 prod and dev can be on different Rock versions. Every Rock skill reads its own pin from `overlay/instance-versions.json` for the env it's about to touch. Don't assume one source-of-truth clone covers both.
 
+### 6. A restart silently drops every job start that falls inside it - recover the same day
+Rock keeps its job schedule in memory (Quartz RAM job store, misfire = do nothing; `ServiceJobService.cs`
+`BuildQuartzTrigger`), so a start time that passes while Rock is down is never replayed. Jobs that run
+every few minutes or hourly just catch their next tick; daily and weekly fixed-time jobs skip a whole day.
+Most self-heal on the next run (date windows, "since last run" stamps), but some only look at **today**:
+Send Following Event Notification's day-of Birthdays event (lead days 0) checks `NextBirthDay` against
+today, so a birthday missed on the day rolls to next year and that notice is gone for good. Other jobs
+(Special Needs RSVP, the weekly giver lists) send their emails late instead of on the day.
+The 19.7 upgrade restart (2026-11-03 06:59-07:02) skipped six 7:00 am jobs and nobody noticed for a week
+(Rock Request 8463). Hence the checklist's same-day step: run `missed-starts-check.sql` per outage window
+and Run Now what it lists before midnight. Job history alone won't show the gap unless you look for it.
+
 ## File organization
 
 ```
@@ -185,6 +206,9 @@ overlay/
 scripts/
   repin-instance.ps1                  # update the JSON (used by this skill)
   prepare-build.ps1                   # materialize a clone (used by this skill)
+.claude/skills/rock-update/
+  fixed-job-start-slots.sql           # pick a restart window clear of fixed job starts (read-only)
+  missed-starts-check.sql             # after each restart: jobs whose start was lost (read-only, same day)
 build/
   rock-source-<instance>-<tag>/       # per-instance clones, gitignored
 claudefiles/rock/projects/
