@@ -39,6 +39,7 @@ namespace com.bemaservices.BemaPipeline.BemaPipelineActionTypes
 
     [TextField( "Send To Email Addresses",
         Key = AttributeKey.SendToEmailAddresses,
+        AllowLava = true,
         Description = "The recipient can either be a group, person or email addresses seperated by commas",
         IsRequired = true,
         DefaultValue = "",

@@ -57,6 +57,7 @@ namespace com.bemaservices.BemaPipeline.BemaPipelineActionTypes
 
     [KeyValueListField("Connection Request Attributes",
         Key = AttributeKey.ConnectionRequestAttributes,
+        AllowLava = true,
         Category = AttributeCategories.ConnectionRequest,
         Description = "Key/value list of connection request attributes to set with the given lava merge template. See the defined type’s help text for a listing of merge fields. <span class='tip tip-lava'></span>",
         IsRequired = false,

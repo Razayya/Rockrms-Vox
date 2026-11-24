@@ -38,6 +38,7 @@ namespace com.bemaservices.BemaPipeline.BemaPipelineActionTypes
 
     [TextField( "Workflow Name Template",
         Key = AttributeKey.WorkflowNameTemplate,
+        AllowLava = true,
         Category = AttributeCategories.Workflow,
         Description = "The lava template to use for setting the workflow name. See the defined type's help text for a listing of merge fields. <span class='tip tip-lava'></span>",
         IsRequired = false,
@@ -45,6 +46,7 @@ namespace com.bemaservices.BemaPipeline.BemaPipelineActionTypes
 
     [KeyValueListField( "Workflow Attributes",
         Key = AttributeKey.WorkflowAttributes,
+        AllowLava = true,
         Category = AttributeCategories.Workflow,
         Description = "Key/value list of workflow attributes to set with the given lava merge template.<span class='tip tip-lava'></span><br/>Merge Fields:<ul><li>Pipeline</li><li><code>PipelineEntityTypeName</code><br/>i.e. ConnectionRequest</li><li>EntityType</li><li>Action</li><li>ActionType</li><li>PreviousActions</li><li>LastAction</li><li>FutureActions</li><li>NextAction</li></ul>",
         IsRequired = false,
